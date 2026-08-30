@@ -56,6 +56,29 @@ class Mover : gameObject
 - `//` line comments and `/* ... */` non-nested block comments are ignored outside string literals. Unterminated block comments are diagnosed. Strings support escaped quotes, backslashes, newline, carriage-return, and tab escapes.
 - Top-level free functions, imports, arrays, exceptions, hot reload, filesystem/network access, and native function registration are not implemented. Put behavior functions inside a class.
 
+## Inspector declarations
+
+Class fields are hidden from the script Inspector by default. Prefix a field with `export` to expose it. Add `label("text");` between declarations to insert organizational text. These are class-level declarations, not executable statements; they cannot appear in functions or modify parameters. `export` applies only to the immediately following typed field. Both keywords are reserved.
+
+```cpp
+class Movement : gameObject
+{
+    label("Movement");
+    export float speed = 5;
+    export Vector3 direction = Vector3(1, 0, 0);
+    float elapsed = 0; // Hidden, but still accessible to scripts.
+
+    label("Debug");
+    export bool showDebug = false;
+}
+```
+
+Labels require a string literal and a trailing semicolon. Normal string escapes are supported. Labels do not implicitly export fields, create variables, or generate bytecode. Repeated/empty labels are retained. Exporting changes only Inspector visibility, not script access, field type, initialization, storage, or execution. All current field types can be exported, including object references; rendering suitable controls is the host editor's responsibility.
+
+`Program::InspectorLayout(className)` returns an immutable ordered list of `InspectorEntry` records: `Kind::Label` carries `text`; `Kind::Field` carries the exported field `name` and canonical `type`. Each record includes `declaringClass`, `source`, and one-based `line`/`column` (field-name location for fields, keyword location for labels). Labels have empty name/type, and fields have empty text. Hidden fields and built-in transform fields are omitted. Inherited entries appear first, followed by the derived class's entries in source order. The reference remains valid while its Program lives. Unknown class names throw ScriptError; valid classes without annotations return an empty list.
+
+The main Inspector should iterate this list, draw labels as text, and show controls only for field entries. Field names work with Runtime::Get/Set for initialized instances; the metadata does not execute initializers or capture instance values. Persisting authoring overrides, applying them before lifecycle start, and drawing controls belong to engine/editor integration. Native GameObject/Transform controls can remain in their existing separate Inspector section. This scripting change supplies metadata only and does not change any Inspector UI files.
+
 ## Empty-code handling
 
 A class containing only empty void functions, including the original start/update/draw template, is valid and produces zero executable instructions and zero executable script classes. Declarations/signatures remain as metadata so the editor and type checker can use the type. An empty override suppresses inherited behavior; it does not fall back to the base implementation. Inherited script fields or executable methods keep a class active. Calls to explicitly requested empty methods are legal no-ops. The host can still explicitly instantiate an empty type; native transform storage is not executable script code.
@@ -89,6 +112,6 @@ Execution has configurable instruction, call-depth, object-count, and per-string
 
 ## Prompt for the main chat (future integration)
 
-After merging the scripting branch, add `add_subdirectory(scripting)` to the root build and link `zEngineScripting` where needed. Feed .zsh text to Compiler::Compile and map Diagnostic source/line/column/message to editor error highlighting. Build a scene adapter that maps real GameObject identity to script ObjectRef, associates an attached behavior with its owner, and synchronizes transform values. Drive Start/Update/Draw from the engine play lifecycle, report ScriptError, and define object destruction/reload behavior. Do not treat the current runtime-owned transforms as already bound to scene objects.
+After merging the scripting branch, add `add_subdirectory(scripting)` to the root build and link `zEngineScripting` where needed. Feed .zsh text to Compiler::Compile and map Diagnostic source/line/column/message to editor error highlighting. Use Program::InspectorLayout to display label entries and only exported field entries, with typed controls and persisted per-instance overrides; add export/label to syntax highlighting. Build a scene adapter that maps real GameObject identity to script ObjectRef, associates an attached behavior with its owner, and synchronizes transform values. Drive Start/Update/Draw from the engine play lifecycle, report ScriptError, and define object destruction/reload behavior. Do not treat the current runtime-owned transforms as already bound to scene objects.
 
 The scripting chat has intentionally not changed any existing engine files or implemented these integration steps.

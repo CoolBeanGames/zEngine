@@ -22,7 +22,7 @@ bool Alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
 bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
 bool Reserved(std::string_view s) {
-    static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform"};
+    static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
     return words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
@@ -102,7 +102,7 @@ struct Stmt {
 };
 struct FieldAst { Token name; std::string type; std::unique_ptr<Expr> initializer; };
 struct FunctionAst { Token name; std::string result = "void"; std::vector<FieldAst> params; Stmt body; };
-struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; };
+struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; std::vector<InspectorEntry> inspector; };
 class Parser {
     std::vector<Token> tokens;
     const std::string& source;
@@ -180,6 +180,7 @@ class Parser {
     Stmt Statement() {
         Guard guard(*this);
         Stmt s; s.token = Current();
+        if (Is("export") || Is("label")) Fail(source, Current(), "Inspector declarations are only allowed at class scope");
         if (Match("{")) {
             while (!Is("}")) { if (Current().kind == Token::End) Fail(source, Current(), "Unterminated block"); s.children.push_back(Statement()); }
             Expect("}"); return s;
@@ -218,7 +219,14 @@ public:
             if (Match(":")) c.base = Identifier(true).text;
             Expect("{");
             while (!Is("}")) {
-                if (Match("func")) {
+                const Token declaration = Current();
+                if (Match("label")) {
+                    Expect("(");
+                    if (Current().kind != Token::String) Fail(source, Current(), "Label requires a string literal");
+                    InspectorEntry entry; entry.kind = InspectorEntry::Kind::Label; entry.text = Current().text; ++pos;
+                    entry.declaringClass = c.name.text; entry.source = source; entry.line = declaration.line; entry.column = declaration.column;
+                    Expect(")"); Expect(";"); c.inspector.push_back(std::move(entry));
+                } else if (Match("func")) {
                     FunctionAst f; f.name = Identifier(); Expect("(");
                     if (!Is(")")) do {
                         FieldAst param; param.type = Identifier(true).text; param.name = Identifier(); f.params.push_back(std::move(param));
@@ -227,9 +235,18 @@ public:
                     if (!Is("{")) Fail(source, Current(), "Expected function body");
                     f.body = Statement(); c.methods.push_back(std::move(f));
                 } else {
+                    const bool exported = Match("export");
+                    if (exported && (Current().kind != Token::Identifier || Is("func") || Is("label") || Is("export")))
+                        Fail(source, Current(), "Export must precede a typed class field");
                     FieldAst field; field.type = Identifier(true).text; field.name = Identifier();
                     if (Match("=")) field.initializer = Expression();
-                    Expect(";"); c.fields.push_back(std::move(field));
+                    Expect(";");
+                    if (exported) {
+                        InspectorEntry entry; entry.kind = InspectorEntry::Kind::Field; entry.name = field.name.text; entry.type = field.type;
+                        entry.declaringClass = c.name.text; entry.source = source; entry.line = field.name.line; entry.column = field.name.column;
+                        c.inspector.push_back(std::move(entry));
+                    }
+                    c.fields.push_back(std::move(field));
                 }
             }
             Expect("}"); classes.push_back(std::move(c));
@@ -250,6 +267,7 @@ struct Field { Token token; std::string type; };
 struct Class {
     std::string name, base;
     std::vector<Field> fields;
+    std::vector<InspectorEntry> inspector;
     std::map<std::string, Function> methods;
     Function initializer;
 };
@@ -517,7 +535,9 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         if (!c.base.empty()) {
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
+            c.inspector = program.classes.at(c.base).inspector;
         }
+        c.inspector.insert(c.inspector.end(), ast.inspector.begin(), ast.inspector.end());
         for (const auto& f : ast.fields) {
             if (!program.IsType(f.type)) Fail(program.source, f.name, "Unknown or invalid field type '" + f.type + "'");
             if (program.classes.contains(f.name.text)) Fail(program.source, f.name, "Class names are type keywords");
@@ -555,6 +575,11 @@ ScriptError::ScriptError(Diagnostic diagnostic)
 Program::Program(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
 ProgramStats Program::Stats() const { return impl_->stats; }
 bool Program::HasClass(std::string_view name) const { return impl_->classes.contains(Canonical(std::string(name))); }
+const std::vector<InspectorEntry>& Program::InspectorLayout(std::string_view className) const {
+    auto found = impl_->classes.find(Canonical(std::string(className)));
+    if (found == impl_->classes.end()) Fail(impl_->source, {}, "Unknown class '" + std::string(className) + "'");
+    return found->second.inspector;
+}
 CompileResult Compiler::Compile(std::string_view source, std::string sourceName) {
     try {
         auto p = std::make_shared<Program::Impl>(); p->source = std::move(sourceName);

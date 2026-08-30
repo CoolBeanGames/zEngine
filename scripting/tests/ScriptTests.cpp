@@ -165,8 +165,82 @@ void InheritedNativeDefaultsAndExpressionDepth() {
     for (int i = 0; i < 40; ++i) expression = "(" + expression + "+1+1+1+1+1+1+1+1)";
     Error([&] { Compile("class Deep { func run() : int { return " + expression + "; } }"); }, "nesting limit");
 }
+void InspectorMetadata() {
+    auto p = Compile(R"(class Child : Parent {
+        label("Child settings"); export Vector3 direction = Vector3(1, 0, 0); int hiddenChild;
+    }
+    class Parent : gameObject {
+        label("Movement"); export float speed = 2; int hidden = 7;
+        func update(float dt) { hidden += 1; }
+        export bool enabled = true;
+    })");
+    const auto& base = p->InspectorLayout("Parent");
+    const auto& child = p->InspectorLayout("Child");
+    Check(base.size() == 3 && child.size() == 5, "Hidden/native fields exposed or inherited entries lost");
+    Check(child[0].kind == InspectorEntry::Kind::Label && child[0].text == "Movement", "Base label ordering");
+    Check(child[1].kind == InspectorEntry::Kind::Field && child[1].name == "speed" && child[1].type == "float", "Exported field metadata");
+    Check(child[2].name == "enabled" && child[3].text == "Child settings" && child[4].name == "direction", "Declaration order across methods/inheritance");
+    Check(child[1].declaringClass == "Parent" && child[4].declaringClass == "Child" && child[4].source == "test.zsh", "Declaration origin");
+    Check(child[0].name.empty() && child[0].type.empty() && child[1].text.empty(), "Entry payload kinds");
+    Runtime runtime(p); auto object = runtime.Create("Child");
+    runtime.Set(object, child[1].name, 4.0); runtime.Update(object, 0.1);
+    Check(Float(runtime.Get(object, "speed")) == 4 && Int(runtime.Get(object, "hidden")) == 8, "Inspector editing or hidden-field execution");
+    Check(p->InspectorLayout("gameObject").empty() && p->InspectorLayout("GameObject").empty() && p->InspectorLayout("Transform").empty(), "Native fields leaked into script Inspector");
+    Error([&] { p->InspectorLayout("Missing"); }, "Unknown class");
+
+    auto types = Compile(R"(class Custom {} class All {
+        export int count; export float speed; export bool enabled; export string title;
+        export Vector3 direction; export GameObject target; export Transform pose; export Custom custom;
+    })");
+    const auto& all = types->InspectorLayout("All");
+    const std::vector<std::string> expected = {"int", "float", "bool", "string", "Vector3", "gameObject", "Transform", "Custom"};
+    Check(all.size() == expected.size(), "Missing exported types");
+    for (std::size_t i = 0; i < all.size(); ++i) Check(all[i].type == expected[i], "Wrong exported type");
+
+    auto located = Compiler::Compile("class Located {\nlabel(\"Group\");\nexport float speed = 2;\n}", "located.zsh");
+    Check(static_cast<bool>(located), "Source-coordinate fixture");
+    const auto& entries = located.program->InspectorLayout("Located");
+    Check(entries[0].line == 2 && entries[0].column == 1 && entries[1].line == 3 && entries[1].column == 14 && entries[1].source == "located.zsh", "Inspector source coordinates");
+}
+void InspectorMetadataHasNoExecutionCost() {
+    auto labeled = Compile(R"(class OnlyLabels : gameObject { label("Title"); label("/* literal */ // literal"); func start() {} }
+        class Hidden { int value; })");
+    Check(labeled->InspectorLayout("OnlyLabels").size() == 2 && labeled->InspectorLayout("Hidden").empty(), "Label-only metadata/hidden default");
+    Check(labeled->InspectorLayout("OnlyLabels")[1].text == "/* literal */ // literal", "Comments inside label text");
+    Check(labeled->Stats().instructions == 0 && labeled->Stats().emittedFunctions == 0 && labeled->Stats().executableClasses == 1, "Labels emitted runtime work");
+    auto empty = Compile("class Labels : gameObject { label(\"\"); label(\"Title\"); }");
+    Check(empty->Stats().executableClasses == 0 && empty->Stats().instructions == 0 && empty->InspectorLayout("Labels")[0].text.empty(), "Labels defeated empty-code elimination");
+    auto normal = Compile("class A : gameObject { float speed = 2; float elapsed; func update(float dt) { elapsed += speed * dt; } }");
+    auto exported = Compile("class A : gameObject { label(\"Motion\"); export float speed = 2; float elapsed; func update(float dt) { elapsed += speed * dt; } label(\"End\"); }");
+    Check(normal->Stats().instructions == exported->Stats().instructions && normal->Stats().emittedFunctions == exported->Stats().emittedFunctions, "Inspector annotations changed bytecode");
+    Runtime runtime(exported); auto object = runtime.Create("A"); runtime.Set(object, "speed", 3.0); runtime.Update(object, 0.5);
+    Check(Float(runtime.Get(object, "elapsed")) == 1.5, "Edited exported value not used by script");
+    auto escapes = Compile(R"(class Text { label("a\"b\\c\nnext"); })");
+    Check(escapes->InspectorLayout("Text")[0].text == "a\"b\\c\nnext", "Label string escapes");
+}
+void InspectorDiagnostics() {
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"class A { export func f() {} }", "typed class field"},
+        {"class A { export label(\"Wrong\"); }", "typed class field"},
+        {"class A { export export int count; }", "typed class field"},
+        {"class A { export }", "typed class field"},
+        {"class A { export Missing value; }", "field type"},
+        {"class A { export void value; }", "field type"},
+        {"class A { export int value = true; }", "Cannot assign"},
+        {"class A { label(123); }", "string literal"},
+        {"class A { label(); }", "string literal"},
+        {"class A { label(\"Title\" + \"Text\"); }", "Expected ')'"},
+        {"class A { label(\"Title\") export int count; }", "Expected ';'"},
+        {"class A { func f() { export int local; } }", "class scope"},
+        {"class A { func f() { label(\"Local\"); } }", "class scope"},
+        {"class A { int label; }", "Expected identifier"},
+        {"class A { func export() {} }", "Expected identifier"},
+        {"class A { export int value; } class B : A { int value; }", "Duplicate/inherited"}
+    };
+    for (const auto& [source, message] : cases) Error([&] { Compile(source); }, message);
+}
 void Examples() {
-    for (const auto& name : {"Counter.zsh", "EmptyBehavior.zsh", "Mover.zsh"}) {
+    for (const auto& name : {"Counter.zsh", "EmptyBehavior.zsh", "Mover.zsh", "InspectorBehavior.zsh"}) {
         std::ifstream in(std::string(SCRIPT_EXAMPLES) + "/" + name, std::ios::binary);
         Check(static_cast<bool>(in), std::string("Missing example ") + name);
         Compile(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()));
@@ -177,7 +251,7 @@ int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"empty code and comments", EmptyAndComments}, {"movement and Vector3", Movement}, {"lifecycle and inheritance", LifecycleAndInheritance},
         {"values and control flow", ValuesAndControlFlow}, {"references and initializers", ReferencesAndInitializers},
-        {"compile diagnostics", Diagnostics}, {"runtime limits", TestRuntimeLimits}, {"host boundary", HostBoundary}, {"native defaults and expression depth", InheritedNativeDefaultsAndExpressionDepth}, {"example files", Examples}
+        {"compile diagnostics", Diagnostics}, {"runtime limits", TestRuntimeLimits}, {"host boundary", HostBoundary}, {"native defaults and expression depth", InheritedNativeDefaultsAndExpressionDepth}, {"Inspector metadata", InspectorMetadata}, {"Inspector metadata has no execution cost", InspectorMetadataHasNoExecutionCost}, {"Inspector diagnostics", InspectorDiagnostics}, {"example files", Examples}
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

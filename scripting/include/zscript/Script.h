@@ -41,11 +41,26 @@ struct ProgramStats {
     std::size_t emittedFunctions = 0;
     std::size_t instructions = 0;
 };
+// Inspector-only declarations, in base-to-derived and source order.
+// Hidden fields are omitted; their script accessibility is unchanged.
+struct InspectorEntry {
+    enum class Kind { Field, Label };
+    Kind kind = Kind::Field;
+    std::string name; // Field name; empty for labels.
+    std::string type; // Canonical field type; empty for labels.
+    std::string text; // Label text; empty for fields.
+    std::string declaringClass;
+    std::string source;
+    std::size_t line = 1;
+    std::size_t column = 1;
+};
 class Program {
 public:
     struct Impl;
     ProgramStats Stats() const;
     bool HasClass(std::string_view name) const;
+    // Reference remains valid for this Program lifetime. Unknown classes throw ScriptError.
+    const std::vector<InspectorEntry>& InspectorLayout(std::string_view className) const;
 private:
     explicit Program(std::shared_ptr<const Impl> impl);
     std::shared_ptr<const Impl> impl_;

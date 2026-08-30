@@ -2,7 +2,7 @@ class Counter : gameObject
 {
     float elapsed = 0;
     int frames = 0;
-    string label = "Counter";
+    string title = "Counter";
 
     func start()
     {
