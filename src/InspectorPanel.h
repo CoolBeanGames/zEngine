@@ -15,10 +15,15 @@ public:
     static constexpr int TagsField = 1101;
     static constexpr int FirstTransformField = 1102; // Position XYZ, Rotation XYZ, Scale XYZ.
     static constexpr int AddScriptButton = 1120;
+    static constexpr int AddBehaviorButton = 1121, MeshEnabled = 1122, ChooseMeshButton = 1123,
+        CubeMeshButton = 1124, ClearMeshButton = 1125, AddMeshCommand = 1126, AddScriptCommand = 1127;
+    enum class MeshAction { Add, Choose, Cube, Clear };
     ~InspectorPanel();
     void Create(HWND parent, HINSTANCE instance, HFONT font, std::function<void()> changed);
     void Bind(zengine::GameObject* object);
+    void RefreshBehaviors();
     void SetAddScriptHandler(std::function<void()> handler) { addScript_ = std::move(handler); }
+    void SetMeshHandler(std::function<void(MeshAction)> handler) { meshAction_ = std::move(handler); }
     HWND Window() const noexcept { return window_; }
 private:
     struct Field { HWND window = nullptr; bool valid = true; std::wstring focusText; };
@@ -48,6 +53,8 @@ private:
     std::function<void()> changed_;
     std::function<void()> addScript_;
     HWND addScriptButton_ = nullptr;
+    HWND addBehaviorButton_ = nullptr, meshEnabled_ = nullptr, chooseMesh_ = nullptr, cubeMesh_ = nullptr, clearMesh_ = nullptr;
+    std::function<void(MeshAction)> meshAction_;
     bool updating_ = false;
     int scroll_ = 0;
     int pressed_ = -1;

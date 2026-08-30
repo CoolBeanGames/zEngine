@@ -1,5 +1,6 @@
 #include "InspectorPanel.h"
 #include "core/ScriptBehavior.h"
+#include "core/MeshRenderer.h"
 #include <windowsx.h>
 #include <algorithm>
 #include <cerrno>
@@ -80,6 +81,18 @@ void InspectorPanel::Create(HWND parent, HINSTANCE instance, HFONT font, std::fu
         0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(AddScriptButton)), instance, nullptr);
     if (!addScriptButton_) throw std::runtime_error("Cannot create Add Script button.");
     SendMessageW(addScriptButton_, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+    const auto button = [&](const wchar_t* title, int id, DWORD style = 0) {
+        const auto result = CreateWindowExW(0, L"BUTTON", title, WS_CHILD|WS_VISIBLE|WS_TABSTOP|style,
+            0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
+        if (!result) throw std::runtime_error("Cannot create behavior control.");
+        SendMessageW(result, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+        return result;
+    };
+    addBehaviorButton_ = button(L"+ Add Behavior", AddBehaviorButton);
+    meshEnabled_ = button(L"Mesh Renderer enabled", MeshEnabled, BS_AUTOCHECKBOX);
+    chooseMesh_ = button(L"Choose Model...", ChooseMeshButton);
+    cubeMesh_ = button(L"Use Cube", CubeMeshButton);
+    clearMesh_ = button(L"Clear", ClearMeshButton);
     Bind(nullptr);
     Layout();
 }
@@ -91,7 +104,14 @@ void InspectorPanel::Bind(zengine::GameObject* object)
         if (GetFocus() == fields_[index].window) { FinishField(index, false); SetFocus(window_); }
     object_ = object;
     RefreshFields();
+    RefreshBehaviors();
+}
+void InspectorPanel::RefreshBehaviors()
+{
     EnableWindow(addScriptButton_, object_ != nullptr);
+    EnableWindow(addBehaviorButton_, object_ != nullptr);
+    const auto* mesh = object_ ? object_->GetBehavior<zengine::MeshRenderer>() : nullptr;
+    SendMessageW(meshEnabled_, BM_SETCHECK, mesh && mesh->Enabled() ? BST_CHECKED : BST_UNCHECKED, 0);
     Layout();
 }
 
@@ -202,7 +222,8 @@ void InspectorPanel::Layout()
     RECT client{}; GetClientRect(window_, &client);
     const bool narrow = client.right < 250;
     const int behaviorRows = object_ ? static_cast<int>(object_->BehaviorCount()) : 0;
-    const int contentHeight = (narrow ? 440 : 390) + behaviorRows * 24;
+    const bool hasMesh = object_ && object_->GetBehavior<zengine::MeshRenderer>();
+    const int contentHeight = (narrow ? 480 : 430) + behaviorRows * 24 + (hasMesh ? 122 : 0);
     SCROLLINFO scroll{sizeof(scroll), SIF_RANGE | SIF_PAGE | SIF_POS};
     scroll.nMin = 0; scroll.nMax = contentHeight - 1; scroll.nPage = static_cast<UINT>(client.bottom);
     scroll_ = std::clamp(scroll_, 0, std::max(0, contentHeight - static_cast<int>(client.bottom)));
@@ -223,8 +244,18 @@ void InspectorPanel::Layout()
         }
         MoveWindow(fields_[index].window, x, y - scroll_, w, 24, TRUE);
     }
-    MoveWindow(addScriptButton_, 12, (width >= 250 ? 326 : 375) + behaviorRows * 24 - scroll_,
-        std::max(30, width - 24), 28, TRUE);
+    int y = (width >= 250 ? 326 : 375) + behaviorRows * 24 - scroll_;
+    for (HWND control : {meshEnabled_,chooseMesh_,cubeMesh_,clearMesh_}) ShowWindow(control,hasMesh ? SW_SHOW : SW_HIDE);
+    if (hasMesh)
+    {
+        MoveWindow(meshEnabled_,12,y,std::max(30,width-24),24,TRUE);
+        MoveWindow(chooseMesh_,12,y+52,std::max(30,width-24),26,TRUE);
+        MoveWindow(cubeMesh_,12,y+82,std::max(30,(width-30)/2),26,TRUE);
+        MoveWindow(clearMesh_,15+(width-30)/2,y+82,std::max(30,(width-30)/2),26,TRUE);
+        y += 122;
+    }
+    MoveWindow(addBehaviorButton_,12,y,std::max(30,width-24),28,TRUE);
+    MoveWindow(addScriptButton_,12,y+34,std::max(30,width-24),28,TRUE);
     InvalidateRect(window_, nullptr, FALSE);
 }
 void InspectorPanel::Paint()
@@ -253,11 +284,18 @@ void InspectorPanel::Paint()
         for (std::size_t i = 0; i < object_->BehaviorCount(); ++i)
         {
             const auto* script = dynamic_cast<const zengine::ScriptBehavior*>(&object_->BehaviorAt(i));
-            const auto name = script ? Wide(script->Asset()) : L"Native behavior";
+            const auto* mesh = dynamic_cast<const zengine::MeshRenderer*>(&object_->BehaviorAt(i));
+            const auto name = script ? Wide(script->Asset()) : mesh ? L"Mesh Renderer" : L"Native behavior";
             label(name.c_str(), 18, (width >= 250 ? 321 : 370) + static_cast<int>(i)*24, width-30);
         }
-    label(L"Script references (not executing yet)", 12,
-        (width >= 250 ? 358 : 407) + (object_ ? static_cast<int>(object_->BehaviorCount())*24 : 0), width-24);
+    const auto* mesh = object_ ? object_->GetBehavior<zengine::MeshRenderer>() : nullptr;
+    const int base = (width >= 250 ? 326 : 375) + (object_ ? static_cast<int>(object_->BehaviorCount())*24 : 0);
+    if (mesh)
+    {
+        const auto asset = mesh->Asset().empty() ? L"Model: None" : mesh->Asset() == zengine::MeshRenderer::CubeAsset ? L"Model: Built-in Cube" : L"Model: " + Wide(mesh->Asset());
+        label(asset.c_str(),12,base+27,width-24);
+    }
+    label(L"Scripts do not execute yet", 12, base + (mesh ? 122 : 0) + 66, width-24);
     EndPaint(window_, &paint);
 }
 LRESULT CALLBACK InspectorPanel::WindowProcedure(HWND window, UINT message, WPARAM w, LPARAM l)
@@ -281,6 +319,30 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_ERASEBKGND: return 1;
     case WM_COMMAND:
     {
+        if (LOWORD(w) == AddBehaviorButton && HIWORD(w) == BN_CLICKED && object_)
+        {
+            const auto menu = CreatePopupMenu();
+            AppendMenuW(menu,MF_STRING | (object_->GetBehavior<zengine::MeshRenderer>() ? MF_GRAYED : 0),AddMeshCommand,L"Mesh Renderer");
+            AppendMenuW(menu,MF_STRING,AddScriptCommand,L"Script...");
+            RECT button{}; GetWindowRect(addBehaviorButton_,&button);
+            const auto command = TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,button.left,button.bottom,0,window_,nullptr);
+            DestroyMenu(menu);
+            if (command) SendMessageW(window_,WM_COMMAND,command,0);
+            return 0;
+        }
+        if (LOWORD(w) == AddScriptCommand) { if (object_ && addScript_) addScript_(); return 0; }
+        if (LOWORD(w) == AddMeshCommand || LOWORD(w) == ChooseMeshButton || LOWORD(w) == CubeMeshButton || LOWORD(w) == ClearMeshButton)
+        {
+            if (object_ && meshAction_) meshAction_(LOWORD(w) == AddMeshCommand ? MeshAction::Add : LOWORD(w) == ChooseMeshButton ? MeshAction::Choose : LOWORD(w) == CubeMeshButton ? MeshAction::Cube : MeshAction::Clear);
+            return 0;
+        }
+        if (LOWORD(w) == MeshEnabled && HIWORD(w) == BN_CLICKED && object_)
+        {
+            if (auto* mesh = object_->GetBehavior<zengine::MeshRenderer>())
+                mesh->SetEnabled(SendMessageW(meshEnabled_,BM_GETCHECK,0,0) == BST_CHECKED);
+            if (changed_) changed_();
+            return 0;
+        }
         if (LOWORD(w) == AddScriptButton && HIWORD(w) == BN_CLICKED)
         { if (object_ && addScript_) addScript_(); return 0; }
         const int index = LOWORD(w) - NameField;

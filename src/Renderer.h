@@ -6,15 +6,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <memory>
 #include "ModelData.h"
 #include "core/GameObject.h"
-
-struct ViewportFrame
-{
-    zengine::Transform modelTransform;
-    std::optional<zengine::Transform> selectionTransform;
-    bool showEditorGuides = false;
-};
+#include "RenderScene.h"
 
 class Renderer final
 {
@@ -28,8 +23,10 @@ public:
     void Initialize(HWND window, std::uint32_t width, std::uint32_t height);
     void Resize(std::uint32_t width, std::uint32_t height);
     void Render(const ViewportFrame& frame = {});
-    // Uploads transactionally: buffer failure leaves the existing preview intact.
-    std::vector<std::string> SetModel(const ModelData& model);
+    // Independent, immutable GPU resources. Upload failure cannot change existing objects.
+    MeshHandle UploadModel(const ModelData& model, std::vector<std::string>& warnings);
+    MeshHandle Cube() const noexcept { return cube_; }
+    std::size_t LastMeshCount() const noexcept { return lastMeshCount_; }
 
 private:
     using Vertex = MeshVertex;
@@ -51,8 +48,6 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> vertexShader_;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> pixelShader_;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> inputLayout_;
-    Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer_;
-    Microsoft::WRL::ComPtr<ID3D11Buffer> indexBuffer_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> sceneConstantBuffer_;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> whiteTexture_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> albedoSampler_;
@@ -62,11 +57,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> overlayDepth_;
     UINT gridVertexCount_ = 0;
     UINT axesVertexCount_ = 0;
-    std::vector<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> albedoTextures_;
-    std::vector<MeshPart> parts_{{0, 36, 0}};
-    DXGI_FORMAT indexFormat_ = DXGI_FORMAT_R16_UINT;
-    Float3 modelCenter_{};
-    float modelScale_ = 1.0f;
+    MeshHandle cube_;
+    std::size_t lastMeshCount_ = 0;
 
     D3D11_VIEWPORT viewport_{};
     std::uint32_t width_ = 0;

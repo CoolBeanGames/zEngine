@@ -6,6 +6,7 @@
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
 #include "core/ScriptBehavior.h"
+#include "core/MeshRenderer.h"
 #include <commdlg.h>
 
 #include <windowsx.h>
@@ -172,14 +173,25 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     }
 
     CreateViewport();
-    previewObject_ = objects_.Create("Color Cube").Id();
+    auto& cube = objects_.Create("Color Cube");
+    cube.AddBehavior<zengine::MeshRenderer>(zengine::MeshRenderer::CubeAsset);
     inspectorPanel_ = std::make_unique<InspectorPanel>();
     inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
     inspectorPanel_->SetAddScriptHandler([this]() {
         try { ChooseScript(); }
         catch (const std::exception& error) { status_ = L"Cannot attach script: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
     });
-    SelectGameObject(previewObject_);
+    inspectorPanel_->SetMeshHandler([this](InspectorPanel::MeshAction action) {
+        try
+        {
+            if (action == InspectorPanel::MeshAction::Add) AddMeshRenderer(selectedObject_);
+            else if (action == InspectorPanel::MeshAction::Choose) ChooseModel();
+            else if (action == InspectorPanel::MeshAction::Cube) AssignCube(selectedObject_);
+            else ClearMesh(selectedObject_);
+        }
+        catch (const std::exception& error) { status_ = L"Mesh operation failed: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
+    });
+    SelectGameObject(cube.Id());
     std::array<wchar_t, 32768> executable{};
     const DWORD pathLength = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
     if (!pathLength || pathLength == executable.size()) throw std::runtime_error("Cannot locate the project directory.");
@@ -216,6 +228,9 @@ void EditorShell::InitializeRenderer()
     }
     renderer_ = std::make_unique<Renderer>();
     renderer_->Initialize(viewportWindow_, requestedViewportWidth_, requestedViewportHeight_);
+    for (std::size_t i = 0; i < objects_.Size(); ++i)
+        if (const auto* mesh = objects_.At(i).GetBehavior<zengine::MeshRenderer>(); mesh && mesh->Asset() == zengine::MeshRenderer::CubeAsset)
+            meshBindings_[objects_.At(i).Id()] = {mesh->Asset(), renderer_->Cube()};
     rendererWidth_ = requestedViewportWidth_;
     rendererHeight_ = requestedViewportHeight_;
 }
@@ -223,6 +238,8 @@ void EditorShell::InitializeRenderer()
 void EditorShell::Render()
 {
     PollAssetWork();
+    for (auto it = meshCache_.begin(); it != meshCache_.end();)
+        if (it->second.expired()) it = meshCache_.erase(it); else ++it;
     if (!renderer_ || requestedViewportWidth_ == 0 || requestedViewportHeight_ == 0)
     {
         return;
@@ -237,11 +254,23 @@ void EditorShell::Render()
             rendererHeight_ = requestedViewportHeight_;
         }
     }
+    renderer_->Render(BuildSceneFrame());
+}
+
+ViewportFrame EditorShell::BuildSceneFrame() const
+{
     ViewportFrame frame;
     frame.showEditorGuides = true;
-    if (const auto* object = objects_.Find(previewObject_)) frame.modelTransform = object->GetTransform();
+    for (std::size_t i = 0; i < objects_.Size(); ++i)
+    {
+        const auto& object = objects_.At(i);
+        const auto* mesh = object.GetBehavior<zengine::MeshRenderer>();
+        const auto bound = meshBindings_.find(object.Id());
+        if (mesh && mesh->Enabled() && !mesh->Asset().empty() && bound != meshBindings_.end() && bound->second.asset == mesh->Asset())
+            frame.meshes.push_back({bound->second.mesh, object.GetTransform()});
+    }
     if (const auto* object = SelectedGameObject()) frame.selectionTransform = object->GetTransform();
-    renderer_->Render(frame);
+    return frame;
 }
 
 void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
@@ -374,7 +403,7 @@ void EditorShell::Paint()
         const auto& object = objects_.At(index);
         if (object.Id() == selectedObject_) FillRectangle(bufferContext, row, SelectionColor);
         row.left += 12;
-        const std::wstring icon = object.Id() == previewObject_ ? L"\u25a0  " : L"\u25c7  ";
+        const std::wstring icon = object.GetBehavior<zengine::MeshRenderer>() ? L"\u25a0  " : L"\u25c7  ";
         DrawTextLabel(bufferContext, icon + WideText(object.Name()), row, TextColor,
                       DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
@@ -416,7 +445,7 @@ void EditorShell::Paint()
     RECT dropArea{folderPane.right + 20, mediaTop + 20, mediaLibrary_.right - 20, mediaLibrary_.bottom - 20};
     DrawBorder(bufferContext, dropArea, RGB(72, 75, 83));
     RECT libraryHint{dropArea.left + 8, dropArea.top, dropArea.right - 8, dropArea.top + 26};
-    DrawTextLabel(bufferContext, L"FBX: drag to Scene  |  ZSH: double-click to edit, drag to GameObject or Inspector", libraryHint,
+    DrawTextLabel(bufferContext, L"FBX: drag to Scene to create, or onto an object to assign  |  ZSH: double-click to edit", libraryHint,
                   MutedTextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     const RECT list = AssetListRectangle();
     const int saved = SaveDC(bufferContext);
@@ -527,8 +556,8 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
 }
 void EditorShell::OnObjectChanged()
 {
-    if (const auto* preview = objects_.Find(previewObject_))
-        SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + WideText(preview->Name())).c_str());
+    if (const auto* selected = SelectedGameObject())
+        SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + WideText(selected->Name())).c_str());
     InvalidateRect(window_, &sceneBrowser_, FALSE);
 }
 
@@ -593,16 +622,32 @@ void EditorShell::PollAssetWork()
         try
         {
             auto result = assetWork_.get();
-            if (result.replacePreview)
+            if (result.loadMesh)
             {
-                const auto textureWarnings = renderer_->SetModel(result.model);
-                result.warnings = std::move(result.model.warnings);
-                result.warnings.insert(result.warnings.end(), textureWarnings.begin(), textureWarnings.end());
+                if (result.object && meshRevisions_[result.object] != result.revision) return; // Superseded assignment.
+                if (!renderer_) throw std::runtime_error("Renderer is not initialized.");
+                MeshHandle handle = result.cachedMesh ? result.cachedMesh : meshCache_[result.path].lock();
+                if (!handle)
+                {
+                    std::vector<std::string> textureWarnings;
+                    handle = renderer_->UploadModel(result.model, textureWarnings);
+                    result.warnings = std::move(result.model.warnings);
+                    result.warnings.insert(result.warnings.end(), textureWarnings.begin(), textureWarnings.end());
+                    meshCache_[result.path] = handle;
+                }
                 const auto name = result.path.parent_path().filename().wstring();
-                objects_.Find(previewObject_)->SetName(Utf8Text(name));
-                SelectGameObject(previewObject_);
+                auto* object = result.object ? objects_.Find(result.object) : &objects_.Create(Utf8Text(name));
+                if (!object) throw std::runtime_error("The target GameObject no longer exists.");
+                auto* mesh = object->GetBehavior<zengine::MeshRenderer>();
+                if (!mesh) mesh = &object->AddBehavior<zengine::MeshRenderer>();
+                const auto relative = std::filesystem::relative(result.path,assetsDirectory_).generic_u8string();
+                const std::string asset(reinterpret_cast<const char*>(relative.data()),relative.size());
+                meshBindings_[object->Id()] = {asset,handle};
+                mesh->SetAsset(asset);
+                if (!result.object) SelectGameObject(object->Id());
+                else if (selectedObject_ == object->Id()) inspectorPanel_->RefreshBehaviors();
                 OnObjectChanged();
-                status_ = L"Previewing " + name;
+                status_ = L"Assigned " + name + L" to " + WideText(object->Name());
             }
             else
             {
@@ -625,13 +670,17 @@ void EditorShell::PollAssetWork()
     {
         const auto job = assetJobs_.front();
         assetJobs_.pop_front();
-        status_ = (job.replacePreview ? L"Loading " : L"Importing ") + job.path.filename().wstring();
+        status_ = (job.loadMesh ? L"Loading " : L"Importing ") + job.path.filename().wstring();
         const auto directory = assetsDirectory_;
-        assetWork_ = std::async(std::launch::async, [job, directory]() {
+        const MeshHandle cached = job.loadMesh ? meshCache_[job.path].lock() : nullptr;
+        assetWork_ = std::async(std::launch::async, [job, directory, cached]() {
             AssetResult result;
-            result.replacePreview = job.replacePreview;
+            result.loadMesh = job.loadMesh;
+            result.object = job.object;
+            result.revision = job.revision;
             result.path = job.path;
-            if (job.replacePreview) result.model = FbxImporter::Load(job.path, true);
+            result.cachedMesh = cached;
+            if (job.loadMesh) { if (!cached) result.model = FbxImporter::Load(job.path, true); }
             else result.path = FbxImporter::Import(job.path, directory, result.warnings);
             return result;
         });
@@ -671,7 +720,8 @@ void EditorShell::FinishAssetDrag(POINT point)
         if (const auto id = ScriptDropTarget(point)) AttachScript(id, path);
         else { status_ = L"Drop a script onto a GameObject row or the selected object's Inspector."; InvalidateRect(window_, &statusBar_, FALSE); }
     }
-    else if (PtInRect(&viewportContent_, point)) assetJobs_.push_back({path, true});
+    else if (const auto id = ScriptDropTarget(point)) QueueModel(path,id);
+    else if (PtInRect(&viewportContent_, point)) QueueModel(path);
 }
 
 RECT EditorShell::CreateScriptRectangle() const
@@ -738,6 +788,67 @@ void EditorShell::ChooseScript()
     dialog.lpstrInitialDir=initial.c_str(); dialog.lpstrTitle=L"Attach a script from this project's Assets directory";
     dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
     if (GetOpenFileNameW(&dialog)) AttachScript(selectedObject_, std::filesystem::path(filename.data()));
+}
+bool EditorShell::AddMeshRenderer(zengine::GameObjectId id)
+{
+    auto* object = objects_.Find(id);
+    if (!object || object->GetBehavior<zengine::MeshRenderer>()) return false;
+    object->AddBehavior<zengine::MeshRenderer>();
+    if (id == selectedObject_) inspectorPanel_->RefreshBehaviors();
+    status_ = L"Added Mesh Renderer - assign an imported model or use the built-in cube";
+    InvalidateRect(window_, nullptr, FALSE);
+    return true;
+}
+void EditorShell::AssignCube(zengine::GameObjectId id)
+{
+    auto* object = objects_.Find(id);
+    if (!object || !renderer_) throw std::runtime_error("Select an object and initialize the renderer first.");
+    AddMeshRenderer(id);
+    ++meshRevisions_[id];
+    meshBindings_[id] = {zengine::MeshRenderer::CubeAsset,renderer_->Cube()};
+    object->GetBehavior<zengine::MeshRenderer>()->SetAsset(zengine::MeshRenderer::CubeAsset);
+    if (id == selectedObject_) inspectorPanel_->RefreshBehaviors();
+    status_ = L"Assigned built-in cube";
+    InvalidateRect(window_, nullptr, FALSE);
+}
+void EditorShell::ClearMesh(zengine::GameObjectId id)
+{
+    auto* object = objects_.Find(id);
+    auto* mesh = object ? object->GetBehavior<zengine::MeshRenderer>() : nullptr;
+    if (!mesh) return;
+    ++meshRevisions_[id];
+    mesh->SetAsset({}); meshBindings_.erase(id);
+    if (id == selectedObject_) inspectorPanel_->RefreshBehaviors();
+    status_ = L"Cleared model; Mesh Renderer remains attached";
+    InvalidateRect(window_, nullptr, FALSE);
+}
+std::filesystem::path EditorShell::ResolveModel(const std::filesystem::path& path) const
+{
+    const auto file = std::filesystem::weakly_canonical(path.is_absolute() ? path : assetsDirectory_/path);
+    const auto root = std::filesystem::weakly_canonical(assetsDirectory_);
+    if (_wcsicmp(file.parent_path().parent_path().c_str(),root.c_str()) != 0 || _wcsicmp(file.filename().c_str(),L"model.fbx") != 0 ||
+        !std::filesystem::is_regular_file(file) || !std::filesystem::is_regular_file(file.parent_path()/"asset.ready"))
+        throw std::runtime_error("Choose an imported model.fbx from this project's Assets library. Import external FBX files first.");
+    return file;
+}
+void EditorShell::QueueModel(const std::filesystem::path& path, zengine::GameObjectId id)
+{
+    if (id && !objects_.Find(id)) throw std::runtime_error("Unknown target GameObject.");
+    const auto file = ResolveModel(path);
+    assetJobs_.push_back({file,true,id,id ? ++meshRevisions_[id] : 0});
+    status_ = L"Queued model assignment";
+    InvalidateRect(window_, &statusBar_, FALSE);
+}
+void EditorShell::ChooseModel()
+{
+    std::array<wchar_t,32768> filename{};
+    const auto initial = assetsDirectory_.wstring();
+    OPENFILENAMEW dialog{}; dialog.lStructSize=sizeof(dialog); dialog.hwndOwner=window_;
+    dialog.lpstrFilter=L"Imported FBX model (*.fbx)\0*.fbx\0\0";
+    dialog.lpstrFile=filename.data(); dialog.nMaxFile=static_cast<DWORD>(filename.size());
+    dialog.lpstrInitialDir=initial.c_str(); dialog.lpstrTitle=L"Choose a model from an imported asset package";
+    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
+    if (GetOpenFileNameW(&dialog)) QueueModel(std::filesystem::path(filename.data()),selectedObject_);
 }
 bool EditorShell::ConfirmScriptClose()
 {
@@ -904,7 +1015,7 @@ LRESULT EditorShell::HandleMessage(
                               std::abs(point.y - assetDragStart_.y) >= GetSystemMetrics(SM_CYDRAG);
             if (assetDragMoved_)
             {
-                const bool valid = zengine::scripts::IsScript(assets_.at(draggedAsset_)) ? ScriptDropTarget(point) != 0 : PtInRect(&viewportContent_,point) != 0;
+                const bool valid = ScriptDropTarget(point) != 0 || (!zengine::scripts::IsScript(assets_.at(draggedAsset_)) && PtInRect(&viewportContent_,point));
                 SetCursor(LoadCursorW(nullptr, valid ? IDC_HAND : IDC_NO));
             }
             return 0;

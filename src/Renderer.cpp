@@ -18,6 +18,15 @@
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
 
+struct RenderMesh
+{
+    ComPtr<ID3D11Buffer> vertices, indices;
+    std::vector<ComPtr<ID3D11ShaderResourceView>> textures;
+    std::vector<MeshPart> parts;
+    DXGI_FORMAT indexFormat = DXGI_FORMAT_R32_UINT;
+    ID3D11Device* device = nullptr; // Buffers keep their creating device alive.
+};
+
 namespace
 {
     void ThrowIfFailed(const HRESULT result, const char* operation)
@@ -217,6 +226,10 @@ void Renderer::CreateShaders()
 
 void Renderer::CreateCube()
 {
+    auto mesh = std::make_shared<RenderMesh>();
+    mesh->device = device_.Get();
+    mesh->parts = {{0,36,0}};
+    mesh->indexFormat = DXGI_FORMAT_R16_UINT;
     std::mt19937 randomEngine(std::random_device{}());
     std::uniform_real_distribution<float> colorChannel(0.2f, 1.0f);
     const auto randomColor = [&]() {
@@ -248,7 +261,7 @@ void Renderer::CreateCube()
     vertexDescription.Usage = D3D11_USAGE_IMMUTABLE;
     vertexDescription.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     const D3D11_SUBRESOURCE_DATA vertexData{vertices.data(), 0, 0};
-    ThrowIfFailed(device_->CreateBuffer(&vertexDescription, &vertexData, &vertexBuffer_),
+    ThrowIfFailed(device_->CreateBuffer(&vertexDescription, &vertexData, &mesh->vertices),
                   "Create cube vertex buffer");
 
     D3D11_BUFFER_DESC indexDescription{};
@@ -256,7 +269,7 @@ void Renderer::CreateCube()
     indexDescription.Usage = D3D11_USAGE_IMMUTABLE;
     indexDescription.BindFlags = D3D11_BIND_INDEX_BUFFER;
     const D3D11_SUBRESOURCE_DATA indexData{indices.data(), 0, 0};
-    ThrowIfFailed(device_->CreateBuffer(&indexDescription, &indexData, &indexBuffer_),
+    ThrowIfFailed(device_->CreateBuffer(&indexDescription, &indexData, &mesh->indices),
                   "Create cube index buffer");
 
     D3D11_BUFFER_DESC constantDescription{};
@@ -266,6 +279,7 @@ void Renderer::CreateCube()
     constantDescription.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     ThrowIfFailed(device_->CreateBuffer(&constantDescription, nullptr, &sceneConstantBuffer_),
                   "Create scene constant buffer");
+    cube_ = std::move(mesh);
 }
 
 void Renderer::Resize(const std::uint32_t width, const std::uint32_t height)
@@ -317,8 +331,9 @@ void Renderer::CreateEditorGuides()
     ThrowIfFailed(device_->CreateDepthStencilState(&depth, &overlayDepth_), "Create editor overlay depth state");
 }
 
-std::vector<std::string> Renderer::SetModel(const ModelData& model)
+MeshHandle Renderer::UploadModel(const ModelData& model, std::vector<std::string>& warnings)
 {
+    if (!device_) throw std::runtime_error("Initialize the renderer before uploading meshes.");
     if (model.vertices.empty() || model.indices.empty() || model.parts.empty())
         throw std::runtime_error("Model contains no drawable geometry.");
     if (model.vertices.size() > UINT_MAX / sizeof(Vertex) || model.indices.size() > UINT_MAX / sizeof(std::uint32_t))
@@ -327,6 +342,9 @@ std::vector<std::string> Renderer::SetModel(const ModelData& model)
     Float3 maximum = minimum;
     for (const auto& vertex : model.vertices)
     {
+        for (float value : {vertex.position.x,vertex.position.y,vertex.position.z,
+             vertex.normal.x,vertex.normal.y,vertex.normal.z,vertex.color.x,vertex.color.y,vertex.color.z,vertex.uv.x,vertex.uv.y})
+            if (!std::isfinite(value)) throw std::runtime_error("Model contains nonfinite vertex data.");
         minimum.x = std::min(minimum.x, vertex.position.x); maximum.x = std::max(maximum.x, vertex.position.x);
         minimum.y = std::min(minimum.y, vertex.position.y); maximum.y = std::max(maximum.y, vertex.position.y);
         minimum.z = std::min(minimum.z, vertex.position.z); maximum.z = std::max(maximum.z, vertex.position.z);
@@ -336,7 +354,7 @@ std::vector<std::string> Renderer::SetModel(const ModelData& model)
     for (const auto index : model.indices)
         if (index >= model.vertices.size()) throw std::runtime_error("Model contains an invalid vertex index.");
     for (const auto& part : model.parts)
-        if (part.material >= model.materials.size() || part.firstIndex > model.indices.size() ||
+        if (!part.indexCount || part.indexCount % 3 != 0 || part.material >= model.materials.size() || part.firstIndex > model.indices.size() ||
             part.indexCount > model.indices.size() - part.firstIndex)
             throw std::runtime_error("Model contains an invalid material or mesh range.");
 
@@ -352,7 +370,7 @@ std::vector<std::string> Renderer::SetModel(const ModelData& model)
     const D3D11_SUBRESOURCE_DATA indexData{model.indices.data(), 0, 0};
     ThrowIfFailed(device_->CreateBuffer(&description, &indexData, &indices), "Upload model indices");
 
-    std::vector<std::string> warnings;
+    warnings.clear();
     std::vector<ComPtr<ID3D11ShaderResourceView>> textures(model.materials.size());
     std::uint64_t textureBytes = 0;
     for (std::size_t index = 0; index < model.materials.size(); ++index)
@@ -411,28 +429,23 @@ std::vector<std::string> Renderer::SetModel(const ModelData& model)
             warnings.emplace_back(issue.what()); // Missing/bad images use material color, not a failed scene load.
         }
     }
-    auto parts = model.parts;
-    vertexBuffer_ = std::move(vertices);
-    indexBuffer_ = std::move(indices);
-    parts_ = std::move(parts);
-    albedoTextures_ = std::move(textures);
-    indexFormat_ = DXGI_FORMAT_R32_UINT;
-    modelCenter_ = {minimum.x + (maximum.x - minimum.x) * 0.5f,
-                    minimum.y + (maximum.y - minimum.y) * 0.5f,
-                    minimum.z + (maximum.z - minimum.z) * 0.5f};
-    modelScale_ = 2.0f / extent;
-    return warnings;
+    auto mesh = std::make_shared<RenderMesh>();
+    mesh->device = device_.Get();
+    mesh->vertices = std::move(vertices);
+    mesh->indices = std::move(indices);
+    mesh->parts = model.parts;
+    mesh->textures = std::move(textures);
+    return mesh;
 }
 
 void Renderer::Render(const ViewportFrame& frame)
 {
+    lastMeshCount_ = 0;
     if (!renderTargetView_ || width_ == 0 || height_ == 0)
     {
         return;
     }
 
-    const XMMATRIX world = XMMatrixTranslation(-modelCenter_.x, -modelCenter_.y, -modelCenter_.z) *
-        XMMatrixScaling(modelScale_, modelScale_, modelScale_) * TransformMatrix(frame.modelTransform);
     const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
     const float halfFov = std::min(XM_PI / 6.0f, std::atan(std::tan(XM_PI / 6.0f) * aspect));
     const float distance = 1.75f / std::sin(halfFov) * 1.1f;
@@ -465,8 +478,6 @@ void Renderer::Render(const ViewportFrame& frame)
 
     constexpr UINT stride = static_cast<UINT>(sizeof(Vertex));
     constexpr UINT offset = 0;
-    context_->IASetVertexBuffers(0, 1, vertexBuffer_.GetAddressOf(), &stride, &offset);
-    context_->IASetIndexBuffer(indexBuffer_.Get(), indexFormat_, 0);
     context_->IASetInputLayout(inputLayout_.Get());
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
@@ -481,15 +492,23 @@ void Renderer::Render(const ViewportFrame& frame)
         context_->Draw(count, 0);
     };
     if (frame.showEditorGuides) drawLines(gridBuffer_.Get(), gridVertexCount_, XMMatrixIdentity());
-    setConstants(world, false);
-    context_->IASetVertexBuffers(0, 1, vertexBuffer_.GetAddressOf(), &stride, &offset);
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    for (const auto& part : parts_)
+    for (const auto& draw : frame.meshes)
     {
-        ID3D11ShaderResourceView* texture = part.material < albedoTextures_.size() && albedoTextures_[part.material]
-            ? albedoTextures_[part.material].Get() : whiteTexture_.Get();
-        context_->PSSetShaderResources(0, 1, &texture);
-        context_->DrawIndexed(part.indexCount, part.firstIndex, 0);
+        if (!draw.mesh) continue;
+        const auto& mesh = *draw.mesh;
+        if (mesh.device != device_.Get()) throw std::runtime_error("Mesh belongs to another render device.");
+        setConstants(TransformMatrix(draw.transform), false);
+        context_->IASetVertexBuffers(0, 1, mesh.vertices.GetAddressOf(), &stride, &offset);
+        context_->IASetIndexBuffer(mesh.indices.Get(), mesh.indexFormat, 0);
+        for (const auto& part : mesh.parts)
+        {
+            ID3D11ShaderResourceView* texture = part.material < mesh.textures.size() && mesh.textures[part.material]
+                ? mesh.textures[part.material].Get() : whiteTexture_.Get();
+            context_->PSSetShaderResources(0, 1, &texture);
+            context_->DrawIndexed(part.indexCount, part.firstIndex, 0);
+        }
+        ++lastMeshCount_;
     }
     if (frame.showEditorGuides && frame.selectionTransform)
     {
@@ -497,6 +516,12 @@ void Renderer::Render(const ViewportFrame& frame)
         drawLines(axesBuffer_.Get(), axesVertexCount_, TransformMatrix(*frame.selectionTransform));
     }
 
+    // Do not let pipeline bindings keep an otherwise released model alive in an empty scene.
+    ID3D11Buffer* noBuffer = nullptr;
+    ID3D11ShaderResourceView* noTexture = nullptr;
+    context_->IASetVertexBuffers(0, 1, &noBuffer, &stride, &offset);
+    context_->IASetIndexBuffer(nullptr, DXGI_FORMAT_R32_UINT, 0);
+    context_->PSSetShaderResources(0, 1, &noTexture);
     ThrowIfFailed(swapChain_->Present(1, 0), "Present frame");
 }
 

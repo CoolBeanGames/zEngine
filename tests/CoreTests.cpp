@@ -1,4 +1,5 @@
 #include "core/GameObject.h"
+#include "core/MeshRenderer.h"
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -50,6 +51,17 @@ int main()
             Check(!behavior.Enabled() && object.BehaviorCount() == 1, "Behavior enabled state failed");
         }
         Check(destroyed, "Object must own the behavior lifetime");
+        zengine::ObjectStore scene;
+        auto& actor = scene.Create("Mesh Actor");
+        auto& mesh = actor.AddBehavior<zengine::MeshRenderer>();
+        Check(mesh.Asset().empty() && mesh.Enabled() && &mesh.Owner() == &actor, "Mesh renderer defaults/ownership failed");
+        actor.GetTransform().SetPosition({2,3,4});
+        mesh.SetAsset("Model/model.fbx");
+        mesh.SetEnabled(false);
+        const auto& constantActor = actor;
+        Check(constantActor.GetBehavior<zengine::MeshRenderer>() == &mesh && !mesh.Enabled(), "Const lookup/visibility failed");
+        mesh.SetAsset({});
+        Check(actor.GetTransform().Position().x == 2 && mesh.Asset().empty(), "Mesh changes must preserve transform");
         std::cout << "PASS: platform-independent GameObject defaults, stable IDs, tags, transforms, behavior ownership\n";
         return 0;
     }

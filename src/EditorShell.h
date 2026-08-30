@@ -10,6 +10,8 @@
 #include <deque>
 #include <string>
 #include <vector>
+#include <map>
+#include "RenderScene.h"
 #include "ModelData.h"
 #include "core/GameObject.h"
 
@@ -33,6 +35,11 @@ public:
     std::filesystem::path CreateScriptAsset();
     void OpenScript(const std::filesystem::path& path);
     bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);
+    bool AddMeshRenderer(zengine::GameObjectId object);
+    void AssignCube(zengine::GameObjectId object);
+    void ClearMesh(zengine::GameObjectId object);
+    void QueueModel(const std::filesystem::path& path, zengine::GameObjectId object = 0);
+    ViewportFrame BuildSceneFrame() const;
     const zengine::ObjectStore& GameObjects() const noexcept { return objects_; }
     const zengine::GameObject* SelectedGameObject() const noexcept { return objects_.Find(selectedObject_); }
 
@@ -68,15 +75,26 @@ private:
     RECT ObjectListRectangle() const;
     zengine::GameObjectId ScriptDropTarget(POINT point) const;
     void ChooseScript();
+    void ChooseModel();
+    std::filesystem::path ResolveModel(const std::filesystem::path& path) const;
     bool ConfirmScriptClose();
     RECT CreateScriptRectangle() const;
 
-    struct AssetJob { std::filesystem::path path; bool replacePreview = false; };
+    struct AssetJob
+    {
+        std::filesystem::path path;
+        bool loadMesh = false;
+        zengine::GameObjectId object = 0; // Zero creates a new object after a successful load.
+        std::uint64_t revision = 0;
+    };
     struct AssetResult
     {
         std::filesystem::path path;
-        bool replacePreview = false;
+        bool loadMesh = false;
+        zengine::GameObjectId object = 0;
+        std::uint64_t revision = 0;
         ModelData model;
+        MeshHandle cachedMesh;
         std::vector<std::string> warnings;
     };
     std::filesystem::path assetsDirectory_;
@@ -86,7 +104,10 @@ private:
     std::wstring status_ = L"Ready - drop an FBX into the Media Library";
     zengine::ObjectStore objects_;
     zengine::GameObjectId selectedObject_ = 0;
-    zengine::GameObjectId previewObject_ = 0;
+    struct MeshBinding { std::string asset; MeshHandle mesh; };
+    std::map<zengine::GameObjectId, MeshBinding> meshBindings_;
+    std::map<std::filesystem::path, std::weak_ptr<const RenderMesh>> meshCache_;
+    std::map<zengine::GameObjectId, std::uint64_t> meshRevisions_;
     int firstObject_ = 0;
     std::unique_ptr<InspectorPanel> inspectorPanel_;
     std::vector<std::unique_ptr<ScriptEditor>> scriptEditors_;

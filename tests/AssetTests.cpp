@@ -1,8 +1,10 @@
 #include "FbxImporter.h"
 #include "Renderer.h"
 #include "EditorShell.h"
+#include "core/MeshRenderer.h"
 #include "InspectorPanel.h"
 #include "RenderTransform.h"
+#include "WindowCapture.h"
 #include <objbase.h>
 #include <shlobj.h>
 
@@ -117,28 +119,40 @@ namespace
             auto model = FbxImporter::Load(source);
             Renderer renderer;
             renderer.Initialize(window, 320, 240);
-            renderer.Render();
-            Require(renderer.SetModel(model).empty(), "WIC/GPU albedo upload failed");
-            renderer.Render();
+            ViewportFrame frame;
+            frame.meshes.push_back({renderer.Cube(),{}});
+            renderer.Render(frame);
+            Require(renderer.LastMeshCount() == 1, "Cube submission failed");
+            std::vector<std::string> warnings;
+            const auto importedMesh = renderer.UploadModel(model,warnings);
+            Require(warnings.empty(), "WIC/GPU albedo upload failed");
+            frame.meshes.push_back({importedMesh,{}});
+            frame.meshes[0].transform.SetPosition({-1.5f,0,0});
+            frame.meshes[1].transform.SetPosition({1.5f,0,0});
+            renderer.Render(frame);
+            Require(renderer.LastMeshCount() == 2, "Different meshes must render in the same frame");
             renderer.Resize(180, 400);
-            renderer.Render();
+            renderer.Render(frame);
             model.materials[2].image = {1, 2, 3, 4};
-            Require(!renderer.SetModel(model).empty(), "Broken images must use fallback with a warning");
-            renderer.Render();
+            frame.meshes.push_back({renderer.UploadModel(model,warnings),{}});
+            Require(!warnings.empty(), "Broken images must use fallback with a warning");
+            renderer.Render(frame);
             model.indices[0] = UINT32_MAX;
             bool rejected = false;
-            try { renderer.SetModel(model); } catch (const std::exception&) { rejected = true; }
+            try { renderer.UploadModel(model,warnings); } catch (const std::exception&) { rejected = true; }
             Require(rejected, "Invalid GPU mesh must be rejected");
-            renderer.Render(); // The last valid preview must still be usable.
-            ViewportFrame frame;
-            frame.showEditorGuides = true;
-            frame.modelTransform.SetPosition({0.5f, 0, 0});
-            frame.modelTransform.SetRotation({15, 30, 45});
-            frame.modelTransform.SetScale({2, -1, 0.5f});
-            frame.selectionTransform = frame.modelTransform;
             renderer.Render(frame);
-            frame.modelTransform.SetScale({0, 1, 1});
+            Require(renderer.LastMeshCount() == 3, "Failed upload must preserve all existing render resources");
+            frame.showEditorGuides = true;
+            frame.meshes[0].transform.SetPosition({0.5f, 0, 0});
+            frame.meshes[0].transform.SetRotation({15, 30, 45});
+            frame.meshes[0].transform.SetScale({2, -1, 0.5f});
+            frame.selectionTransform = frame.meshes[0].transform;
+            renderer.Render(frame);
+            frame.meshes[0].transform.SetScale({0, 1, 1});
             renderer.Render(frame); // Singular scales must not cause inverse-matrix NaNs.
+            renderer.Render({});
+            Require(renderer.LastMeshCount() == 0, "An empty scene must not render an implicit preview mesh");
         }
         DestroyWindow(window);
         UnregisterClassW(windowClass.lpszClassName, instance);
@@ -217,6 +231,81 @@ namespace
         }
         CoUninitialize();
         std::cout << "PASS: library-only OS drop, background import, library-to-viewport drag, model replacement, splitter resize\n";
+    }
+
+    void MeshBehaviorTests(bool capture)
+    {
+        Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM initialization failed");
+        TestDirectory test;
+        const auto project = test.path / "Project";
+        std::vector<std::string> warnings;
+        const auto imported = FbxImporter::Import(CreateSource(test.path/"source"),project/"Assets",warnings);
+        {
+            EditorShell editor(GetModuleHandleW(nullptr));
+            HWND window = editor.Create(SW_HIDE,project);
+            editor.InitializeRenderer();
+            const auto cubeId = editor.SelectedGameObject()->Id();
+            Require(editor.BuildSceneFrame().meshes.size() == 1,"Default cube needs an actual Mesh Renderer");
+            auto& first = editor.CreateEmptyGameObject();
+            const auto inspector = FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
+            Require(GetDlgItem(inspector,InspectorPanel::AddBehaviorButton)!=nullptr,"Add Behavior button missing");
+            SendMessageW(inspector,WM_COMMAND,InspectorPanel::AddMeshCommand,0);
+            Require(first.GetBehavior<zengine::MeshRenderer>() && first.GetBehavior<zengine::MeshRenderer>()->Asset().empty(),"Add Behavior -> Mesh Renderer failed");
+            Require(!editor.AddMeshRenderer(first.Id()) && first.BehaviorCount()==1,"Duplicate mesh component allowed");
+            SendMessageW(inspector,WM_COMMAND,InspectorPanel::CubeMeshButton,0);
+            first.GetTransform().SetPosition({-2,0,0});
+            first.GetTransform().SetRotation({0,35,0});
+            first.GetTransform().SetScale({0.5f,1,0.5f});
+            auto& second = editor.CreateEmptyGameObject();
+            editor.AssignCube(second.Id());
+            SetWindowTextW(GetDlgItem(inspector,InspectorPanel::FirstTransformField),L"2");
+            auto frame = editor.BuildSceneFrame();
+            Require(frame.meshes.size()==3 && frame.meshes[1].mesh==frame.meshes[2].mesh,"Cube resources must be shared across objects");
+            Require(frame.meshes[1].transform.Position().x==-2 && frame.meshes[2].transform.Position().x==2 &&
+                frame.meshes[1].transform.Rotation().y==35 && frame.meshes[1].transform.Scale().x==0.5f,"Object-local TRS submission failed");
+            editor.Render();
+            if (capture) CaptureWindow(window,"mesh-renderer-qa.bmp");
+            SendMessageW(GetDlgItem(inspector,InspectorPanel::MeshEnabled),BM_CLICK,0,0);
+            Require(!second.GetBehavior<zengine::MeshRenderer>()->Enabled() && editor.BuildSceneFrame().meshes.size()==2,"Disabling mesh must hide only its owner");
+            SendMessageW(GetDlgItem(inspector,InspectorPanel::MeshEnabled),BM_CLICK,0,0);
+            SendMessageW(inspector,WM_COMMAND,InspectorPanel::ClearMeshButton,0);
+            Require(second.BehaviorCount()==1 && second.GetBehavior<zengine::MeshRenderer>()->Asset().empty() && editor.BuildSceneFrame().meshes.size()==2,"Clear must remove model without removing component");
+            const auto pump = [&](const std::function<bool()>& predicate) {
+                const auto deadline = GetTickCount64()+10000;
+                while (!predicate() && GetTickCount64()<deadline) { editor.Render(); Sleep(5); }
+                Require(predicate(),"Mesh assignment timed out");
+            };
+            // Capture target ID, then change selection before loading completes.
+            editor.QueueModel(imported,first.Id());
+            auto& empty = editor.CreateEmptyGameObject();
+            pump([&]() { return first.GetBehavior<zengine::MeshRenderer>()->Asset()!=zengine::MeshRenderer::CubeAsset; });
+            Require(editor.SelectedGameObject()->Id()==empty.Id() && empty.BehaviorCount()==0,"Async load followed selection instead of target");
+            Require(first.Name()=="GameObject" && first.GetTransform().Position().x==-2,"Model assignment changed name/transform");
+            editor.QueueModel(imported,second.Id());
+            pump([&]() { return !second.GetBehavior<zengine::MeshRenderer>()->Asset().empty(); });
+            frame=editor.BuildSceneFrame();
+            Require(frame.meshes.size()==3 && frame.meshes[1].mesh==frame.meshes[2].mesh,"Imported model resources were not shared");
+            // Assigning cube after a queued request invalidates that request.
+            editor.QueueModel(imported,second.Id());
+            editor.Render(); // Start cached asynchronous request.
+            editor.AssignCube(second.Id());
+            for (int i=0;i<30;++i) { editor.Render(); Sleep(2); }
+            Require(second.GetBehavior<zengine::MeshRenderer>()->Asset()==zengine::MeshRenderer::CubeAsset,"Stale request overwrote newer model choice");
+            bool rejected=false;
+            try { editor.QueueModel(test.path/"source"/imported.filename(),first.Id()); } catch (...) { rejected=true; }
+            Require(rejected,"Unimported external models must not be assigned");
+            // Dropping on the viewport instantiates an additional object rather than replacing cube.
+            RECT client{}; GetClientRect(window,&client);
+            const auto row=MAKELPARAM(350,client.bottom-220);
+            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,row);
+            SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(600,200));
+            SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(600,200));
+            pump([&]() { return editor.GameObjects().Size()==5; });
+            Require(editor.GameObjects().Find(cubeId)->GetBehavior<zengine::MeshRenderer>()->Asset()==zengine::MeshRenderer::CubeAsset,"FBX scene placement replaced default cube");
+            Require(editor.BuildSceneFrame().meshes.size()==4,"Multiple instantiated models missing from scene");
+        }
+        CoUninitialize();
+        std::cout << "PASS: Mesh Renderer component, Inspector add/enable/clear, independent transforms, shared GPU meshes, captured async targets, scene instantiation\n";
     }
 
     void GameObjectEditorTests()
@@ -299,7 +388,7 @@ namespace
             SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, rowPoint);
             SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(client.right-100, 300));
             SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(client.right-100, 300));
-            Require(editor.SelectedGameObject()->BehaviorCount() == 1, "Inspector script drop failed");
+            Require(editor.SelectedGameObject()->BehaviorCount() == 2, "Inspector script drop failed alongside Mesh Renderer");
             Require(object->GetTransform().Position().x == 1.25f, "Script attachment changed transform");
             // Renderer adapter applies scale, then X/Y/Z degree rotations, then translation.
             zengine::Transform example;
@@ -320,6 +409,7 @@ int main(int argc, char** argv)
         if (argc > 1 && std::string(argv[1]) == "--gpu") GpuTests();
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
+        else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc == 1) ImportTests();
         else throw std::runtime_error("Unknown test mode");
         return 0;

@@ -80,6 +80,12 @@ namespace zengine
                 if (auto* match = dynamic_cast<T*>(behavior.get())) return match;
             return nullptr;
         }
+        template<class T> const T* GetBehavior() const noexcept
+        {
+            for (const auto& behavior : behaviors_)
+                if (auto* match = dynamic_cast<const T*>(behavior.get())) return match;
+            return nullptr;
+        }
     private:
         friend class ObjectStore;
         GameObject(GameObjectId id, std::string name);
