@@ -1,6 +1,6 @@
 # zEngine scripting runtime (first milestone)
 
-Standalone C++20 compiler and stack bytecode VM. No engine/editor dependencies or downloads. All files for this milestone live under `scripting/`; the parent CMake project is intentionally unchanged.
+Standalone C++20 compiler and stack bytecode VM. No engine/editor dependencies or downloads. The parent build now links this library through the separate `zEngineScriptHost` adapter; this directory can still be built/tested independently.
 
 ## Build and test
 
@@ -114,4 +114,4 @@ Execution has configurable instruction, call-depth, object-count, and per-string
 
 After merging the scripting branch, add `add_subdirectory(scripting)` to the root build and link `zEngineScripting` where needed. Feed .zsh text to Compiler::Compile and map Diagnostic source/line/column/message to editor error highlighting. Use Program::InspectorLayout to display label entries and only exported field entries, with typed controls and persisted per-instance overrides; add export/label to syntax highlighting. Build a scene adapter that maps real GameObject identity to script ObjectRef, associates an attached behavior with its owner, and synchronizes transform values. Drive Start/Update/Draw from the engine play lifecycle, report ScriptError, and define object destruction/reload behavior. Do not treat the current runtime-owned transforms as already bound to scene objects.
 
-The scripting chat has intentionally not changed any existing engine files or implemented these integration steps.
+The engine now implements this integration in `src/ScriptHost.h/.cpp`, `src/core/BehaviorLifecycle.h/.cpp`, and the native editor. See the root README for Play/Pause/Step and exported field editing. `Program::IsGameObject()` validates behavior classes and `Program::HasCode()` reports effective nonempty method bodies (including inheritance/empty overrides). Native cross-object references and scene persistence are not implemented yet; runtime-owned transforms remain standalone when using this library without the host adapter.

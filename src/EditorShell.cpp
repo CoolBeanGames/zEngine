@@ -177,6 +177,7 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     cube.AddBehavior<zengine::MeshRenderer>(zengine::MeshRenderer::CubeAsset);
     inspectorPanel_ = std::make_unique<InspectorPanel>();
     inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
+    inspectorPanel_->SetScriptHost(&scriptHost_);
     inspectorPanel_->SetAddScriptHandler([this]() {
         try { ChooseScript(); }
         catch (const std::exception& error) { status_ = L"Cannot attach script: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
@@ -237,6 +238,9 @@ void EditorShell::InitializeRenderer()
 
 void EditorShell::Render()
 {
+    const auto now=std::chrono::steady_clock::now();
+    const double elapsed=std::min(0.1,std::chrono::duration<double>(now-lastTick_).count());
+    lastTick_=now;
     PollAssetWork();
     for (auto it = meshCache_.begin(); it != meshCache_.end();)
         if (it->second.expired()) it = meshCache_.erase(it); else ++it;
@@ -254,7 +258,94 @@ void EditorShell::Render()
             rendererHeight_ = requestedViewportHeight_;
         }
     }
+    if (Playing())
+    {
+        if (!paused_)
+        {
+            tickAccumulator_+=elapsed;
+            while (tickAccumulator_>=1.0/60.0) { scriptHost_.Tick(objects_,1.0f/60.0f); tickAccumulator_-=1.0/60.0; }
+        }
+        if (!paused_ || stepDraw_)
+            scriptHost_.Draw(objects_,[&](zengine::GameObjectId id) {
+                const auto* object=objects_.Find(id);
+                const auto* mesh=object?object->GetBehavior<zengine::MeshRenderer>():nullptr;
+                const auto bound=meshBindings_.find(id);
+                return mesh && mesh->Enabled() && !mesh->Asset().empty() && bound!=meshBindings_.end() && bound->second.mesh && bound->second.asset==mesh->Asset();
+            });
+        stepDraw_=false;
+        if (GetTickCount64()-lastInspectorRefresh_>=100)
+        { inspectorPanel_->RefreshLiveValues(); ReportScriptErrors(); lastInspectorRefresh_=GetTickCount64(); }
+    }
     renderer_->Render(BuildSceneFrame());
+}
+
+bool EditorShell::PrepareScripts()
+{
+    bool valid=true;
+    for (std::size_t i=0;i<objects_.Size();++i)
+        for (std::size_t j=0;j<objects_.At(i).BehaviorCount();++j)
+            if (auto* behavior=dynamic_cast<zengine::ScriptBehavior*>(&objects_.At(i).BehaviorAt(j)))
+            {
+                try
+                {
+                    const auto file=zengine::scripts::Resolve(assetsDirectory_,std::filesystem::path(WideText(behavior->Asset())));
+                    if (!scriptHost_.Prepare(*behavior,zengine::scripts::Load(file),Utf8Text(file.stem().wstring())))
+                    { valid=false; status_=WideText(scriptHost_.Error(*behavior)); }
+                }
+                catch (const std::exception& e) { valid=false; status_=WideText(e.what()); }
+            }
+    inspectorPanel_->RefreshBehaviors();
+    InvalidateRect(window_,nullptr,FALSE);
+    return valid;
+}
+bool EditorShell::Play()
+{
+    if (Playing()) return true;
+    for (const auto& editor:scriptEditors_) if (editor->Dirty())
+    { status_=L"Save your script edits (Ctrl+S) before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
+    SetFocus(window_); // Finish Inspector edits before snapshotting values/transforms.
+    if (!PrepareScripts() || !scriptHost_.Play(objects_)) { ReportScriptErrors(); return false; }
+    paused_=false; stepDraw_=false; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
+    status_=L"Playing - Stop restores transforms and discards runtime variable changes";
+    inspectorPanel_->RefreshBehaviors(); inspectorPanel_->RefreshLiveValues(); ReportScriptErrors();
+    InvalidateRect(window_,nullptr,FALSE);
+    return true;
+}
+void EditorShell::Stop()
+{
+    SetFocus(window_);
+    scriptHost_.Stop(objects_); paused_=false; stepDraw_=false; tickAccumulator_=0;
+    status_=L"Stopped - scene transforms restored";
+    PrepareScripts(); inspectorPanel_->RefreshLiveValues();
+    InvalidateRect(window_,nullptr,FALSE);
+}
+void EditorShell::SetPaused(bool paused)
+{
+    if (!Playing()) return;
+    paused_=paused; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
+    status_=paused?L"Paused - Step advances one 1/60 second tick":L"Playing";
+    InvalidateRect(window_,nullptr,FALSE);
+}
+void EditorShell::Step()
+{
+    if (!Playing()) return;
+    SetPaused(true); scriptHost_.Tick(objects_,1.0f/60.0f); stepDraw_=true;
+    inspectorPanel_->RefreshLiveValues(); ReportScriptErrors();
+}
+void EditorShell::ReportScriptErrors()
+{
+    for (std::size_t i=0;i<objects_.Size();++i)
+        for (std::size_t j=0;j<objects_.At(i).BehaviorCount();++j)
+            if (const auto* script=dynamic_cast<const zengine::ScriptBehavior*>(&objects_.At(i).BehaviorAt(j)))
+            {
+                const auto error=scriptHost_.Error(*script);
+                if (!error.empty())
+                {
+                    const auto text=WideText(objects_.At(i).Name()+": "+error);
+                    if (status_!=text) { status_=text; InvalidateRect(window_,&statusBar_,FALSE); }
+                    return;
+                }
+            }
 }
 
 ViewportFrame EditorShell::BuildSceneFrame() const
@@ -419,8 +510,8 @@ void EditorShell::Paint()
         FillRectangle(bufferContext, button, FieldColor);
         DrawBorder(bufferContext, button, BorderColor);
     }
-    DrawTextLabel(bufferContext, L"\u25b6", playButton, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-    DrawTextLabel(bufferContext, L"\u2016", pauseButton, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    DrawTextLabel(bufferContext, Playing()?L"\u25a0":L"\u25b6", playButton, Playing()?RGB(108,166,232):TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    DrawTextLabel(bufferContext, L"\u2016", pauseButton, paused_?RGB(108,166,232):TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     DrawTextLabel(bufferContext, L"\u25b8|", stepButton, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
     // Inspector content and edit controls are hosted by the reusable InspectorPanel child.
@@ -746,10 +837,15 @@ void EditorShell::OpenScript(const std::filesystem::path& path)
     for (const auto& editor : scriptEditors_)
         if (_wcsicmp(editor->Path().c_str(), resolved.c_str()) == 0) { editor->Show(); return; }
     auto editor = std::make_unique<ScriptEditor>(window_, assetsDirectory_, resolved);
+    editor->SetSavedHandler([this]() {
+        if (!Playing()) PrepareScripts();
+        else { status_=L"Script saved - Stop and Play to run the new code"; InvalidateRect(window_,&statusBar_,FALSE); }
+    });
     editor->Show(); scriptEditors_.push_back(std::move(editor));
 }
 bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::path& path)
 {
+    if (Playing()) { status_=L"Stop Play before attaching scripts."; InvalidateRect(window_,&statusBar_,FALSE); return false; }
     auto* object = objects_.Find(id);
     if (!object) return false;
     const auto file = zengine::scripts::Resolve(assetsDirectory_,path);
@@ -762,7 +858,8 @@ bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::
         { status_ = L"That script is already attached."; InvalidateRect(window_, &statusBar_, FALSE); return false; }
     object->AddBehavior<zengine::ScriptBehavior>(asset);
     SelectGameObject(id);
-    status_ = L"Attached " + file.filename().wstring() + L" to " + WideText(object->Name()) + L" (execution not connected yet)";
+    status_ = L"Attached " + file.filename().wstring() + L" to " + WideText(object->Name()) + L" - press Play to run";
+    PrepareScripts();
     InvalidateRect(window_, nullptr, FALSE);
     return true;
 }
@@ -993,6 +1090,13 @@ LRESULT EditorShell::HandleMessage(
     {
         SetFocus(window_);
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const int centerX=(viewportPanel_.left+viewportPanel_.right)/2;
+        const RECT play{centerX-42,viewportPanel_.top+4,centerX-14,viewportPanel_.top+26};
+        const RECT pause{centerX-12,viewportPanel_.top+4,centerX+16,viewportPanel_.top+26};
+        const RECT step{centerX+18,viewportPanel_.top+4,centerX+46,viewportPanel_.top+26};
+        if (PtInRect(&play,point)) { if (Playing()) Stop(); else Play(); return 0; }
+        if (PtInRect(&pause,point)) { SetPaused(!paused_); return 0; }
+        if (PtInRect(&step,point)) { Step(); return 0; }
         const RECT create = CreateObjectRectangle(), list = ObjectListRectangle();
         const RECT createScript = CreateScriptRectangle();
         if (PtInRect(&createScript, point)) { OpenScript(CreateScriptAsset()); return 0; }

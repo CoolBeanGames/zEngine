@@ -31,7 +31,7 @@ namespace zengine
     class GameObject;
     using GameObjectId = std::uint64_t;
 
-    // Ownership/extension point only: no scripting VM or execution lifecycle in this milestone.
+    // Native and script behaviors share scheduling data; the core never owns a scripting VM.
     class Behavior
     {
     public:
@@ -42,11 +42,32 @@ namespace zengine
         const GameObject& Owner() const noexcept { return owner_; }
         bool Enabled() const noexcept { return enabled_; }
         void SetEnabled(bool enabled) noexcept { enabled_ = enabled; }
+        float Priority() const noexcept { return priority_; }
+        void SetPriority(float priority);
+        bool Started() const noexcept { return started_; }
+        bool Faulted() const noexcept { return !error_.empty(); }
+        const std::string& Error() const noexcept { return error_; }
+        // Called only after full construction/ownership, never from a base constructor.
+        void Instantiate();
+        void Tick(float delta);
+        void Draw();
     protected:
         explicit Behavior(GameObject& owner) : owner_(owner) {}
+        virtual bool HasStart() const noexcept { return false; }
+        virtual bool HasUpdate() const noexcept { return false; }
+        virtual bool HasDraw() const noexcept { return false; }
+        virtual void OnStart() {}
+        virtual void OnUpdate(float) {}
+        virtual void OnDraw() {}
+        void ResetLifecycle() { started_ = false; error_.clear(); }
     private:
+        friend class BehaviorLifecycle;
         GameObject& owner_;
         bool enabled_ = true;
+        float priority_ = 0;
+        bool started_ = false;
+        bool starting_ = false;
+        std::string error_;
     };
 
     class ObjectStore;
@@ -65,6 +86,7 @@ namespace zengine
         const Transform& GetTransform() const noexcept { return transform_; }
         std::size_t BehaviorCount() const noexcept { return behaviors_.size(); }
         const Behavior& BehaviorAt(std::size_t index) const { return *behaviors_.at(index); }
+        Behavior& BehaviorAt(std::size_t index) { return *behaviors_.at(index); }
 
         template<class T, class... Args> T& AddBehavior(Args&&... args)
         {
@@ -72,6 +94,7 @@ namespace zengine
             auto behavior = std::make_unique<T>(*this, std::forward<Args>(args)...);
             T& result = *behavior;
             behaviors_.push_back(std::move(behavior));
+            result.Instantiate();
             return result;
         }
         template<class T> T* GetBehavior() noexcept

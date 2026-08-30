@@ -102,17 +102,114 @@ void InspectorPanel::Bind(zengine::GameObject* object)
     EndScrub(true);
     for (int index = 0; index < static_cast<int>(fields_.size()); ++index)
         if (GetFocus() == fields_[index].window) { FinishField(index, false); SetFocus(window_); }
+    for (std::size_t index=0;index<behaviorFields_.size();++index)
+        if (behaviorFields_[index].field.window && GetFocus()==behaviorFields_[index].field.window)
+        { FinishBehaviorField(index,false); SetFocus(window_); }
     object_ = object;
     RefreshFields();
     RefreshBehaviors();
 }
 void InspectorPanel::RefreshBehaviors()
 {
+    // Rebuild only at structural changes/save/session boundaries, never on each tick.
+    updating_=true;
+    for (auto& entry:behaviorFields_) if (entry.field.window) DestroyWindow(entry.field.window);
+    behaviorFields_.clear();
+    const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable) {
+        BehaviorField entry; entry.behavior=behavior; entry.name=std::move(name); entry.label=std::move(label); entry.priority=priority;
+        if (field)
+        {
+            const auto id=FirstBehaviorField+behaviorFields_.size();
+            entry.field.window=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|ES_AUTOHSCROLL|(editable?0:ES_READONLY),
+                0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
+            if (!entry.field.window) throw std::runtime_error("Cannot create script field.");
+            SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+            SendMessageW(entry.field.window,EM_SETLIMITTEXT,4096,0);
+            SetWindowSubclass(entry.field.window,EditProcedure,1,reinterpret_cast<DWORD_PTR>(this));
+        }
+        behaviorFields_.push_back(std::move(entry));
+    };
+    if (object_) for (std::size_t i=0;i<object_->BehaviorCount();++i)
+    {
+        auto& behavior=object_->BehaviorAt(i);
+        auto* script=dynamic_cast<zengine::ScriptBehavior*>(&behavior);
+        add(&behavior,{},script?Wide(script->Asset()):L"Mesh Renderer",false,false,false);
+        add(&behavior,{},L"Priority (higher runs first)",true,true,true);
+        if (script && scriptHost_)
+        {
+            const auto error=scriptHost_->Error(*script);
+            if (!error.empty()) add(&behavior,{},L"Error: "+Wide(error),false,false,false);
+            for (const auto& field:scriptHost_->Fields(*script))
+                add(&behavior,field.name,field.name.empty()?Wide(field.label):Wide(field.name+" ("+field.type+")"),false,!field.name.empty(),field.editable);
+        }
+    }
+    for (std::size_t i=0;i<behaviorFields_.size();++i) if (auto control=behaviorFields_[i].field.window)
+    {
+        const auto value=BehaviorValue(i);
+        SetWindowTextW(control,value.c_str()); behaviorFields_[i].field.focusText=value;
+    }
+    updating_=false;
     EnableWindow(addScriptButton_, object_ != nullptr);
     EnableWindow(addBehaviorButton_, object_ != nullptr);
     const auto* mesh = object_ ? object_->GetBehavior<zengine::MeshRenderer>() : nullptr;
     SendMessageW(meshEnabled_, BM_SETCHECK, mesh && mesh->Enabled() ? BST_CHECKED : BST_UNCHECKED, 0);
     Layout();
+}
+
+int InspectorPanel::BehaviorHeight() const
+{
+    int height=0;
+    for (const auto& entry:behaviorFields_) height+=entry.field.window?52:24;
+    return height;
+}
+std::wstring InspectorPanel::BehaviorValue(std::size_t index)
+{
+    const auto& entry=behaviorFields_.at(index);
+    if (entry.priority) { std::wostringstream out; out<<std::setprecision(9)<<entry.behavior->Priority(); return out.str(); }
+    if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
+        for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name) return Wide(field.value);
+    return {};
+}
+void InspectorPanel::ChangeBehaviorField(std::size_t index)
+{
+    if (updating_) return;
+    auto& entry=behaviorFields_.at(index);
+    try
+    {
+        const auto text=ReadText(entry.field.window);
+        if (entry.priority)
+        {
+            wchar_t* end=nullptr; errno=0;
+            float value=std::wcstof(text.c_str(),&end);
+            if (end==text.c_str()) throw std::invalid_argument("Invalid priority");
+            while (*end && std::iswspace(*end)) ++end;
+            if (*end || errno==ERANGE || !std::isfinite(value)) throw std::invalid_argument("Invalid priority");
+            entry.behavior->SetPriority(value);
+        }
+        else if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
+            scriptHost_->SetField(*script,entry.name,Utf8(text));
+        entry.field.valid=true;
+    }
+    catch (const std::exception&) { entry.field.valid=false; }
+    InvalidateRect(entry.field.window,nullptr,FALSE);
+}
+void InspectorPanel::FinishBehaviorField(std::size_t index, bool cancel)
+{
+    auto& entry=behaviorFields_.at(index);
+    if (cancel) { updating_=true; SetWindowTextW(entry.field.window,entry.field.focusText.c_str()); updating_=false; ChangeBehaviorField(index); }
+    const auto value=BehaviorValue(index);
+    updating_=true; SetWindowTextW(entry.field.window,value.c_str()); updating_=false;
+    entry.field.valid=true; entry.field.focusText=value;
+}
+void InspectorPanel::RefreshLiveValues()
+{
+    for (int i=2;i<static_cast<int>(fields_.size());++i)
+        if (GetFocus()!=fields_[i].window && pressed_!=i) SetText(i,FieldValue(i));
+    updating_=true;
+    for (std::size_t i=0;i<behaviorFields_.size();++i)
+        if (const auto control=behaviorFields_[i].field.window; control && GetFocus()!=control)
+        { SetWindowTextW(control,BehaviorValue(i).c_str()); behaviorFields_[i].field.valid=true; }
+    updating_=false;
 }
 
 float InspectorPanel::Value(int index) const
@@ -221,9 +318,9 @@ void InspectorPanel::Layout()
 {
     RECT client{}; GetClientRect(window_, &client);
     const bool narrow = client.right < 250;
-    const int behaviorRows = object_ ? static_cast<int>(object_->BehaviorCount()) : 0;
+    const int behaviorHeight = BehaviorHeight();
     const bool hasMesh = object_ && object_->GetBehavior<zengine::MeshRenderer>();
-    const int contentHeight = (narrow ? 480 : 430) + behaviorRows * 24 + (hasMesh ? 122 : 0);
+    const int contentHeight = (narrow ? 480 : 430) + behaviorHeight + (hasMesh ? 122 : 0);
     SCROLLINFO scroll{sizeof(scroll), SIF_RANGE | SIF_PAGE | SIF_POS};
     scroll.nMin = 0; scroll.nMax = contentHeight - 1; scroll.nPage = static_cast<UINT>(client.bottom);
     scroll_ = std::clamp(scroll_, 0, std::max(0, contentHeight - static_cast<int>(client.bottom)));
@@ -244,7 +341,13 @@ void InspectorPanel::Layout()
         }
         MoveWindow(fields_[index].window, x, y - scroll_, w, 24, TRUE);
     }
-    int y = (width >= 250 ? 326 : 375) + behaviorRows * 24 - scroll_;
+    int y = (width >= 250 ? 321 : 370) - scroll_;
+    for (auto& entry:behaviorFields_)
+    {
+        if (entry.field.window) MoveWindow(entry.field.window,12,y+21,std::max(30,width-24),24,TRUE);
+        y+=entry.field.window?52:24;
+    }
+    y+=5;
     for (HWND control : {meshEnabled_,chooseMesh_,cubeMesh_,clearMesh_}) ShowWindow(control,hasMesh ? SW_SHOW : SW_HIDE);
     if (hasMesh)
     {
@@ -280,22 +383,17 @@ void InspectorPanel::Paint()
         label(names[row], 12, width >= 250 ? 170 + row * 37 : 164 + row * 54, width >= 250 ? 54 : width - 24);
     label(L"Rotation: degrees | Shift-drag: fine", 12, width >= 250 ? 275 : 324, width - 24);
     label(object_ && object_->BehaviorCount() ? L"Behaviors attached" : L"No behaviors attached", 12, width >= 250 ? 297 : 346, width - 24);
-    if (object_)
-        for (std::size_t i = 0; i < object_->BehaviorCount(); ++i)
-        {
-            const auto* script = dynamic_cast<const zengine::ScriptBehavior*>(&object_->BehaviorAt(i));
-            const auto* mesh = dynamic_cast<const zengine::MeshRenderer*>(&object_->BehaviorAt(i));
-            const auto name = script ? Wide(script->Asset()) : mesh ? L"Mesh Renderer" : L"Native behavior";
-            label(name.c_str(), 18, (width >= 250 ? 321 : 370) + static_cast<int>(i)*24, width-30);
-        }
+    int rowY=width>=250?321:370;
+    for (const auto& entry:behaviorFields_)
+    { label(entry.label.c_str(),12,rowY,width-24); rowY+=entry.field.window?52:24; }
     const auto* mesh = object_ ? object_->GetBehavior<zengine::MeshRenderer>() : nullptr;
-    const int base = (width >= 250 ? 326 : 375) + (object_ ? static_cast<int>(object_->BehaviorCount())*24 : 0);
+    const int base = (width >= 250 ? 326 : 375) + BehaviorHeight();
     if (mesh)
     {
         const auto asset = mesh->Asset().empty() ? L"Model: None" : mesh->Asset() == zengine::MeshRenderer::CubeAsset ? L"Model: Built-in Cube" : L"Model: " + Wide(mesh->Asset());
         label(asset.c_str(),12,base+27,width-24);
     }
-    label(L"Scripts do not execute yet", 12, base + (mesh ? 122 : 0) + 66, width-24);
+    label(scriptHost_ && scriptHost_->Playing() ? L"Play: variable edits are temporary" : L"Scripts run in Play mode", 12, base + (mesh ? 122 : 0) + 66, width-24);
     EndPaint(window_, &paint);
 }
 LRESULT CALLBACK InspectorPanel::WindowProcedure(HWND window, UINT message, WPARAM w, LPARAM l)
@@ -319,6 +417,14 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_ERASEBKGND: return 1;
     case WM_COMMAND:
     {
+        const int dynamicIndex=LOWORD(w)-FirstBehaviorField;
+        if (dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()))
+        {
+            if (!updating_ && HIWORD(w)==EN_CHANGE) ChangeBehaviorField(dynamicIndex);
+            if (!updating_ && HIWORD(w)==EN_SETFOCUS) behaviorFields_[dynamicIndex].field.focusText=BehaviorValue(dynamicIndex);
+            if (!updating_ && HIWORD(w)==EN_KILLFOCUS) FinishBehaviorField(dynamicIndex,false);
+            return 0;
+        }
         if (LOWORD(w) == AddBehaviorButton && HIWORD(w) == BN_CLICKED && object_)
         {
             const auto menu = CreatePopupMenu();
@@ -355,7 +461,9 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_CTLCOLOREDIT: case WM_CTLCOLORSTATIC:
     {
         const int index = GetDlgCtrlID(reinterpret_cast<HWND>(l)) - NameField;
-        const bool valid = index < 0 || index >= static_cast<int>(fields_.size()) || fields_[index].valid;
+        const int dynamicIndex=GetDlgCtrlID(reinterpret_cast<HWND>(l))-FirstBehaviorField;
+        const bool valid = dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()) ? behaviorFields_[dynamicIndex].field.valid :
+            index < 0 || index >= static_cast<int>(fields_.size()) || fields_[index].valid;
         SetTextColor(reinterpret_cast<HDC>(w), Text);
         SetBkColor(reinterpret_cast<HDC>(w), valid ? RGB(52, 54, 60) : RGB(92, 45, 45));
         return reinterpret_cast<LRESULT>(valid ? fieldBrush_ : invalidBrush_);
@@ -381,6 +489,25 @@ LRESULT CALLBACK InspectorPanel::EditProcedure(HWND window, UINT message, WPARAM
 }
 LRESULT InspectorPanel::HandleEdit(HWND window, UINT message, WPARAM w, LPARAM l)
 {
+    const int dynamicIndex=GetDlgCtrlID(window)-FirstBehaviorField;
+    if (dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()))
+    {
+        if (message==WM_GETDLGCODE) return DLGC_WANTALLKEYS;
+        if (message==WM_KEYDOWN && (w==VK_RETURN || w==VK_ESCAPE || w==VK_TAB))
+        {
+            FinishBehaviorField(dynamicIndex,w==VK_ESCAPE);
+            HWND next=window_;
+            if (w==VK_TAB)
+            {
+                const int step=(GetKeyState(VK_SHIFT)&0x8000)?-1:1;
+                for (int i=dynamicIndex+step;i>=0 && i<static_cast<int>(behaviorFields_.size());i+=step)
+                    if (behaviorFields_[i].field.window) { next=behaviorFields_[i].field.window; break; }
+            }
+            SetFocus(next); return 0;
+        }
+        if (message==WM_CHAR && (w==VK_RETURN || w==VK_ESCAPE || w==VK_TAB)) return 0;
+        return DefSubclassProc(window,message,w,l);
+    }
     const int index = GetDlgCtrlID(window) - NameField;
     if (message == WM_GETDLGCODE) return DLGC_WANTALLKEYS;
     if (message == WM_KEYDOWN && (w == VK_RETURN || w == VK_ESCAPE || w == VK_TAB))

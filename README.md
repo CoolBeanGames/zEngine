@@ -2,7 +2,7 @@
 
 zEngine currently contains a small Direct3D 11 renderer hosted inside a lightweight native Windows editor shell. The scene viewport initially renders an indexed, depth-tested cube. Each cube vertex receives a random color when the program starts, and a directional light is calculated in the vertex shader. The cube/model is now controlled by its GameObject transform instead of automatically rotating.
 
-The editor provides an options bar, resizable scene browser, resizable inspector, resizable media library, central scene viewport, and status/progress bar. Drag the narrow gaps between panels to resize them. FBX import, multi-object mesh rendering, GameObject creation, script editing/attachment, and inspector editing are functional; the top options menus, Add Folder, and play controls remain placeholders.
+The editor provides an options bar, resizable scene browser, resizable inspector, resizable media library, central scene viewport, and status/progress bar. Drag the narrow gaps between panels to resize them. FBX import, multi-object mesh rendering, GameObject creation, script editing/execution, Inspector variables, and Play/Pause/Step are functional; the top options menus and Add Folder remain placeholders.
 
 ## GameObjects and transforms
 
@@ -14,7 +14,7 @@ The editor provides an options bar, resizable scene browser, resizable inspector
 
 An empty object contains only its transform and metadata: it has no mesh and no behaviors by default. The selected object's **editor-only colored axes** show its position, orientation, and scale (X red, Y green, Z blue), against a world grid. These guides are not runtime GameObject components. The initial Color Cube is a regular GameObject with a Mesh Renderer behavior. Moving one object never changes another object's transform. Moving objects far from the fixed camera can move them out of view; camera navigation is not implemented yet.
 
-This is an **in-memory foundation only**. Scene/project management, parenting, serialization, undo/redo, viewport picking/manipulator dragging, script execution, and behavior lifecycle callbacks are intentionally deferred. GameObject edits are not saved on exit.
+Scene/project management, parenting, serialization, scene undo/redo, and viewport picking/manipulator dragging are still deferred. GameObjects, attachments, priorities, and Inspector overrides are **in-memory only** and are not saved on exit. Script source files do persist on disk.
 
 ### Module boundaries
 
@@ -29,13 +29,54 @@ This follows the component ownership pattern described in Unity's [GameObject re
 - Click **+ New Script** in the Media Library, or right-click the library and choose **Create Behavior Script (.zsh)**. This creates `NewBehavior.zsh` (numbered automatically when that name exists) under the current project's `Assets` folder, with `start`, `update(float delta)`, and `draw` hooks, and opens it for editing.
 - Double-click a `.zsh` asset to open its resizable script window. Each file has a single editor window. Keywords, built-in types, numbers, strings, and comments are colored; **Tab** inserts four spaces and **Ctrl+Z/Ctrl+Y** undo/redo text edits.
 - Use **Save / Ctrl+S** to save UTF-8 text, and **Reload / Ctrl+R** to load disk changes. A `*` in the title marks unsaved edits. Closing a script or the main editor asks whether to save, discard, or cancel. Saves use a temporary file followed by replacement and reject overwriting a file changed externally since loading. Invalid source can still be saved while you work.
-- Malformed strings, block comments, unmatched brackets, and unexpected characters get an error background/underline, with line/column messages below the source. **Go to first error** selects and scrolls to the first problem. This branch currently provides **basic lexical/structural checks, not full language validation**: unknown names, type mismatches, missing semicolons, and other grammar errors require the compiler. Once `scripting/src/Script.cpp` and its public header are merged into this checkout, reconfigure CMake to enable compiler diagnostics automatically. No dependency on a sibling worktree is used.
+- Full compiler diagnostics (unknown names, type mismatches, missing semicolons, etc.) and lexical checks show an error background/underline with source line/column messages. **Go to first error** selects and scrolls to the first problem. `export`, `label`, `GameObject`, `Transform`, and `Vector3` are syntax-highlighted.
 - Select a GameObject and click **+ Add Script** in the Inspector, then choose a `.zsh` file inside this project's Assets directory. Alternatively, drag a library script onto a specific **Scene Browser object row** or the selected object's **Inspector**. Multiple different scripts are supported; duplicate attachments are rejected. The Inspector lists attached project-relative asset paths.
 - Right-click **Refresh Assets** to discover `.zsh` files added externally (including subfolders); existing scripts are also discovered on startup. External script drops/import, script renaming, and behavior removal are not implemented yet.
 
-Script files persist on disk, but **attachments are currently in-memory GameObject data and do not survive editor exit** until scene serialization is added. Attaching a script does **not execute it**: the scripting runtime's lifecycle/scene bridge remains a separate milestone. `.zsh` here is zEngine source, not a shell script, and is never launched through the OS.
+Script files persist on disk, but **attachments are currently in-memory GameObject data and do not survive editor exit** until scene serialization is added. Attaching a script compiles its metadata and initializes an isolated preview for Inspector defaults, but does **not run lifecycle hooks**. Hooks run only in Play mode. `.zsh` here is zEngine source, not a shell script, and is never launched through the OS.
 
-The lightweight `zEngineScriptTools` library owns script file operations, lexical diagnostics, and the native Windows RichEdit editor. `ScriptBehavior` in `zEngineCore` only stores a project-relative asset reference; neither the renderer nor core depends on the editor or compiler. Source files are limited to 256 KiB, diagnostics to 100 lexical errors, and coloring to 8,000 tokens per refresh to keep pathological inputs bounded. Syntax coloring is debounced by 250 ms and excluded from text undo history.
+The lightweight `zEngineScriptTools` library owns script file operations, diagnostics, and the native Windows RichEdit editor. `ScriptBehavior` in `zEngineCore` stores a project-relative asset reference and an optional abstract script instance. Neither the renderer nor core depends on the editor or compiler. Source files are limited to 256 KiB, lexical diagnostics to 100 errors, and coloring to 8,000 tokens per refresh. Syntax coloring is debounced by 250 ms and excluded from text undo history.
+
+### Run a movement script
+
+Create `NewBehavior.zsh`, replace its contents with the following, save it, and attach it to the Color Cube. Keep the behavior class name identical to the filename without `.zsh` (numbered files need the matching numbered class).
+
+```cpp
+class NewBehavior : gameObject
+{
+    label("Movement");
+    export float speed = 1;
+    export Vector3 direction = Vector3(1, 0, 0);
+    export bool moving = true;
+
+    float elapsed = 0; // Normal field: usable in code, hidden in the Inspector.
+
+    func start()
+    {
+        elapsed = 0;
+    }
+
+    func update(float delta)
+    {
+        elapsed += delta;
+        if (moving)
+        {
+            transform.position += direction * speed * delta;
+            transform.rotation.y += 30 * delta;
+        }
+    }
+}
+```
+
+- **Play** (triangle in the Scene header) creates independent runtime instances, applies authored variable overrides, and runs nonempty `start` hooks once. Compile/initialization failures prevent the scene from starting. Save dirty script documents before Play.
+- The triangle becomes **Stop** (square). Stop destroys runtime instances and restores the transforms captured at Play, discarding runtime variable changes. **Pause** freezes Update and Draw; **Step** advances one 1/60-second Update and one Draw on the next render.
+- Nonempty `update(float delta)` runs at a fixed 60 Hz; `delta` is seconds. Catch-up is capped to 0.1 seconds per frame to avoid a backlog after stalls. Nonempty `draw()` runs once per rendered frame only if the owner has an enabled Mesh Renderer with a loaded mesh submitted to that frame. Editor axes/grid do not qualify. This is submission gating, not pixel-visibility/occlusion testing.
+- Each behavior has a finite floating-point **Priority**, default 0. Higher runs first, including fractional/negative values. Equal-priority behaviors are shuffled independently for Start batches, Update ticks, and Draw phases. Mid-phase priority changes apply next phase. Native behaviors start immediately after full construction/ownership; script instances start when bound for Play.
+- `export` exposes `int`, `float`, `bool`, `string`, and `Vector3` fields. Enter booleans as `true`/`false`, vectors as `x, y, z`, and strings without surrounding quotes. `label("text");` inserts text in declaration order, with inherited entries first. Other fields remain hidden. Exported class references are shown read-only; native cross-object reference assignment is not available yet.
+- Valid edits apply immediately. Invalid/incomplete entries turn red without changing the last valid value. Enter or leaving the field commits/reverts invalid text; Escape cancels, Tab/Shift-Tab moves between fields. Overrides made before Play survive Stop and compatible source saves in this session. Changes made during Play are temporary. To persist a default across editor restarts, change it in the `.zsh` source for now.
+- Saved code changes apply on the next Play, not midway through an active instance. Runtime errors identify the asset and source location in the status bar and stop only the failing behavior until the next Play. A failed callback does not partially copy its transform back to the native object. Moving beyond the fixed camera will take an object out of view.
+
+`zEngineScripting` is the standalone compiler/VM. `zEngineScriptHost` is a separate platform-independent adapter linking that VM to the core, with no filesystem, Win32, or renderer dependencies. `BehaviorLifecycle` in the core handles scheduling. The editor supplies saved source, session controls, and render-submission eligibility. Each attachment owns a bounded VM context; compiled definitions can be shared, but mutable fields are independent. All three transform vectors synchronize before/after each callback, so scripts on the same GameObject see earlier scripts' changes in priority order. Cross-object scene lookup/binding, hot reload, behavior removal, and scene persistence remain future work. See `scripting/README.md` for language syntax and runtime limits.
 
 ## Mesh Renderer behavior
 

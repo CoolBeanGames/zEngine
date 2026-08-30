@@ -122,7 +122,9 @@ bool ScriptEditor::Save()
         for (wchar_t c : raw) { if (c == L'\r') text += L"\r\n"; else text += c; }
         const auto bytes = Utf8(text);
         zengine::scripts::Save(assets_, path_, bytes, &loaded_);
-        loaded_ = bytes; dirty_ = false; Title(); Highlight(); return true;
+        loaded_ = bytes; dirty_ = false; Title(); Highlight();
+        if (saved_) saved_();
+        return true;
     }
     catch (const std::exception& e) { MessageBoxW(window_, Wide(e.what()).c_str(), L"Script save failed", MB_OK | MB_ICONERROR); return false; }
 }

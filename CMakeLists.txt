@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(zEngine VERSION 0.1.0 LANGUAGES C CXX)
+include(CTest)
+add_subdirectory(scripting)
 
-add_library(zEngineCore STATIC src/core/GameObject.cpp)
+add_library(zEngineCore STATIC src/core/GameObject.cpp src/core/BehaviorLifecycle.cpp)
 target_compile_features(zEngineCore PUBLIC cxx_std_20)
 target_include_directories(zEngineCore PUBLIC src)
 
@@ -19,15 +21,11 @@ target_compile_features(zEngineScriptTools PUBLIC cxx_std_20)
 target_include_directories(zEngineScriptTools PUBLIC src)
 target_compile_definitions(zEngineScriptTools PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(zEngineScriptTools PRIVATE comctl32 ole32)
-# Automatically enable full diagnostics once the independent scripting branch is merged.
-# Do not reach into a sibling worktree or copy its uncommitted implementation.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/scripting/src/Script.cpp")
-    add_library(zEngineScriptCompiler STATIC scripting/src/Script.cpp)
-    target_compile_features(zEngineScriptCompiler PUBLIC cxx_std_20)
-    target_include_directories(zEngineScriptCompiler PUBLIC scripting/include)
-    target_link_libraries(zEngineScriptTools PRIVATE zEngineScriptCompiler)
-    target_compile_definitions(zEngineScriptTools PRIVATE ZENGINE_SCRIPT_COMPILER)
-endif()
+target_link_libraries(zEngineScriptTools PRIVATE zEngineScripting)
+target_compile_definitions(zEngineScriptTools PRIVATE ZENGINE_SCRIPT_COMPILER)
+add_library(zEngineScriptHost STATIC src/ScriptHost.cpp)
+target_link_libraries(zEngineScriptHost PUBLIC zEngineCore zEngineScripting)
+target_compile_features(zEngineScriptHost PUBLIC cxx_std_20)
 
 add_executable(zEngine WIN32
     src/Main.cpp
@@ -59,6 +57,7 @@ target_link_libraries(zEngine PRIVATE
     comctl32
     comdlg32
     zEngineScriptTools
+    zEngineScriptHost
 )
 
 if(MSVC)
@@ -76,6 +75,14 @@ add_custom_command(TARGET zEngine POST_BUILD
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(zEngineScriptHostTests tests/ScriptHostTests.cpp)
+    target_link_libraries(zEngineScriptHostTests PRIVATE zEngineScriptHost)
+    add_test(NAME ScriptHostIntegration COMMAND zEngineScriptHostTests)
+    set_tests_properties(ScriptHostIntegration PROPERTIES TIMEOUT 30)
+    add_executable(zEngineLifecycleTests tests/LifecycleTests.cpp)
+    target_link_libraries(zEngineLifecycleTests PRIVATE zEngineCore)
+    add_test(NAME BehaviorLifecycle COMMAND zEngineLifecycleTests)
+    set_tests_properties(BehaviorLifecycle PROPERTIES TIMEOUT 30)
     add_executable(zEngineScriptEditorTests tests/ScriptEditorTests.cpp)
     target_link_libraries(zEngineScriptEditorTests PRIVATE zEngineScriptTools zEngineCore)
     target_compile_definitions(zEngineScriptEditorTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -88,12 +95,14 @@ if(BUILD_TESTING)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
     target_compile_definitions(zEngineAssetTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
         TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
-    target_link_libraries(zEngineAssetTests PRIVATE zEngineAssets zEngineCore zEngineScriptTools d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 comctl32 comdlg32)
+    target_link_libraries(zEngineAssetTests PRIVATE zEngineAssets zEngineCore zEngineScriptTools zEngineScriptHost d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 comctl32 comdlg32)
     add_dependencies(zEngineAssetTests zEngine)
     add_test(NAME FbxImport COMMAND zEngineAssetTests)
     add_test(NAME RendererAlbedo COMMAND zEngineAssetTests --gpu)
     add_test(NAME EditorDragDrop COMMAND zEngineAssetTests --editor)
     add_test(NAME GameObjectInspector COMMAND zEngineAssetTests --objects)
     add_test(NAME MeshRendererBehavior COMMAND zEngineAssetTests --meshes)
+    add_test(NAME ScriptEditorIntegration COMMAND zEngineAssetTests --scripts)
+    set_tests_properties(ScriptEditorIntegration PROPERTIES TIMEOUT 60)
     set_tests_properties(GameObjectCore FbxImport RendererAlbedo EditorDragDrop GameObjectInspector MeshRendererBehavior PROPERTIES TIMEOUT 60)
 endif()

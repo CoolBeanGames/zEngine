@@ -23,6 +23,41 @@ void zengine::Transform::SetPosition(Vec3 value) { Validate(value); position_ = 
 void zengine::Transform::SetRotation(Vec3 value) { Validate(value); rotation_ = value; }
 void zengine::Transform::SetScale(Vec3 value) { Validate(value); scale_ = value; }
 
+void zengine::Behavior::SetPriority(float value)
+{
+    if (!std::isfinite(value)) throw std::invalid_argument("Behavior priority must be finite.");
+    priority_ = value;
+}
+void zengine::Behavior::Instantiate()
+{
+    if (started_) return;
+    started_ = true; // Reentrant calls cannot run Start twice.
+    starting_ = true;
+    try { if (HasStart()) OnStart(); }
+    catch (const std::exception& e) { error_ = e.what(); if (error_.empty()) error_ = "Behavior start failed."; }
+    catch (...) { error_ = "Unknown behavior start failure."; }
+    starting_ = false;
+}
+void zengine::Behavior::Tick(float delta)
+{
+    if (!std::isfinite(delta) || delta < 0) throw std::invalid_argument("Tick delta must be finite and nonnegative.");
+    if (!enabled_ || Faulted() || starting_) return;
+    Instantiate();
+    if (Faulted()) return;
+    try { if (HasUpdate()) OnUpdate(delta); }
+    catch (const std::exception& e) { error_ = e.what(); if (error_.empty()) error_ = "Behavior update failed."; }
+    catch (...) { error_ = "Unknown behavior update failure."; }
+}
+void zengine::Behavior::Draw()
+{
+    if (!enabled_ || Faulted() || starting_) return;
+    Instantiate();
+    if (Faulted()) return;
+    try { if (HasDraw()) OnDraw(); }
+    catch (const std::exception& e) { error_ = e.what(); if (error_.empty()) error_ = "Behavior draw failed."; }
+    catch (...) { error_ = "Unknown behavior draw failure."; }
+}
+
 zengine::GameObject::GameObject(GameObjectId id, std::string name) : id_(id) { SetName(std::move(name)); }
 void zengine::GameObject::SetName(std::string name)
 {

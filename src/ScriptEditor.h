@@ -2,6 +2,7 @@
 #include "ScriptAssets.h"
 #include <windows.h>
 #include <commctrl.h>
+#include <functional>
 
 // Native RichEdit window; no renderer or VM ownership. One document per window.
 class ScriptEditor final
@@ -14,6 +15,8 @@ public:
     bool ConfirmClose();
     HWND Window() const { return window_; }
     const std::filesystem::path& Path() const { return path_; }
+    bool Dirty() const noexcept { return dirty_; }
+    void SetSavedHandler(std::function<void()> handler) { saved_ = std::move(handler); }
 private:
     static LRESULT CALLBACK WindowProcedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK EditProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
@@ -32,4 +35,5 @@ private:
     HFONT font_ = nullptr;
     bool dirty_ = false, formatting_ = false;
     zengine::scripts::Analysis analysis_;
+    std::function<void()> saved_;
 };

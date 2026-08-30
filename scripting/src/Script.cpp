@@ -575,6 +575,11 @@ ScriptError::ScriptError(Diagnostic diagnostic)
 Program::Program(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
 ProgramStats Program::Stats() const { return impl_->stats; }
 bool Program::HasClass(std::string_view name) const { return impl_->classes.contains(Canonical(std::string(name))); }
+bool Program::IsGameObject(std::string_view name) const { return impl_->Assignable("gameObject", Canonical(std::string(name))); }
+bool Program::HasCode(std::string_view className, std::string_view method) const {
+    const auto* f = impl_->Method(Canonical(std::string(className)), std::string(method));
+    return f && !f->code.empty();
+}
 const std::vector<InspectorEntry>& Program::InspectorLayout(std::string_view className) const {
     auto found = impl_->classes.find(Canonical(std::string(className)));
     if (found == impl_->classes.end()) Fail(impl_->source, {}, "Unknown class '" + std::string(className) + "'");

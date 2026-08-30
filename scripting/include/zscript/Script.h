@@ -59,6 +59,8 @@ public:
     struct Impl;
     ProgramStats Stats() const;
     bool HasClass(std::string_view name) const;
+    bool IsGameObject(std::string_view name) const;
+    bool HasCode(std::string_view className, std::string_view method) const;
     // Reference remains valid for this Program lifetime. Unknown classes throw ScriptError.
     const std::vector<InspectorEntry>& InspectorLayout(std::string_view className) const;
 private:

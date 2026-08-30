@@ -5,6 +5,8 @@
 #include "InspectorPanel.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
+#include "ScriptAssets.h"
+#include "ScriptEditor.h"
 #include <objbase.h>
 #include <shlobj.h>
 
@@ -402,6 +404,79 @@ namespace
     }
 }
 
+void ScriptIntegrationEditorTests(bool capture)
+{
+    TestDirectory test;
+    Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM init failed");
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        const auto window=editor.Create(SW_HIDE,test.path); editor.InitializeRenderer();
+        const auto cube=editor.SelectedGameObject()->Id();
+        const auto path=editor.CreateScriptAsset();
+        editor.OpenScript(path);
+        HWND scriptWindow=nullptr;
+        for (HWND candidate=FindWindowExW(nullptr,nullptr,L"zEngineScriptEditor",nullptr); candidate;
+             candidate=FindWindowExW(nullptr,candidate,L"zEngineScriptEditor",nullptr))
+            if (GetWindow(candidate,GW_OWNER)==window) { scriptWindow=candidate; break; }
+        Require(scriptWindow!=nullptr,"Script editor did not open");
+        const auto source=GetDlgItem(scriptWindow,ScriptEditor::SourceControl);
+        Require(source!=nullptr,"Script source editor missing");
+        const wchar_t* code=LR"(class NewBehavior : gameObject {
+            label("Movement"); export float speed=2; export Vector3 direction=Vector3(1,0,0);
+            export int ticks=0; export int draws=0;
+            func start() { transform.position.y+=speed; }
+            func update(float dt) { ticks+=1; transform.position+=direction*speed*dt; }
+            func draw() { draws+=1; transform.rotation.z+=1; }
+        })";
+        SetWindowTextW(source,code);
+        Require(!editor.Play(),"Play must reject unsaved documents");
+        SendMessageW(scriptWindow,WM_COMMAND,ScriptEditor::SaveCommand,0);
+        Require(zengine::scripts::Load(path).find("export float speed=2")!=std::string::npos,"Script save not on disk");
+        Require(editor.AttachScript(cube,path),"Attach script to cube failed");
+        const auto inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
+        const auto field=[&](int row) { return GetDlgItem(inspector,InspectorPanel::FirstBehaviorField+row); };
+        // Mesh title/priority, script title/priority, Movement label, then variables.
+        Require(field(3) && field(5) && field(6) && field(7),"Dynamic priority/variable controls missing");
+        SetWindowTextW(field(3),L"1.5"); SetWindowTextW(field(5),L"6");
+        SetWindowTextW(field(6),L"2, 0, 0");
+        SetWindowTextW(field(5),L"nan"); SendMessageW(field(5),WM_KEYDOWN,VK_RETURN,0);
+        wchar_t text[64]{}; GetWindowTextW(field(5),text,64);
+        Require(std::wstring(text)==L"6","Invalid exported input did not revert");
+        Require(editor.SelectedGameObject()->BehaviorAt(1).Priority()==1.5f,"Priority control did not edit behavior");
+        auto& empty=editor.CreateEmptyGameObject(); const auto emptyId=empty.Id();
+        Require(editor.AttachScript(emptyId,path),"Attach to empty object failed");
+        Require(editor.Play(),"Editor Play failed"); editor.SetPaused(true);
+        Require(editor.GameObjects().Find(cube)->GetTransform().Position().y==6 && empty.GetTransform().Position().y==2,"Start/independent exported values failed");
+        editor.Step(); editor.Render();
+        const auto& cubeTransform=editor.GameObjects().Find(cube)->GetTransform();
+        Require(std::abs(cubeTransform.Position().x-0.2f)<0.0001f,"Script did not move rendered cube");
+        Require(cubeTransform.Rotation().z==1 && empty.GetTransform().Rotation().z==0,"Draw was not gated by Mesh Renderer submission");
+        editor.Render(); Require(cubeTransform.Rotation().z==1,"Paused Draw continued running");
+        editor.Stop(); Require(cubeTransform.Position().x==0 && cubeTransform.Position().y==0 && cubeTransform.Rotation().z==0,"Stop failed to restore scene");
+        // Selection + saved source edits rebuild metadata while preserving author overrides.
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(50,140));
+        SetWindowTextW(source,(std::wstring(code)+L"\n// saved change").c_str());
+        SendMessageW(scriptWindow,WM_COMMAND,ScriptEditor::SaveCommand,0);
+        GetWindowTextW(field(5),text,64); Require(std::wstring(text)==L"6","Save/reload lost Inspector override");
+        SetFocus(field(5)); SetWindowTextW(field(5),L"9"); SendMessageW(field(5),WM_KEYDOWN,VK_ESCAPE,0);
+        GetWindowTextW(field(5),text,64); Require(std::wstring(text)==L"6","Escape failed to restore exported value");
+        if (capture)
+        {
+            SendMessageW(inspector,WM_VSCROLL,SB_PAGEDOWN,0);
+            SendMessageW(inspector,WM_VSCROLL,SB_PAGEDOWN,0);
+            editor.Render(); CaptureWindow(window,L"script-integration-qa.bmp");
+        }
+        SetWindowTextW(source,L"class NewBehavior : gameObject { func update(float dt) { missing=1; } }");
+        SendMessageW(scriptWindow,WM_COMMAND,ScriptEditor::SaveCommand,0);
+        Require(!editor.Play() && !editor.Playing(),"Compile error allowed Play");
+        Require(cubeTransform.Position().x==0,"Compile failure changed scene");
+        SetWindowTextW(source,code); SendMessageW(scriptWindow,WM_COMMAND,ScriptEditor::SaveCommand,0);
+        Require(editor.Play(),"Could not recover from compilation error"); editor.Stop();
+    }
+    CoUninitialize();
+    std::cout<<"PASS: create/edit/save .zsh, attach, Inspector variables/priority, Play/Step/Stop, actual mesh movement, draw gate, compile recovery\n";
+}
+
 int main(int argc, char** argv)
 {
     try
@@ -410,6 +485,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--scripts") ScriptIntegrationEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc == 1) ImportTests();
         else throw std::runtime_error("Unknown test mode");
         return 0;

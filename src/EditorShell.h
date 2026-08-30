@@ -14,6 +14,8 @@
 #include "RenderScene.h"
 #include "ModelData.h"
 #include "core/GameObject.h"
+#include "ScriptHost.h"
+#include <chrono>
 
 class Renderer;
 class InspectorPanel;
@@ -31,6 +33,11 @@ public:
     [[nodiscard]] HWND Create(int showCommand, const std::filesystem::path& projectDirectory = {});
     void InitializeRenderer();
     void Render();
+    bool Play();
+    void Stop();
+    void SetPaused(bool paused);
+    void Step();
+    bool Playing() const noexcept { return scriptHost_.Playing(); }
     zengine::GameObject& CreateEmptyGameObject();
     std::filesystem::path CreateScriptAsset();
     void OpenScript(const std::filesystem::path& path);
@@ -79,6 +86,8 @@ private:
     std::filesystem::path ResolveModel(const std::filesystem::path& path) const;
     bool ConfirmScriptClose();
     RECT CreateScriptRectangle() const;
+    bool PrepareScripts();
+    void ReportScriptErrors();
 
     struct AssetJob
     {
@@ -103,6 +112,11 @@ private:
     std::future<AssetResult> assetWork_;
     std::wstring status_ = L"Ready - drop an FBX into the Media Library";
     zengine::ObjectStore objects_;
+    zengine::ScriptHost scriptHost_;
+    bool paused_ = false, stepDraw_ = false;
+    double tickAccumulator_ = 0;
+    std::chrono::steady_clock::time_point lastTick_ = std::chrono::steady_clock::now();
+    ULONGLONG lastInspectorRefresh_ = 0;
     zengine::GameObjectId selectedObject_ = 0;
     struct MeshBinding { std::string asset; MeshHandle mesh; };
     std::map<zengine::GameObjectId, MeshBinding> meshBindings_;
