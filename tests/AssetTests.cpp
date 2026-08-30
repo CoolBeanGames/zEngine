@@ -284,6 +284,23 @@ namespace
             SetWindowTextW(x, L"2");
             editor.Render();
             Require(editor.SelectedGameObject()->GetTransform().Position().x == 2, "Preview transform editing failed");
+            // Script creation, attachment and discovery coexist with GameObject editing.
+            const auto script = editor.CreateScriptAsset();
+            Require(std::filesystem::is_regular_file(script) && script.extension() == ".zsh", "Script asset was not saved");
+            Require(GetDlgItem(inspector, InspectorPanel::AddScriptButton) != nullptr, "Add Script button missing");
+            RECT client{}; GetClientRect(window, &client);
+            const auto rowPoint = MAKELPARAM(350, client.bottom - 220);
+            SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, rowPoint);
+            SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(50, 166));
+            SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 166));
+            Require(object->BehaviorCount() == 1 && editor.SelectedGameObject()->Id() == object->Id(), "Script drag did not attach to targeted tree object");
+            Require(!editor.AttachScript(object->Id(), script) && object->BehaviorCount() == 1, "Duplicate script attachment allowed");
+            SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 140));
+            SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, rowPoint);
+            SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(client.right-100, 300));
+            SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(client.right-100, 300));
+            Require(editor.SelectedGameObject()->BehaviorCount() == 1, "Inspector script drop failed");
+            Require(object->GetTransform().Position().x == 1.25f, "Script attachment changed transform");
             // Renderer adapter applies scale, then X/Y/Z degree rotations, then translation.
             zengine::Transform example;
             example.SetScale({2, 3, 4}); example.SetRotation({0, 0, 90}); example.SetPosition({3, 4, 5});

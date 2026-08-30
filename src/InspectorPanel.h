@@ -14,9 +14,11 @@ public:
     static constexpr int NameField = 1100;
     static constexpr int TagsField = 1101;
     static constexpr int FirstTransformField = 1102; // Position XYZ, Rotation XYZ, Scale XYZ.
+    static constexpr int AddScriptButton = 1120;
     ~InspectorPanel();
     void Create(HWND parent, HINSTANCE instance, HFONT font, std::function<void()> changed);
     void Bind(zengine::GameObject* object);
+    void SetAddScriptHandler(std::function<void()> handler) { addScript_ = std::move(handler); }
     HWND Window() const noexcept { return window_; }
 private:
     struct Field { HWND window = nullptr; bool valid = true; std::wstring focusText; };
@@ -44,6 +46,8 @@ private:
     std::array<Field, 11> fields_{};
     zengine::GameObject* object_ = nullptr;
     std::function<void()> changed_;
+    std::function<void()> addScript_;
+    HWND addScriptButton_ = nullptr;
     bool updating_ = false;
     int scroll_ = 0;
     int pressed_ = -1;

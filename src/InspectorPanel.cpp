@@ -1,4 +1,5 @@
 #include "InspectorPanel.h"
+#include "core/ScriptBehavior.h"
 #include <windowsx.h>
 #include <algorithm>
 #include <cerrno>
@@ -75,6 +76,10 @@ void InspectorPanel::Create(HWND parent, HINSTANCE instance, HFONT font, std::fu
         SendMessageW(field.window, EM_SETLIMITTEXT, index < 2 ? 512 : 48, 0);
         SetWindowSubclass(field.window, EditProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
     }
+    addScriptButton_ = CreateWindowExW(0, L"BUTTON", L"+ Add Script", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(AddScriptButton)), instance, nullptr);
+    if (!addScriptButton_) throw std::runtime_error("Cannot create Add Script button.");
+    SendMessageW(addScriptButton_, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
     Bind(nullptr);
     Layout();
 }
@@ -86,6 +91,8 @@ void InspectorPanel::Bind(zengine::GameObject* object)
         if (GetFocus() == fields_[index].window) { FinishField(index, false); SetFocus(window_); }
     object_ = object;
     RefreshFields();
+    EnableWindow(addScriptButton_, object_ != nullptr);
+    Layout();
 }
 
 float InspectorPanel::Value(int index) const
@@ -194,7 +201,8 @@ void InspectorPanel::Layout()
 {
     RECT client{}; GetClientRect(window_, &client);
     const bool narrow = client.right < 250;
-    const int contentHeight = narrow ? 370 : 317;
+    const int behaviorRows = object_ ? static_cast<int>(object_->BehaviorCount()) : 0;
+    const int contentHeight = (narrow ? 440 : 390) + behaviorRows * 24;
     SCROLLINFO scroll{sizeof(scroll), SIF_RANGE | SIF_PAGE | SIF_POS};
     scroll.nMin = 0; scroll.nMax = contentHeight - 1; scroll.nPage = static_cast<UINT>(client.bottom);
     scroll_ = std::clamp(scroll_, 0, std::max(0, contentHeight - static_cast<int>(client.bottom)));
@@ -215,6 +223,8 @@ void InspectorPanel::Layout()
         }
         MoveWindow(fields_[index].window, x, y - scroll_, w, 24, TRUE);
     }
+    MoveWindow(addScriptButton_, 12, (width >= 250 ? 326 : 375) + behaviorRows * 24 - scroll_,
+        std::max(30, width - 24), 28, TRUE);
     InvalidateRect(window_, nullptr, FALSE);
 }
 void InspectorPanel::Paint()
@@ -239,6 +249,15 @@ void InspectorPanel::Paint()
         label(names[row], 12, width >= 250 ? 170 + row * 37 : 164 + row * 54, width >= 250 ? 54 : width - 24);
     label(L"Rotation: degrees | Shift-drag: fine", 12, width >= 250 ? 275 : 324, width - 24);
     label(object_ && object_->BehaviorCount() ? L"Behaviors attached" : L"No behaviors attached", 12, width >= 250 ? 297 : 346, width - 24);
+    if (object_)
+        for (std::size_t i = 0; i < object_->BehaviorCount(); ++i)
+        {
+            const auto* script = dynamic_cast<const zengine::ScriptBehavior*>(&object_->BehaviorAt(i));
+            const auto name = script ? Wide(script->Asset()) : L"Native behavior";
+            label(name.c_str(), 18, (width >= 250 ? 321 : 370) + static_cast<int>(i)*24, width-30);
+        }
+    label(L"Script references (not executing yet)", 12,
+        (width >= 250 ? 358 : 407) + (object_ ? static_cast<int>(object_->BehaviorCount())*24 : 0), width-24);
     EndPaint(window_, &paint);
 }
 LRESULT CALLBACK InspectorPanel::WindowProcedure(HWND window, UINT message, WPARAM w, LPARAM l)
@@ -262,6 +281,8 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_ERASEBKGND: return 1;
     case WM_COMMAND:
     {
+        if (LOWORD(w) == AddScriptButton && HIWORD(w) == BN_CLICKED)
+        { if (object_ && addScript_) addScript_(); return 0; }
         const int index = LOWORD(w) - NameField;
         if (index < 0 || index >= static_cast<int>(fields_.size())) break;
         if (HIWORD(w) == EN_CHANGE) ChangeField(index);

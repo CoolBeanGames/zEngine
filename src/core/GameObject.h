@@ -64,6 +64,7 @@ namespace zengine
         Transform& GetTransform() noexcept { return transform_; }
         const Transform& GetTransform() const noexcept { return transform_; }
         std::size_t BehaviorCount() const noexcept { return behaviors_.size(); }
+        const Behavior& BehaviorAt(std::size_t index) const { return *behaviors_.at(index); }
 
         template<class T, class... Args> T& AddBehavior(Args&&... args)
         {

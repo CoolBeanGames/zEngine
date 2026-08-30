@@ -24,6 +24,19 @@ This is an **in-memory foundation only**. Scene/project management, parenting, s
 
 This follows the component ownership pattern described in Unity's [GameObject reference](https://docs.unity3d.com/6000.0/Documentation/Manual/class-GameObject.html) and [MonoBehaviour reference](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/MonoBehaviour.html), with a tag **list** as required by zEngine rather than Unity's single-tag model.
 
+## Script assets and editor
+
+- Click **+ New Script** in the Media Library, or right-click the library and choose **Create Behavior Script (.zsh)**. This creates `NewBehavior.zsh` (numbered automatically when that name exists) under the current project's `Assets` folder, with `start`, `update(float delta)`, and `draw` hooks, and opens it for editing.
+- Double-click a `.zsh` asset to open its resizable script window. Each file has a single editor window. Keywords, built-in types, numbers, strings, and comments are colored; **Tab** inserts four spaces and **Ctrl+Z/Ctrl+Y** undo/redo text edits.
+- Use **Save / Ctrl+S** to save UTF-8 text, and **Reload / Ctrl+R** to load disk changes. A `*` in the title marks unsaved edits. Closing a script or the main editor asks whether to save, discard, or cancel. Saves use a temporary file followed by replacement and reject overwriting a file changed externally since loading. Invalid source can still be saved while you work.
+- Malformed strings, block comments, unmatched brackets, and unexpected characters get an error background/underline, with line/column messages below the source. **Go to first error** selects and scrolls to the first problem. This branch currently provides **basic lexical/structural checks, not full language validation**: unknown names, type mismatches, missing semicolons, and other grammar errors require the compiler. Once `scripting/src/Script.cpp` and its public header are merged into this checkout, reconfigure CMake to enable compiler diagnostics automatically. No dependency on a sibling worktree is used.
+- Select a GameObject and click **+ Add Script** in the Inspector, then choose a `.zsh` file inside this project's Assets directory. Alternatively, drag a library script onto a specific **Scene Browser object row** or the selected object's **Inspector**. Multiple different scripts are supported; duplicate attachments are rejected. The Inspector lists attached project-relative asset paths.
+- Right-click **Refresh Assets** to discover `.zsh` files added externally (including subfolders); existing scripts are also discovered on startup. External script drops/import, script renaming, and behavior removal are not implemented yet.
+
+Script files persist on disk, but **attachments are currently in-memory GameObject data and do not survive editor exit** until scene serialization is added. Attaching a script does **not execute it**: the scripting runtime's lifecycle/scene bridge remains a separate milestone. `.zsh` here is zEngine source, not a shell script, and is never launched through the OS.
+
+The lightweight `zEngineScriptTools` library owns script file operations, lexical diagnostics, and the native Windows RichEdit editor. `ScriptBehavior` in `zEngineCore` only stores a project-relative asset reference; neither the renderer nor core depends on the editor or compiler. Source files are limited to 256 KiB, diagnostics to 100 lexical errors, and coloring to 8,000 tokens per refresh to keep pathological inputs bounded. Syntax coloring is debounced by 250 ms and excluded from text undo history.
+
 ## FBX import and preview
 
 1. Drag one or more `.fbx` files from Windows Explorer into the bottom **Media Library**. The status bar shows background import activity and any errors.

@@ -3,6 +3,10 @@
 #include "Renderer.h"
 #include "FbxImporter.h"
 #include "InspectorPanel.h"
+#include "ScriptAssets.h"
+#include "ScriptEditor.h"
+#include "core/ScriptBehavior.h"
+#include <commdlg.h>
 
 #include <windowsx.h>
 
@@ -97,7 +101,7 @@ EditorShell::EditorShell(const HINSTANCE instance)
 {
     WNDCLASSEXW editorClass{};
     editorClass.cbSize = sizeof(editorClass);
-    editorClass.style = CS_HREDRAW | CS_VREDRAW;
+    editorClass.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     editorClass.lpfnWndProc = WindowProcedure;
     editorClass.hInstance = instance_;
     editorClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -134,6 +138,7 @@ EditorShell::EditorShell(const HINSTANCE instance)
 
 EditorShell::~EditorShell()
 {
+    scriptEditors_.clear();
     inspectorPanel_.reset();
     renderer_.reset();
     if (window_ && IsWindow(window_))
@@ -170,6 +175,10 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     previewObject_ = objects_.Create("Color Cube").Id();
     inspectorPanel_ = std::make_unique<InspectorPanel>();
     inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
+    inspectorPanel_->SetAddScriptHandler([this]() {
+        try { ChooseScript(); }
+        catch (const std::exception& error) { status_ = L"Cannot attach script: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
+    });
     SelectGameObject(previewObject_);
     std::array<wchar_t, 32768> executable{};
     const DWORD pathLength = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
@@ -387,7 +396,7 @@ void EditorShell::Paint()
 
     // Inspector content and edit controls are hosted by the reusable InspectorPanel child.
 
-    // Media library mock content
+    // Project asset library
     const int mediaTop = mediaLibrary_.top + PanelHeaderHeight;
     const int folderPaneWidth = std::clamp<LONG>((mediaLibrary_.right - mediaLibrary_.left) / 5, 150, 250);
     RECT folderPane{mediaLibrary_.left + 1, mediaTop, mediaLibrary_.left + folderPaneWidth, mediaLibrary_.bottom - 1};
@@ -400,16 +409,20 @@ void EditorShell::Paint()
     FillRectangle(bufferContext, addFolder, FieldColor);
     DrawBorder(bufferContext, addFolder, BorderColor);
     DrawTextLabel(bufferContext, L"+ Add Folder", addFolder, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    const RECT newScript = CreateScriptRectangle();
+    FillRectangle(bufferContext, newScript, FieldColor);
+    DrawBorder(bufferContext, newScript, BorderColor);
+    DrawTextLabel(bufferContext, L"+ New Script", newScript, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     RECT dropArea{folderPane.right + 20, mediaTop + 20, mediaLibrary_.right - 20, mediaLibrary_.bottom - 20};
     DrawBorder(bufferContext, dropArea, RGB(72, 75, 83));
     RECT libraryHint{dropArea.left + 8, dropArea.top, dropArea.right - 8, dropArea.top + 26};
-    DrawTextLabel(bufferContext, L"Drop FBX files here  |  Drag an asset into Scene to preview  |  Scroll to browse", libraryHint,
+    DrawTextLabel(bufferContext, L"FBX: drag to Scene  |  ZSH: double-click to edit, drag to GameObject or Inspector", libraryHint,
                   MutedTextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     const RECT list = AssetListRectangle();
     const int saved = SaveDC(bufferContext);
     IntersectClipRect(bufferContext, list.left, list.top, list.right, list.bottom);
     if (assets_.empty())
-        DrawTextLabel(bufferContext, L"No imported models", list, MutedTextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        DrawTextLabel(bufferContext, L"No assets - create a script or import an FBX", list, MutedTextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     for (int index = firstAsset_; index < static_cast<int>(assets_.size()); ++index)
     {
         RECT row{list.left, list.top + (index - firstAsset_) * 28, list.right,
@@ -417,7 +430,8 @@ void EditorShell::Paint()
         if (row.top >= list.bottom) break;
         if (index == selectedAsset_) FillRectangle(bufferContext, row, SelectionColor);
         row.left += 8;
-        DrawTextLabel(bufferContext, L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
+        const bool script = zengine::scripts::IsScript(assets_[index]);
+        DrawTextLabel(bufferContext, script ? L"ZSH   " + assets_[index].filename().wstring() : L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
                       DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
     RestoreDC(bufferContext, saved);
@@ -527,6 +541,8 @@ RECT EditorShell::AssetListRectangle() const
 
 void EditorShell::RefreshAssets()
 {
+    draggedAsset_ = -1;
+    if (GetCapture() == window_ && dragTarget_ == DragTarget::None) ReleaseCapture();
     assets_.clear();
     if (std::filesystem::exists(assetsDirectory_))
     {
@@ -535,6 +551,14 @@ void EditorShell::RefreshAssets()
             if (entry.is_directory() && std::filesystem::is_regular_file(entry.path() / "asset.ready") &&
                 std::filesystem::is_regular_file(entry.path() / "model.fbx"))
                 assets_.push_back(entry.path() / "model.fbx");
+        }
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(assetsDirectory_))
+        {
+            if (entry.is_regular_file() && zengine::scripts::IsScript(entry.path()))
+            {
+                try { assets_.push_back(zengine::scripts::Resolve(assetsDirectory_, entry.path())); }
+                catch (const std::exception&) {} // Ignore assets escaping the project via links.
+            }
         }
     }
     std::sort(assets_.begin(), assets_.end());
@@ -635,12 +659,90 @@ void EditorShell::BeginAssetDrag(POINT point)
 void EditorShell::FinishAssetDrag(POINT point)
 {
     if (draggedAsset_ < 0) return;
-    if (assetDragMoved_ && PtInRect(&viewportContent_, point))
-        assetJobs_.push_back({assets_.at(draggedAsset_), true});
+    const auto path = assets_.at(draggedAsset_);
+    const bool moved = assetDragMoved_;
     draggedAsset_ = -1;
     assetDragMoved_ = false;
     ReleaseCapture();
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+    if (!moved) return;
+    if (zengine::scripts::IsScript(path))
+    {
+        if (const auto id = ScriptDropTarget(point)) AttachScript(id, path);
+        else { status_ = L"Drop a script onto a GameObject row or the selected object's Inspector."; InvalidateRect(window_, &statusBar_, FALSE); }
+    }
+    else if (PtInRect(&viewportContent_, point)) assetJobs_.push_back({path, true});
+}
+
+RECT EditorShell::CreateScriptRectangle() const
+{
+    return {mediaLibrary_.right-236, mediaLibrary_.top+4, mediaLibrary_.right-122, mediaLibrary_.top+26};
+}
+std::filesystem::path EditorShell::CreateScriptAsset()
+{
+    const auto path = zengine::scripts::Create(assetsDirectory_);
+    RefreshAssets();
+    selectedAsset_ = static_cast<int>(std::find(assets_.begin(),assets_.end(),path)-assets_.begin());
+    const auto list = AssetListRectangle();
+    const int rows = std::max(1, static_cast<int>(list.bottom-list.top)/28);
+    firstAsset_ = std::max(0, selectedAsset_ - rows + 1);
+    status_ = L"Created " + path.filename().wstring() + L" - double-click to edit";
+    InvalidateRect(window_, nullptr, FALSE);
+    return path;
+}
+void EditorShell::OpenScript(const std::filesystem::path& path)
+{
+    const auto resolved = zengine::scripts::Resolve(assetsDirectory_, path);
+    for (const auto& editor : scriptEditors_)
+        if (_wcsicmp(editor->Path().c_str(), resolved.c_str()) == 0) { editor->Show(); return; }
+    auto editor = std::make_unique<ScriptEditor>(window_, assetsDirectory_, resolved);
+    editor->Show(); scriptEditors_.push_back(std::move(editor));
+}
+bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::path& path)
+{
+    auto* object = objects_.Find(id);
+    if (!object) return false;
+    const auto file = zengine::scripts::Resolve(assetsDirectory_,path);
+    zengine::scripts::Load(file); // Reject missing, binary, or oversized assets before changing the object.
+    const auto relative = std::filesystem::relative(file,assetsDirectory_).generic_u8string();
+    const std::string asset(reinterpret_cast<const char*>(relative.data()), relative.size());
+    for (std::size_t i = 0; i < object->BehaviorCount(); ++i)
+        if (const auto* behavior = dynamic_cast<const zengine::ScriptBehavior*>(&object->BehaviorAt(i));
+            behavior && _wcsicmp(WideText(behavior->Asset()).c_str(),WideText(asset).c_str()) == 0)
+        { status_ = L"That script is already attached."; InvalidateRect(window_, &statusBar_, FALSE); return false; }
+    object->AddBehavior<zengine::ScriptBehavior>(asset);
+    SelectGameObject(id);
+    status_ = L"Attached " + file.filename().wstring() + L" to " + WideText(object->Name()) + L" (execution not connected yet)";
+    InvalidateRect(window_, nullptr, FALSE);
+    return true;
+}
+zengine::GameObjectId EditorShell::ScriptDropTarget(POINT point) const
+{
+    const auto list = ObjectListRectangle();
+    if (PtInRect(&list,point))
+    {
+        const auto index = firstObject_ + (point.y-list.top)/27;
+        if (index >= 0 && index < static_cast<LONG>(objects_.Size())) return objects_.At(index).Id();
+    }
+    if (PtInRect(&inspector_,point)) return selectedObject_;
+    return 0; // No ambiguous picking: attach to an explicit tree row or selected Inspector.
+}
+void EditorShell::ChooseScript()
+{
+    std::filesystem::create_directories(assetsDirectory_);
+    std::array<wchar_t,32768> filename{};
+    const auto initial = assetsDirectory_.wstring();
+    OPENFILENAMEW dialog{}; dialog.lStructSize=sizeof(dialog); dialog.hwndOwner=window_;
+    dialog.lpstrFilter=L"zEngine scripts (*.zsh)\0*.zsh\0\0";
+    dialog.lpstrFile=filename.data(); dialog.nMaxFile=static_cast<DWORD>(filename.size());
+    dialog.lpstrInitialDir=initial.c_str(); dialog.lpstrTitle=L"Attach a script from this project's Assets directory";
+    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
+    if (GetOpenFileNameW(&dialog)) AttachScript(selectedObject_, std::filesystem::path(filename.data()));
+}
+bool EditorShell::ConfirmScriptClose()
+{
+    for (const auto& editor : scriptEditors_) if (!editor->ConfirmClose()) return false;
+    return true;
 }
 
 void EditorShell::UpdateDrag(const POINT position)
@@ -722,6 +824,34 @@ LRESULT EditorShell::HandleMessage(
 {
     switch (message)
     {
+    case WM_CLOSE:
+        if (ConfirmScriptClose()) DestroyWindow(window);
+        return 0;
+    case WM_CONTEXTMENU:
+    {
+        POINT screen{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)}, point=screen;
+        ScreenToClient(window_, &point);
+        if (!PtInRect(&mediaLibrary_, point)) break;
+        HMENU menu=CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
+        AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
+        const auto command=TrackPopupMenu(menu, TPM_RETURNCMD|TPM_RIGHTBUTTON, screen.x,screen.y,0,window_,nullptr);
+        DestroyMenu(menu);
+        if (command == 1) OpenScript(CreateScriptAsset());
+        if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONDBLCLK:
+    {
+        const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+        const auto list=AssetListRectangle();
+        if (PtInRect(&list,point))
+        {
+            const auto index=firstAsset_+(point.y-list.top)/28;
+            if (index >= 0 && index < static_cast<LONG>(assets_.size()) && zengine::scripts::IsScript(assets_[index])) OpenScript(assets_[index]);
+        }
+        return 0;
+    }
     case WM_DROPFILES:
         ReceiveFiles(reinterpret_cast<HDROP>(wParam));
         return 0;
@@ -753,6 +883,8 @@ LRESULT EditorShell::HandleMessage(
         SetFocus(window_);
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         const RECT create = CreateObjectRectangle(), list = ObjectListRectangle();
+        const RECT createScript = CreateScriptRectangle();
+        if (PtInRect(&createScript, point)) { OpenScript(CreateScriptAsset()); return 0; }
         if (PtInRect(&create, point)) { CreateEmptyGameObject(); return 0; }
         if (PtInRect(&list, point))
         {
@@ -770,7 +902,11 @@ LRESULT EditorShell::HandleMessage(
             const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             assetDragMoved_ = assetDragMoved_ || std::abs(point.x - assetDragStart_.x) >= GetSystemMetrics(SM_CXDRAG) ||
                               std::abs(point.y - assetDragStart_.y) >= GetSystemMetrics(SM_CYDRAG);
-            if (assetDragMoved_) SetCursor(LoadCursorW(nullptr, PtInRect(&viewportContent_, point) ? IDC_HAND : IDC_NO));
+            if (assetDragMoved_)
+            {
+                const bool valid = zengine::scripts::IsScript(assets_.at(draggedAsset_)) ? ScriptDropTarget(point) != 0 : PtInRect(&viewportContent_,point) != 0;
+                SetCursor(LoadCursorW(nullptr, valid ? IDC_HAND : IDC_NO));
+            }
             return 0;
         }
         if (dragTarget_ != DragTarget::None)
@@ -838,7 +974,7 @@ LRESULT EditorShell::HandleMessage(
                 ReleaseCapture();
                 return 0;
             }
-            DestroyWindow(window);
+            SendMessageW(window, WM_CLOSE, 0, 0);
             return 0;
         }
         break;

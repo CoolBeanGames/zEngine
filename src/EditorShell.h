@@ -15,6 +15,7 @@
 
 class Renderer;
 class InspectorPanel;
+class ScriptEditor;
 
 class EditorShell final
 {
@@ -29,6 +30,9 @@ public:
     void InitializeRenderer();
     void Render();
     zengine::GameObject& CreateEmptyGameObject();
+    std::filesystem::path CreateScriptAsset();
+    void OpenScript(const std::filesystem::path& path);
+    bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);
     const zengine::ObjectStore& GameObjects() const noexcept { return objects_; }
     const zengine::GameObject* SelectedGameObject() const noexcept { return objects_.Find(selectedObject_); }
 
@@ -62,6 +66,10 @@ private:
     void OnObjectChanged();
     RECT CreateObjectRectangle() const;
     RECT ObjectListRectangle() const;
+    zengine::GameObjectId ScriptDropTarget(POINT point) const;
+    void ChooseScript();
+    bool ConfirmScriptClose();
+    RECT CreateScriptRectangle() const;
 
     struct AssetJob { std::filesystem::path path; bool replacePreview = false; };
     struct AssetResult
@@ -81,6 +89,7 @@ private:
     zengine::GameObjectId previewObject_ = 0;
     int firstObject_ = 0;
     std::unique_ptr<InspectorPanel> inspectorPanel_;
+    std::vector<std::unique_ptr<ScriptEditor>> scriptEditors_;
     int firstAsset_ = 0;
     int selectedAsset_ = -1;
     int draggedAsset_ = -1;
