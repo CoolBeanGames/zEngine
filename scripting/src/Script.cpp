@@ -1,0 +1,832 @@
+#include "zscript/Script.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <limits>
+#include <map>
+#include <set>
+#include <utility>
+
+namespace zengine::script {
+namespace {
+struct Token {
+    enum Kind { Identifier, Number, String, Symbol, End } kind = End;
+    std::string text;
+    std::size_t line = 1, column = 1;
+};
+[[noreturn]] void Fail(const std::string& source, const Token& token, const std::string& message) {
+    throw ScriptError({source, token.line, token.column, message});
+}
+bool Alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+bool Digit(char c) { return c >= '0' && c <= '9'; }
+std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
+bool Reserved(std::string_view s) {
+    static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform"};
+    return words.contains(s);
+}
+std::vector<Token> Lex(std::string_view s, const std::string& source) {
+    if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
+    std::vector<Token> tokens;
+    std::size_t p = 0, line = 1, column = 1;
+    auto take = [&]() { char c = s[p++]; if (c == '\n') { ++line; column = 1; } else ++column; return c; };
+    auto peek = [&](std::size_t offset = 0) { return p + offset < s.size() ? s[p + offset] : '\0'; };
+    // Accept a UTF-8 BOM, as emitted by some Windows editors.
+    if (s.starts_with("\xEF\xBB\xBF")) p = 3;
+    while (p < s.size()) {
+        if (peek() == ' ' || peek() == '\t' || peek() == '\r' || peek() == '\n') { take(); continue; }
+        Token t{Token::Symbol, {}, line, column};
+        if (peek() == '/' && peek(1) == '/') { while (p < s.size() && peek() != '\n') take(); continue; }
+        if (peek() == '/' && peek(1) == '*') {
+            take(); take();
+            while (p < s.size() && !(peek() == '*' && peek(1) == '/')) take();
+            if (p == s.size()) Fail(source, t, "Unterminated comment");
+            take(); take(); continue;
+        }
+        if (Alpha(peek())) {
+            t.kind = Token::Identifier;
+            while (Alpha(peek()) || Digit(peek())) t.text += take();
+        } else if (Digit(peek())) {
+            t.kind = Token::Number;
+            while (Digit(peek())) t.text += take();
+            if (peek() == '.' && Digit(peek(1))) { t.text += take(); while (Digit(peek())) t.text += take(); }
+            if (peek() == 'e' || peek() == 'E') {
+                t.text += take();
+                if (peek() == '+' || peek() == '-') t.text += take();
+                if (!Digit(peek())) Fail(source, t, "Expected exponent digits");
+                while (Digit(peek())) t.text += take();
+            }
+        } else if (peek() == '"') {
+            t.kind = Token::String; take();
+            while (p < s.size() && peek() != '"') {
+                char c = take();
+                if (c == '\n' || c == '\r') Fail(source, t, "Newline in string literal");
+                if (c == '\\') {
+                    if (p == s.size()) Fail(source, t, "Unterminated string");
+                    c = take();
+                    switch (c) {
+                    case 'n': c = '\n'; break; case 'r': c = '\r'; break; case 't': c = '\t'; break;
+                    case '\\': case '"': break;
+                    default: Fail(source, t, "Unknown string escape");
+                    }
+                }
+                t.text += c;
+            }
+            if (p == s.size()) Fail(source, t, "Unterminated string");
+            take();
+        } else {
+            t.text += take();
+            const std::string pair = t.text + peek();
+            if (pair == "==" || pair == "!=" || pair == "<=" || pair == ">=" || pair == "&&" || pair == "||" || pair == "+=" || pair == "-=" || pair == "*=" || pair == "/=") t.text += take();
+            else if (std::string_view("{}();:,.=+-*/!<>").find(t.text[0]) == std::string_view::npos) Fail(source, t, "Unexpected character");
+        }
+        tokens.push_back(std::move(t));
+        if (tokens.size() > 100000) Fail(source, tokens.back(), "Token limit exceeded");
+    }
+    tokens.push_back({Token::End, {}, line, column});
+    return tokens;
+}
+struct Expr {
+    enum Kind { Literal, Name, Member, Call, Unary, Binary } kind = Literal;
+    Token token;
+    Value value;
+    std::size_t height = 1;
+    std::vector<std::unique_ptr<Expr>> children;
+};
+struct Stmt {
+    enum Kind { Block, Variable, Assignment, Expression, Return, If, While } kind = Block;
+    Token token;
+    std::string type, operation;
+    std::vector<std::unique_ptr<Expr>> expressions;
+    std::vector<Stmt> children;
+};
+struct FieldAst { Token name; std::string type; std::unique_ptr<Expr> initializer; };
+struct FunctionAst { Token name; std::string result = "void"; std::vector<FieldAst> params; Stmt body; };
+struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; };
+class Parser {
+    std::vector<Token> tokens;
+    const std::string& source;
+    std::size_t pos = 0, depth = 0;
+    struct Guard {
+        Parser& parser;
+        explicit Guard(Parser& p) : parser(p) { if (++parser.depth > 128) Fail(parser.source, parser.Current(), "Syntax nesting limit exceeded"); }
+        ~Guard() { --parser.depth; }
+    };
+    const Token& Current() const { return tokens[pos]; }
+    bool Is(std::string_view text) const { return Current().text == text && Current().kind != Token::String; }
+    bool Match(std::string_view text) { if (!Is(text)) return false; ++pos; return true; }
+    Token Expect(std::string_view text) { Token t = Current(); if (!Match(text)) Fail(source, t, "Expected '" + std::string(text) + "'"); return t; }
+    Token Identifier(bool type = false) {
+        Token t = Current();
+        if (t.kind != Token::Identifier || (!type && Reserved(t.text))) Fail(source, t, "Expected " + std::string(type ? "type" : "identifier"));
+        ++pos; if (type) t.text = Canonical(t.text); return t;
+    }
+    static int Precedence(std::string_view op) {
+        if (op == "||") return 1;
+        if (op == "&&") return 2;
+        if (op == "==" || op == "!=") return 3;
+        if (op == "<" || op == ">" || op == "<=" || op == ">=") return 4;
+        if (op == "+" || op == "-") return 5;
+        if (op == "*" || op == "/") return 6;
+        return 0;
+    }
+    void CheckHeight(Expr& e) const {
+        e.height = 1;
+        for (const auto& child : e.children) e.height = std::max(e.height, child->height + 1);
+        if (e.height > 128) Fail(source, e.token, "Expression nesting limit exceeded");
+    }
+    std::unique_ptr<Expr> Expression(int min = 1) {
+        Guard guard(*this);
+        auto e = std::make_unique<Expr>(); e->token = Current();
+        if (Match("-") || Match("!")) { e->kind = Expr::Unary; e->children.push_back(Expression(7)); }
+        else if (Match("(")) { e = Expression(); Expect(")"); }
+        else if (Current().kind == Token::Number) {
+            ++pos;
+            try {
+                if (e->token.text.find_first_of(".eE") != std::string::npos) {
+                    double v = std::stod(e->token.text);
+                    if (!std::isfinite(v)) Fail(source, e->token, "Non-finite literal");
+                    e->value = v;
+                } else e->value = static_cast<std::int64_t>(std::stoll(e->token.text));
+            } catch (const std::out_of_range&) { Fail(source, e->token, "Numeric literal out of range"); }
+        } else if (Current().kind == Token::String) { e->value = Current().text; ++pos; }
+        else if (Match("true")) e->value = true;
+        else if (Match("false")) e->value = false;
+        else if (Match("null")) e->value = ObjectRef{};
+        else if (Current().kind == Token::Identifier) { e->kind = Expr::Name; ++pos; }
+        else Fail(source, Current(), "Expected expression");
+        CheckHeight(*e);
+        std::size_t chain = 0;
+        while (Is(".") || Is("(")) {
+            if (++chain > 128) Fail(source, Current(), "Member/call chain limit exceeded");
+            auto next = std::make_unique<Expr>();
+            if (Match(".")) { next->kind = Expr::Member; next->token = Identifier(); next->children.push_back(std::move(e)); }
+            else {
+                next->kind = Expr::Call; next->token = Expect("("); next->children.push_back(std::move(e));
+                if (!Is(")")) do { next->children.push_back(Expression()); } while (Match(","));
+                Expect(")");
+            }
+            CheckHeight(*next); e = std::move(next);
+        }
+        std::size_t operators = 0;
+        while (Current().kind == Token::Symbol && Precedence(Current().text) >= min) {
+            if (++operators > 128) Fail(source, Current(), "Expression length limit exceeded");
+            auto next = std::make_unique<Expr>(); next->kind = Expr::Binary; next->token = Current(); ++pos;
+            next->children.push_back(std::move(e)); next->children.push_back(Expression(Precedence(next->token.text) + 1));
+            CheckHeight(*next); e = std::move(next);
+        }
+        return e;
+    }
+    Stmt Statement() {
+        Guard guard(*this);
+        Stmt s; s.token = Current();
+        if (Match("{")) {
+            while (!Is("}")) { if (Current().kind == Token::End) Fail(source, Current(), "Unterminated block"); s.children.push_back(Statement()); }
+            Expect("}"); return s;
+        }
+        if (Match("if") || Match("while")) {
+            s.kind = s.token.text == "if" ? Stmt::If : Stmt::While;
+            Expect("("); s.expressions.push_back(Expression()); Expect(")");
+            if (!Is("{")) Fail(source, Current(), "Control flow requires a braced block");
+            s.children.push_back(Statement());
+            if (s.kind == Stmt::If && Match("else")) {
+                if (!Is("{")) Fail(source, Current(), "Else requires a braced block");
+                s.children.push_back(Statement());
+            }
+            return s;
+        }
+        if (Match("return")) {
+            s.kind = Stmt::Return;
+            if (!Is(";")) s.expressions.push_back(Expression());
+        } else if (Current().kind == Token::Identifier && tokens[pos + 1].kind == Token::Identifier) {
+            s.kind = Stmt::Variable; s.type = Identifier(true).text; s.token = Identifier();
+            if (Match("=")) s.expressions.push_back(Expression());
+        } else {
+            s.kind = Stmt::Expression; s.expressions.push_back(Expression());
+            if (Is("=") || Is("+=") || Is("-=") || Is("*=") || Is("/=")) {
+                s.operation = Current().text; ++pos; s.kind = Stmt::Assignment; s.expressions.push_back(Expression());
+            }
+        }
+        Expect(";"); return s;
+    }
+public:
+    Parser(std::vector<Token> input, const std::string& name) : tokens(std::move(input)), source(name) {}
+    std::vector<ClassAst> Parse() {
+        std::vector<ClassAst> classes;
+        while (Current().kind != Token::End) {
+            Expect("class"); ClassAst c; c.name = Identifier();
+            if (Match(":")) c.base = Identifier(true).text;
+            Expect("{");
+            while (!Is("}")) {
+                if (Match("func")) {
+                    FunctionAst f; f.name = Identifier(); Expect("(");
+                    if (!Is(")")) do {
+                        FieldAst param; param.type = Identifier(true).text; param.name = Identifier(); f.params.push_back(std::move(param));
+                    } while (Match(","));
+                    Expect(")"); if (Match(":")) f.result = Identifier(true).text;
+                    if (!Is("{")) Fail(source, Current(), "Expected function body");
+                    f.body = Statement(); c.methods.push_back(std::move(f));
+                } else {
+                    FieldAst field; field.type = Identifier(true).text; field.name = Identifier();
+                    if (Match("=")) field.initializer = Expression();
+                    Expect(";"); c.fields.push_back(std::move(field));
+                }
+            }
+            Expect("}"); classes.push_back(std::move(c));
+            if (classes.size() > 1024) Fail(source, Current(), "Class limit exceeded");
+        }
+        return classes;
+    }
+};
+enum class Op { Constant, Duplicate, MakeVector, SetComponent, Self, LoadLocal, StoreLocal, LoadField, StoreField, Call, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
+struct Function {
+    Token token;
+    std::string result = "void";
+    std::vector<std::string> params, locals;
+    std::vector<Instruction> code;
+};
+struct Field { Token token; std::string type; };
+struct Class {
+    std::string name, base;
+    std::vector<Field> fields;
+    std::map<std::string, Function> methods;
+    Function initializer;
+};
+bool Numeric(const std::string& t) { return t == "int" || t == "float"; }
+Value DefaultValue(const std::string& t) {
+    if (t == "int") return std::int64_t{0};
+    if (t == "float") return 0.0;
+    if (t == "bool") return false;
+    if (t == "string") return std::string{};
+    if (t == "void") return {};
+    if (t == "Vector3") return Vector3{};
+    return ObjectRef{};
+}
+}
+struct Program::Impl {
+    std::string source;
+    std::map<std::string, Class> classes;
+    ProgramStats stats;
+    bool IsType(const std::string& t) const { return t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || classes.contains(t); }
+    bool Assignable(const std::string& target, const std::string& from) const {
+        if (target == from || (target == "float" && from == "int")) return true;
+        if (!classes.contains(target)) return false;
+        if (from == "null") return true;
+        auto it = classes.find(from);
+        while (it != classes.end()) { if (it->first == target) return true; it = classes.find(it->second.base); }
+        return false;
+    }
+    const Function* Method(const std::string& type, const std::string& name) const {
+        auto c = classes.find(type);
+        while (c != classes.end()) {
+            auto f = c->second.methods.find(name); if (f != c->second.methods.end()) return &f->second;
+            c = classes.find(c->second.base);
+        }
+        return nullptr;
+    }
+    const Field* FindField(const std::string& type, const std::string& name, std::size_t* index = nullptr) const {
+        auto c = classes.find(type); if (c == classes.end()) return nullptr;
+        for (std::size_t i = 0; i < c->second.fields.size(); ++i) if (c->second.fields[i].token.text == name) {
+            if (index) *index = i; return &c->second.fields[i];
+        }
+        return nullptr;
+    }
+};
+namespace {
+class BytecodeCompiler {
+    Program::Impl& program;
+    Class& owner;
+    Function& function;
+    std::vector<std::map<std::string, std::size_t>> scopes{1};
+    std::size_t depth = 0;
+    struct Guard {
+        BytecodeCompiler& c;
+        Guard(BytecodeCompiler& compiler, const Token& token) : c(compiler) { if (++c.depth > 256) Fail(c.program.source, token, "Expression nesting limit exceeded"); }
+        ~Guard() { --c.depth; }
+    };
+    void Require(bool condition, const Token& t, const std::string& message) const { if (!condition) Fail(program.source, t, message); }
+    std::size_t Emit(Op op, const Token& t, std::size_t a = 0, std::string name = {}, Value value = {}) {
+        function.code.push_back({op, t, a, std::move(name), std::move(value)}); return function.code.size() - 1;
+    }
+    void Patch(std::size_t at) { function.code[at].a = function.code.size(); }
+    std::size_t Local(const std::string& name) const {
+        for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) { auto local = it->find(name); if (local != it->end()) return local->second; }
+        return std::numeric_limits<std::size_t>::max();
+    }
+    void Compatible(const std::string& target, const std::string& from, const Token& t) const {
+        Require(program.Assignable(target, from), t, "Cannot assign '" + from + "' to '" + target + "'");
+    }
+    std::size_t Declare(const Token& t, const std::string& type) {
+        Require(program.IsType(type), t, "Unknown or invalid variable type '" + type + "'");
+        Require(!program.classes.contains(t.text), t, "Class names are type keywords");
+        Require(!scopes.back().contains(t.text), t, "Duplicate local '" + t.text + "'");
+        auto index = function.locals.size(); function.locals.push_back(type); scopes.back()[t.text] = index; return index;
+    }
+    std::string FieldType(const std::string& type, const Token& field) const {
+        if (type == "Vector3" && (field.text == "x" || field.text == "y" || field.text == "z")) return "float";
+        const auto* f = program.FindField(type, field.text);
+        Require(f != nullptr, field, "Unknown field '" + field.text + "' on '" + type + "'");
+        return f->type;
+    }
+    std::string Expression(const Expr& e) {
+        Guard guard(*this, e.token);
+        const auto& t = e.token;
+        if (e.kind == Expr::Literal) {
+            Emit(Op::Constant, t, 0, {}, e.value);
+            if (std::holds_alternative<std::int64_t>(e.value)) return "int";
+            if (std::holds_alternative<double>(e.value)) return "float";
+            if (std::holds_alternative<bool>(e.value)) return "bool";
+            if (std::holds_alternative<std::string>(e.value)) return "string";
+            return "null";
+        }
+        if (e.kind == Expr::Name) {
+            if (t.text == "this") { Emit(Op::Self, t); return owner.name; }
+            auto local = Local(t.text);
+            if (local != std::numeric_limits<std::size_t>::max()) { Emit(Op::LoadLocal, t, local); return function.locals[local]; }
+            auto type = FieldType(owner.name, t); Emit(Op::Self, t); Emit(Op::LoadField, t, 0, t.text); return type;
+        }
+        if (e.kind == Expr::Member) {
+            auto receiver = Expression(*e.children[0]); auto type = FieldType(receiver, t);
+            Emit(Op::LoadField, t, 0, t.text); return type;
+        }
+        if (e.kind == Expr::Call) {
+            const Expr& callee = *e.children[0];
+            if (callee.kind == Expr::Name && callee.token.text == "Vector3") {
+                Require(e.children.size() == 1 || e.children.size() == 4, t, "Vector3 takes zero or three numeric arguments");
+                for (std::size_t i = 1; i < e.children.size(); ++i) Require(Numeric(Expression(*e.children[i])), t, "Vector3 components must be numeric");
+                Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
+            }
+            if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
+                Require(e.children.size() == 1, t, "Class construction takes no arguments");
+                Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
+            }
+            std::string receiver;
+            if (callee.kind == Expr::Name) { Emit(Op::Self, t); receiver = owner.name; }
+            else if (callee.kind == Expr::Member) receiver = Expression(*callee.children[0]);
+            else Fail(program.source, t, "Expected a method or class name");
+            const auto* f = program.Method(receiver, callee.token.text);
+            Require(f != nullptr, callee.token, "Unknown method '" + callee.token.text + "' on '" + receiver + "'");
+            Require(f->params.size() == e.children.size() - 1, t, "Wrong argument count for '" + callee.token.text + "'");
+            for (std::size_t i = 1; i < e.children.size(); ++i) Compatible(f->params[i - 1], Expression(*e.children[i]), e.children[i]->token);
+            Emit(Op::Call, t, f->params.size(), callee.token.text); return f->result;
+        }
+        if (e.kind == Expr::Unary) {
+            auto type = Expression(*e.children[0]);
+            Require(t.text == "!" ? type == "bool" : (Numeric(type) || type == "Vector3"), t, "Invalid unary operand");
+            Emit(t.text == "!" ? Op::Not : Op::Negate, t); return type;
+        }
+        auto left = Expression(*e.children[0]);
+        if (t.text == "&&" || t.text == "||") {
+            Require(left == "bool", t, "Logical operands must be bool");
+            auto branch = Emit(Op::JumpFalse, t);
+            if (t.text == "||") {
+                Emit(Op::Constant, t, 0, {}, true); auto finish = Emit(Op::Jump, t); Patch(branch);
+                Require(Expression(*e.children[1]) == "bool", t, "Logical operands must be bool"); Patch(finish);
+            } else {
+                Require(Expression(*e.children[1]) == "bool", t, "Logical operands must be bool");
+                auto finish = Emit(Op::Jump, t); Patch(branch); Emit(Op::Constant, t, 0, {}, false); Patch(finish);
+            }
+            return "bool";
+        }
+        auto right = Expression(*e.children[1]);
+        static const std::map<std::string, Op> operators = {{"+", Op::Add}, {"-", Op::Subtract}, {"*", Op::Multiply}, {"/", Op::Divide}, {"==", Op::Equal}, {"!=", Op::NotEqual}, {"<", Op::Less}, {"<=", Op::LessEqual}, {">", Op::Greater}, {">=", Op::GreaterEqual}};
+        if (t.text == "==" || t.text == "!=") {
+            Require(left != "void" && right != "void" && (program.Assignable(left, right) || program.Assignable(right, left)), t, "Incompatible equality operands");
+            Emit(operators.at(t.text), t); return "bool";
+        }
+            if (t.text == "<" || t.text == "<=" || t.text == ">" || t.text == ">=") {
+            Require(Numeric(left) && Numeric(right), t, "Comparison operands must be numeric"); Emit(operators.at(t.text), t); return "bool";
+        }
+        auto result = ArithmeticType(t.text, left, right, t); Emit(operators.at(t.text), t); return result;
+    }
+    std::string ArithmeticType(const std::string& op, const std::string& left, const std::string& right, const Token& t) const {
+        if (op == "+" && left == "string" && right == "string") return "string";
+        if ((op == "+" || op == "-") && left == "Vector3" && right == "Vector3") return "Vector3";
+        if ((op == "*" || op == "/") && left == "Vector3" && Numeric(right)) return "Vector3";
+        if (op == "*" && Numeric(left) && right == "Vector3") return "Vector3";
+        Require(Numeric(left) && Numeric(right), t, "Arithmetic operands must be numeric or compatible Vector3 values");
+        return left == "float" || right == "float" ? "float" : "int";
+    }
+    struct Slot { std::string type; bool field; std::size_t index; std::string name; };
+    Slot Destination(const Expr& e) {
+        if (e.kind == Expr::Name) {
+            Require(e.token.text != "this", e.token, "Cannot assign to this");
+            auto local = Local(e.token.text);
+            if (local != std::numeric_limits<std::size_t>::max()) return {function.locals[local], false, local, {}};
+            auto type = FieldType(owner.name, e.token); Emit(Op::Self, e.token); return {type, true, 0, e.token.text};
+        }
+        Require(e.kind == Expr::Member, e.token, "Assignment target must be a variable or field");
+        auto receiver = Expression(*e.children[0]);
+        Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
+        return {FieldType(receiver, e.token), true, 0, e.token.text};
+    }
+    void Load(const Slot& slot, const Token& t) {
+        if (slot.field) { Emit(Op::Duplicate, t); Emit(Op::LoadField, t, 0, slot.name); }
+        else Emit(Op::LoadLocal, t, slot.index);
+    }
+    bool Statement(const Stmt& s) {
+        Guard guard(*this, s.token);
+        const auto& t = s.token;
+        if (s.kind == Stmt::Block) {
+            scopes.emplace_back(); bool returns = false;
+            for (const auto& child : s.children) { bool r = Statement(child); returns = returns || r; }
+            scopes.pop_back(); return returns;
+        }
+        if (s.kind == Stmt::Variable) {
+            Require(program.IsType(s.type), t, "Unknown or invalid variable type '" + s.type + "'");
+            if (s.expressions.empty()) Emit(Op::Constant, t, 0, {}, DefaultValue(s.type));
+            else Compatible(s.type, Expression(*s.expressions[0]), t);
+            Emit(Op::StoreLocal, t, Declare(t, s.type)); return false;
+        }
+        if (s.kind == Stmt::Assignment) {
+            const auto& target = *s.expressions[0];
+            const Expr* destination = &target;
+            bool component = false;
+            if (target.kind == Expr::Member) {
+                auto mark = function.code.size(); auto receiverType = Expression(*target.children[0]); function.code.resize(mark);
+                component = receiverType == "Vector3";
+                if (component) { FieldType(receiverType, target.token); destination = target.children[0].get(); }
+            }
+            auto slot = Destination(*destination);
+            if (component || s.operation != "=") Load(slot, t);
+            if (component && s.operation != "=") { Emit(Op::Duplicate, t); Emit(Op::LoadField, target.token, 0, target.token.text); }
+            auto expected = component ? std::string("float") : slot.type;
+            auto actual = Expression(*s.expressions[1]);
+            if (s.operation != "=") {
+                const auto op = s.operation.substr(0, 1);
+                actual = ArithmeticType(op, expected, actual, t);
+                Emit(op == "+" ? Op::Add : op == "-" ? Op::Subtract : op == "*" ? Op::Multiply : Op::Divide, t);
+            }
+            Compatible(expected, actual, t);
+            if (component) Emit(Op::SetComponent, target.token, 0, target.token.text);
+            Emit(slot.field ? Op::StoreField : Op::StoreLocal, t, slot.index, slot.name);
+            return false;
+        }
+        if (s.kind == Stmt::Expression) { Expression(*s.expressions[0]); Emit(Op::Pop, t); return false; }
+        if (s.kind == Stmt::Return) {
+            if (s.expressions.empty()) { Require(function.result == "void", t, "Return value required"); Emit(Op::Constant, t); }
+            else { Require(function.result != "void", t, "Void function cannot return a value"); Compatible(function.result, Expression(*s.expressions[0]), t); }
+            Emit(Op::Return, t); return true;
+        }
+        auto loop = function.code.size();
+        Require(Expression(*s.expressions[0]) == "bool", t, "Condition must be bool");
+        auto branch = Emit(Op::JumpFalse, t); bool first = Statement(s.children[0]);
+        if (s.kind == Stmt::While) { Emit(Op::Jump, t, loop); Patch(branch); return false; }
+        auto finish = Emit(Op::Jump, t); Patch(branch);
+        bool second = s.children.size() == 2 && Statement(s.children[1]); Patch(finish);
+        return first && second;
+    }
+public:
+    BytecodeCompiler(Program::Impl& p, Class& c, Function& f) : program(p), owner(c), function(f) {}
+    void Compile(const FunctionAst& ast) {
+        for (const auto& param : ast.params) Declare(param.name, param.type);
+        // The top-level body shares parameter scope, so redeclaring a parameter is an error.
+        bool returns = false;
+        for (const auto& s : ast.body.children) { bool r = Statement(s); returns = returns || r; }
+        Require(function.result == "void" || returns, ast.name, "Non-void function must return on every path");
+        if (!function.code.empty() && function.result == "void") { Emit(Op::Constant, ast.name); Emit(Op::Return, ast.name); }
+    }
+    void Initialize(const ClassAst& ast) {
+        for (const auto& field : ast.fields) if (field.initializer) {
+            Emit(Op::Self, field.name); Compatible(field.type, Expression(*field.initializer), field.name); Emit(Op::StoreField, field.name, 0, field.name.text);
+        }
+        if (!function.code.empty()) { Emit(Op::Constant, ast.name); Emit(Op::Return, ast.name); }
+    }
+};
+void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts) {
+    Class transform; transform.name = "Transform";
+    for (const auto& name : {"position", "rotation", "scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
+    program.classes.emplace("Transform", std::move(transform));
+    Class gameObject; gameObject.name = "gameObject";
+    gameObject.fields.push_back({Token{Token::Identifier, "transform"}, "Transform"});
+    program.classes.emplace("gameObject", std::move(gameObject));
+    std::map<std::string, const ClassAst*> byName;
+    for (const auto& ast : asts) {
+        if (program.classes.contains(ast.name.text)) Fail(program.source, ast.name, "Duplicate class '" + ast.name.text + "'");
+        Class c; c.name = ast.name.text; c.base = ast.base; c.initializer.token = ast.name;
+        program.classes.emplace(c.name, std::move(c)); byName[ast.name.text] = &ast;
+    }
+    std::map<std::string, int> state;
+    auto build = [&](auto&& self, const std::string& name, std::size_t depth) -> void {
+        if (name == "gameObject" || name == "Transform" || state[name] == 2) return;
+        const auto& ast = *byName.at(name); auto& c = program.classes.at(name);
+        if (state[name] == 1) Fail(program.source, ast.name, "Inheritance cycle");
+        if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
+        state[name] = 1;
+        if (!c.base.empty()) {
+            if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
+            self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
+        }
+        for (const auto& f : ast.fields) {
+            if (!program.IsType(f.type)) Fail(program.source, f.name, "Unknown or invalid field type '" + f.type + "'");
+            if (program.classes.contains(f.name.text)) Fail(program.source, f.name, "Class names are type keywords");
+            if (program.FindField(name, f.name.text) || program.Method(c.base, f.name.text)) Fail(program.source, f.name, "Duplicate/inherited member '" + f.name.text + "'");
+            c.fields.push_back({f.name, f.type});
+        }
+        for (const auto& method : ast.methods) {
+            if (program.classes.contains(method.name.text)) Fail(program.source, method.name, "Class names are type keywords");
+            if (c.methods.contains(method.name.text) || program.FindField(name, method.name.text)) Fail(program.source, method.name, "Duplicate member '" + method.name.text + "'");
+            Function f; f.token = method.name; f.result = method.result;
+            if (f.result != "void" && !program.IsType(f.result)) Fail(program.source, method.name, "Unknown return type '" + f.result + "'");
+            for (const auto& param : method.params) {
+                if (!program.IsType(param.type)) Fail(program.source, param.name, "Unknown or invalid parameter type");
+                f.params.push_back(param.type);
+            }
+            if (const auto* base = program.Method(c.base, method.name.text)) {
+                if (base->result != f.result || base->params != f.params) Fail(program.source, method.name, "Override must preserve the inherited signature");
+            }
+            if (program.Assignable("gameObject", name)) {
+                if (method.name.text == "start" || method.name.text == "draw") {
+                    if (f.result != "void" || !f.params.empty()) Fail(program.source, method.name, "Lifecycle hook must be void with no parameters");
+                } else if (method.name.text == "update") {
+                    if (f.result != "void" || f.params != std::vector<std::string>{"float"}) Fail(program.source, method.name, "Update signature must be func update(float delta)");
+                }
+            }
+            c.methods.emplace(method.name.text, std::move(f));
+        }
+        state[name] = 2;
+    };
+    for (const auto& ast : asts) build(build, ast.name.text, 0);
+}
+}
+ScriptError::ScriptError(Diagnostic diagnostic)
+    : std::runtime_error(diagnostic.source + ":" + std::to_string(diagnostic.line) + ":" + std::to_string(diagnostic.column) + ": " + diagnostic.message), diagnostic_(std::move(diagnostic)) {}
+Program::Program(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
+ProgramStats Program::Stats() const { return impl_->stats; }
+bool Program::HasClass(std::string_view name) const { return impl_->classes.contains(Canonical(std::string(name))); }
+CompileResult Compiler::Compile(std::string_view source, std::string sourceName) {
+    try {
+        auto p = std::make_shared<Program::Impl>(); p->source = std::move(sourceName);
+        auto asts = Parser(Lex(source, p->source), p->source).Parse(); BuildDeclarations(*p, asts);
+        for (const auto& ast : asts) {
+            auto& c = p->classes.at(ast.name.text);
+            BytecodeCompiler(*p, c, c.initializer).Initialize(ast);
+            for (const auto& method : ast.methods) BytecodeCompiler(*p, c, c.methods.at(method.name.text)).Compile(method);
+        }
+        p->stats.declaredClasses = asts.size();
+        for (const auto& [name, c] : p->classes) {
+            bool active = c.fields.size() > (p->Assignable("gameObject", name) ? 1u : 0u);
+            auto count = [&](const Function& f) { if (!f.code.empty()) { ++p->stats.emittedFunctions; p->stats.instructions += f.code.size(); } };
+            count(c.initializer);
+            for (const auto& [methodName, f] : c.methods) { (void)methodName; count(f); }
+            std::set<std::string> seen;
+            const Class* current = &c;
+            while (current) {
+                for (const auto& [methodName, f] : current->methods) if (seen.insert(methodName).second && !f.code.empty()) active = true;
+                current = current->base.empty() ? nullptr : &p->classes.at(current->base);
+            }
+            if (name != "gameObject" && name != "Transform" && active) ++p->stats.executableClasses;
+        }
+        return {std::shared_ptr<const Program>(new Program(std::move(p))), {}};
+    } catch (const ScriptError& error) { return {nullptr, {error.Detail()}}; }
+}
+struct Runtime::Impl {
+    struct Object {
+        const Class* type = nullptr;
+        std::vector<Value> fields;
+        enum StartState { Pending, Starting, Started, StartFailed } start = Pending;
+        bool failed = false;
+    };
+    std::shared_ptr<const Program::Impl> program;
+    RuntimeLimits limits;
+    std::uint64_t identity;
+    std::vector<std::unique_ptr<Object>> objects;
+    std::size_t remaining = 0, depth = 0;
+    static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
+    Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
+    [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
+    void Reset() { remaining = limits.instructionsPerCall; }
+    void Tick(const Token& t) { if (remaining == 0) Error(t, "Instruction budget exceeded"); --remaining; }
+    struct Frame {
+        Impl& vm;
+        Frame(Impl& v, const Token& t) : vm(v) { if (vm.depth >= vm.limits.callDepth) vm.Error(t, "Call depth limit exceeded"); ++vm.depth; }
+        ~Frame() { --vm.depth; }
+    };
+    Object& Resolve(ObjectRef ref, const Token& t = {}) const {
+        if (ref.id == 0) Error(t, "Null object reference");
+        if (ref.runtime != identity || ref.id > objects.size()) Error(t, "Object belongs to another runtime or is invalid");
+        auto& object = *objects[ref.id - 1];
+        if (object.failed) Error(t, "Object initialization failed");
+        return object;
+    }
+    ObjectRef Reference(const Value& value, const Token& t) const {
+        const auto* ref = std::get_if<ObjectRef>(&value);
+        if (!ref) Error(t, "Expected object reference");
+        Resolve(*ref, t); return *ref;
+    }
+    std::string Type(const Value& value, const Token& t) const {
+        switch (value.index()) {
+        case 0: return "void"; case 1: return "int"; case 2: return "float";
+        case 3: return "bool"; case 4: return "string"; case 6: return "Vector3";
+        default: { auto ref = std::get<ObjectRef>(value); if (ref.id == 0 && ref.runtime == 0) return "null"; return Resolve(ref, t).type->name; }
+        }
+    }
+    Value Coerce(Value value, const std::string& type, const Token& t) const {
+        const auto from = Type(value, t);
+        if (!program->Assignable(type, from)) Error(t, "Cannot assign '" + from + "' to '" + type + "'");
+        if (type == "float" && from == "int") value = static_cast<double>(std::get<std::int64_t>(value));
+        if (auto v = std::get_if<double>(&value); v && !std::isfinite(*v)) Error(t, "Non-finite float");
+        if (auto v = std::get_if<Vector3>(&value); v && (!std::isfinite(v->x) || !std::isfinite(v->y) || !std::isfinite(v->z))) Error(t, "Non-finite Vector3");
+        if (auto s = std::get_if<std::string>(&value); s && s->size() > limits.stringBytes) Error(t, "String size limit exceeded");
+        return value;
+    }
+    Value Get(ObjectRef ref, const std::string& name, const Token& t = {}) const {
+        auto& o = Resolve(ref, t); std::size_t index = 0;
+        if (!program->FindField(o.type->name, name, &index)) Error(t, "Unknown field '" + name + "'");
+        return o.fields[index];
+    }
+    void Set(ObjectRef ref, const std::string& name, Value value, const Token& t = {}) {
+        auto& o = Resolve(ref, t); std::size_t index = 0;
+        auto field = program->FindField(o.type->name, name, &index);
+        if (!field) Error(t, "Unknown field '" + name + "'");
+        o.fields[index] = Coerce(std::move(value), field->type, t);
+    }
+    ObjectRef Create(const std::string& name, const Token& t) {
+        auto found = program->classes.find(name);
+        if (found == program->classes.end()) Error(t, "Unknown class '" + name + "'");
+        Frame frame(*this, t); Tick(t);
+        if (objects.size() >= limits.objects) Error(t, "Object limit exceeded");
+        auto object = std::make_unique<Object>(); object->type = &found->second;
+        for (const auto& field : object->type->fields) object->fields.push_back(DefaultValue(field.type));
+        ObjectRef ref{identity, objects.size() + 1}; objects.push_back(std::move(object));
+        std::vector<const Class*> bases;
+        const Class* c = &found->second;
+        while (c) { bases.push_back(c); c = c->base.empty() ? nullptr : &program->classes.at(c->base); }
+        try {
+                        if (program->Assignable("Transform", name)) Set(ref, "scale", Vector3{1, 1, 1}, t);
+            if (program->Assignable("gameObject", name)) Set(ref, "transform", Create("Transform", t), t);
+            for (auto it = bases.rbegin(); it != bases.rend(); ++it) Execute(ref, (*it)->initializer, {}, t);
+        } catch (...) { objects[ref.id - 1]->failed = true; throw; }
+        return ref;
+    }
+    static double Number(const Value& v) { if (auto i = std::get_if<std::int64_t>(&v)) return static_cast<double>(*i); return std::get<double>(v); }
+    Value Arithmetic(Op op, Value left, Value right, const Token& t) const {
+        if (std::holds_alternative<Vector3>(left) || std::holds_alternative<Vector3>(right)) {
+            Vector3 result;
+            if (auto a = std::get_if<Vector3>(&left)) {
+                if (auto b = std::get_if<Vector3>(&right)) result = op == Op::Add ? Vector3{a->x + b->x, a->y + b->y, a->z + b->z} : Vector3{a->x - b->x, a->y - b->y, a->z - b->z};
+                else {
+                    auto scalar = Number(right); if (op == Op::Divide && scalar == 0) Error(t, "Division by zero");
+                    result = op == Op::Divide ? Vector3{a->x / scalar, a->y / scalar, a->z / scalar} : Vector3{a->x * scalar, a->y * scalar, a->z * scalar};
+                }
+            } else { auto b = std::get<Vector3>(right); auto scalar = Number(left); result = {scalar * b.x, scalar * b.y, scalar * b.z}; }
+            return Coerce(result, "Vector3", t);
+        }
+        if (op == Op::Add && std::holds_alternative<std::string>(left)) {
+            auto a = std::get<std::string>(std::move(left)); const auto& b = std::get<std::string>(right);
+            if (a.size() > limits.stringBytes || b.size() > limits.stringBytes - a.size()) Error(t, "String size limit exceeded");
+            a += b; return a;
+        }
+        if (std::holds_alternative<std::int64_t>(left) && std::holds_alternative<std::int64_t>(right)) {
+            const auto a = std::get<std::int64_t>(left), b = std::get<std::int64_t>(right);
+            constexpr auto lo = std::numeric_limits<std::int64_t>::min(), hi = std::numeric_limits<std::int64_t>::max();
+            if (op == Op::Add) {
+                if ((b > 0 && a > hi - b) || (b < 0 && a < lo - b)) Error(t, "Integer overflow");
+                return a + b;
+            }
+            if (op == Op::Subtract) {
+                if ((b < 0 && a > hi + b) || (b > 0 && a < lo + b)) Error(t, "Integer overflow");
+                return a - b;
+            }
+            if (op == Op::Multiply) {
+                if ((a > 0 && ((b > 0 && a > hi / b) || (b < 0 && b < lo / a))) ||
+                    (a < 0 && ((b > 0 && a < lo / b) || (b < 0 && a < hi / b)))) Error(t, "Integer overflow");
+                return a * b;
+            }
+            if (b == 0) Error(t, "Division by zero");
+            if (a == lo && b == -1) Error(t, "Integer overflow");
+            return a / b;
+        }
+        double a = Number(left), b = Number(right), result = 0;
+        switch (op) {
+        case Op::Add: result = a + b; break;
+        case Op::Subtract: result = a - b; break;
+        case Op::Multiply: result = a * b; break;
+        default: if (b == 0) Error(t, "Division by zero"); result = a / b; break;
+        }
+        if (!std::isfinite(result)) Error(t, "Non-finite arithmetic result");
+        return result;
+    }
+    Value Compare(Op op, const Value& a, const Value& b) const {
+        auto numeric = [](const Value& v) { return std::holds_alternative<std::int64_t>(v) || std::holds_alternative<double>(v); };
+        if (op == Op::Equal || op == Op::NotEqual) {
+            bool equal = a.index() == b.index() ? a == b : (numeric(a) && numeric(b) && Number(a) == Number(b));
+            return op == Op::Equal ? equal : !equal;
+        }
+        auto compare = [op](auto left, auto right) {
+            switch (op) { case Op::Less: return left < right; case Op::LessEqual: return left <= right; case Op::Greater: return left > right; default: return left >= right; }
+        };
+        if (std::holds_alternative<std::int64_t>(a) && std::holds_alternative<std::int64_t>(b)) return compare(std::get<std::int64_t>(a), std::get<std::int64_t>(b));
+        return compare(Number(a), Number(b));
+    }
+    Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
+        const auto& object = Resolve(ref, t);
+        const auto* function = program->Method(object.type->name, name);
+        if (!function) Error(t, "Unknown method '" + name + "'");
+        return Execute(ref, *function, args, t);
+    }
+    Value Execute(ObjectRef ref, const Function& f, const std::vector<Value>& args, const Token& caller) {
+        if (args.size() != f.params.size()) Error(caller, "Wrong argument count");
+        std::vector<Value> locals;
+        locals.reserve(f.locals.size());
+        for (std::size_t i = 0; i < args.size(); ++i) locals.push_back(Coerce(args[i], f.params[i], caller));
+        // Empty functions retain only a signature, with no frame or instruction dispatch.
+        if (f.code.empty()) return {};
+        Frame frame(*this, caller);
+        for (std::size_t i = args.size(); i < f.locals.size(); ++i) locals.push_back(DefaultValue(f.locals[i]));
+        std::vector<Value> stack;
+        auto pop = [&]() { Value value = std::move(stack.back()); stack.pop_back(); return value; };
+        for (std::size_t pc = 0; pc < f.code.size();) {
+            const auto& ins = f.code[pc++]; const auto& t = ins.token; Tick(t);
+            switch (ins.op) {
+            case Op::Constant:
+                if (auto s = std::get_if<std::string>(&ins.value); s && s->size() > limits.stringBytes) Error(t, "String size limit exceeded");
+                stack.push_back(ins.value); break;
+                        case Op::Duplicate: stack.push_back(stack.back()); break;
+            case Op::MakeVector: {
+                Vector3 v; if (ins.a == 3) { v.z = Number(pop()); v.y = Number(pop()); v.x = Number(pop()); }
+                stack.push_back(Coerce(v, "Vector3", t)); break;
+            }
+            case Op::SetComponent: {
+                double component = Number(pop()); auto v = std::get<Vector3>(pop());
+                if (ins.name == "x") v.x = component; else if (ins.name == "y") v.y = component; else v.z = component;
+                stack.push_back(Coerce(v, "Vector3", t)); break;
+            }
+            case Op::Self: stack.push_back(ref); break;
+            case Op::LoadLocal: stack.push_back(locals[ins.a]); break;
+            case Op::StoreLocal: locals[ins.a] = Coerce(pop(), f.locals[ins.a], t); break;
+                        case Op::LoadField: {
+                auto value = pop();
+                if (auto v = std::get_if<Vector3>(&value)) stack.push_back(ins.name == "x" ? v->x : ins.name == "y" ? v->y : v->z);
+                else stack.push_back(Get(Reference(value, t), ins.name, t));
+                break;
+            }
+            case Op::StoreField: { auto value = pop(); auto target = Reference(pop(), t); Set(target, ins.name, std::move(value), t); break; }
+            case Op::Call: {
+                std::vector<Value> arguments(ins.a);
+                for (std::size_t i = ins.a; i > 0; --i) arguments[i - 1] = pop();
+                auto target = Reference(pop(), t); stack.push_back(Invoke(target, ins.name, arguments, t)); break;
+            }
+            case Op::New: stack.push_back(Create(ins.name, t)); break;
+            case Op::Pop: pop(); break;
+            case Op::Return: return Coerce(pop(), f.result, t);
+            case Op::Negate: {
+                auto value = pop();
+                if (auto i = std::get_if<std::int64_t>(&value)) {
+                    if (*i == std::numeric_limits<std::int64_t>::min()) Error(t, "Integer overflow");
+                    stack.push_back(-*i);
+                } else if (auto v = std::get_if<Vector3>(&value)) stack.push_back(Vector3{-v->x, -v->y, -v->z});
+                else stack.push_back(-std::get<double>(value));
+                break;
+            }
+            case Op::Not: stack.push_back(!std::get<bool>(pop())); break;
+            case Op::Jump: pc = ins.a; break;
+            case Op::JumpFalse: if (!std::get<bool>(pop())) pc = ins.a; break;
+            case Op::Add: case Op::Subtract: case Op::Multiply: case Op::Divide: {
+                auto right = pop(), left = pop(); stack.push_back(Arithmetic(ins.op, std::move(left), std::move(right), t)); break;
+            }
+            default: { auto right = pop(), left = pop(); stack.push_back(Compare(ins.op, left, right)); break; }
+            }
+        }
+        Error(f.token, "Function ended without returning");
+    }
+    void Behavior(ObjectRef ref) const {
+        const auto& object = Resolve(ref);
+        if (!program->Assignable("gameObject", object.type->name)) Error({}, "Lifecycle hooks require a gameObject-derived behavior");
+    }
+    void Start(ObjectRef ref) {
+        Behavior(ref); auto& object = Resolve(ref);
+        if (object.start == Object::Started) return;
+        if (object.start == Object::StartFailed) Error({}, "Start previously failed");
+        if (object.start == Object::Starting) Error({}, "Reentrant start");
+        object.start = Object::Starting;
+        try {
+            if (auto f = program->Method(object.type->name, "start"); f && !f->code.empty()) Execute(ref, *f, {}, f->token);
+            object.start = Object::Started;
+        } catch (...) { object.start = Object::StartFailed; throw; }
+    }
+    void Hook(ObjectRef ref, const std::string& name, const std::vector<Value>& args) {
+        Start(ref);
+        if (auto f = program->Method(Resolve(ref).type->name, name); f && !f->code.empty()) Execute(ref, *f, args, f->token);
+    }
+};
+Runtime::Runtime(std::shared_ptr<const Program> program, RuntimeLimits limits) {
+    if (!program) throw std::invalid_argument("Runtime requires a successfully compiled program");
+    impl_ = std::make_unique<Impl>(program->impl_, limits);
+}
+Runtime::~Runtime() = default;
+ObjectRef Runtime::Create(std::string_view className) { impl_->Reset(); return impl_->Create(Canonical(std::string(className)), {}); }
+Value Runtime::Call(ObjectRef object, std::string_view method, const std::vector<Value>& arguments) {
+    impl_->Reset(); return impl_->Invoke(object, std::string(method), arguments, {});
+}
+Value Runtime::Get(ObjectRef object, std::string_view field) const { return impl_->Get(object, std::string(field)); }
+void Runtime::Set(ObjectRef object, std::string_view field, Value value) { impl_->Set(object, std::string(field), std::move(value)); }
+void Runtime::Start(ObjectRef object) { impl_->Reset(); impl_->Start(object); }
+void Runtime::Update(ObjectRef object, double delta) {
+    if (!std::isfinite(delta) || delta < 0) impl_->Error({}, "Delta must be finite and nonnegative");
+    impl_->Reset(); impl_->Hook(object, "update", {delta});
+}
+void Runtime::Draw(ObjectRef object) { impl_->Reset(); impl_->Hook(object, "draw", {}); }
+
+} // namespace zengine::script
