@@ -1,9 +1,16 @@
 #pragma once
 
 #include <windows.h>
+#include <shellapi.h>
 
 #include <cstdint>
 #include <memory>
+#include <filesystem>
+#include <future>
+#include <deque>
+#include <string>
+#include <vector>
+#include "ModelData.h"
 
 class Renderer;
 
@@ -16,7 +23,7 @@ public:
     EditorShell(const EditorShell&) = delete;
     EditorShell& operator=(const EditorShell&) = delete;
 
-    [[nodiscard]] HWND Create(int showCommand);
+    [[nodiscard]] HWND Create(int showCommand, const std::filesystem::path& projectDirectory = {});
     void InitializeRenderer();
     void Render();
 
@@ -40,6 +47,33 @@ private:
     void UpdateDrag(POINT position);
     void EndDrag();
     [[nodiscard]] DragTarget HitTestSplitter(POINT position) const;
+    RECT AssetListRectangle() const;
+    void RefreshAssets();
+    void ReceiveFiles(HDROP drop);
+    void PollAssetWork();
+    void BeginAssetDrag(POINT point);
+    void FinishAssetDrag(POINT point);
+
+    struct AssetJob { std::filesystem::path path; bool replacePreview = false; };
+    struct AssetResult
+    {
+        std::filesystem::path path;
+        bool replacePreview = false;
+        ModelData model;
+        std::vector<std::string> warnings;
+    };
+    std::filesystem::path assetsDirectory_;
+    std::vector<std::filesystem::path> assets_;
+    std::deque<AssetJob> assetJobs_;
+    std::future<AssetResult> assetWork_;
+    std::wstring status_ = L"Ready - drop an FBX into the Media Library";
+    std::wstring sceneName_ = L"Color Cube";
+    int firstAsset_ = 0;
+    int selectedAsset_ = -1;
+    int draggedAsset_ = -1;
+    POINT assetDragStart_{};
+    bool assetDragMoved_ = false;
+    ULONGLONG lastBusyPaint_ = 0;
 
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr;

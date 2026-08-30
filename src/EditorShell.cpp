@@ -1,6 +1,7 @@
 #include "EditorShell.h"
 
 #include "Renderer.h"
+#include "FbxImporter.h"
 
 #include <windowsx.h>
 
@@ -8,9 +9,17 @@
 #include <array>
 #include <stdexcept>
 #include <string_view>
+#include <chrono>
 
 namespace
 {
+    std::wstring WideText(const std::string& text)
+    {
+        const int count = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+        std::wstring result(count, L' ');
+        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), count);
+        return result;
+    }
     constexpr wchar_t EditorWindowClass[] = L"zEngineEditorWindow";
     constexpr wchar_t ViewportWindowClass[] = L"zEngineViewportWindow";
 
@@ -142,7 +151,7 @@ EditorShell::~EditorShell()
     UnregisterClassW(EditorWindowClass, instance_);
 }
 
-HWND EditorShell::Create(const int showCommand)
+HWND EditorShell::Create(const int showCommand, const std::filesystem::path& projectDirectory)
 {
     RECT windowArea{0, 0, 1440, 900};
     AdjustWindowRectEx(&windowArea, WS_OVERLAPPEDWINDOW, FALSE, 0);
@@ -157,6 +166,14 @@ HWND EditorShell::Create(const int showCommand)
     }
 
     CreateViewport();
+    std::array<wchar_t, 32768> executable{};
+    const DWORD pathLength = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+    if (!pathLength || pathLength == executable.size()) throw std::runtime_error("Cannot locate the project directory.");
+    assetsDirectory_ = (projectDirectory.empty()
+        ? std::filesystem::path(executable.data()).parent_path() / "Project"
+        : std::filesystem::absolute(projectDirectory)) / "Assets";
+    RefreshAssets();
+    DragAcceptFiles(window_, TRUE);
     RECT client{};
     GetClientRect(window_, &client);
     Layout(static_cast<std::uint32_t>(client.right), static_cast<std::uint32_t>(client.bottom));
@@ -191,6 +208,7 @@ void EditorShell::InitializeRenderer()
 
 void EditorShell::Render()
 {
+    PollAssetWork();
     if (!renderer_ || requestedViewportWidth_ == 0 || requestedViewportHeight_ == 0)
     {
         return;
@@ -229,7 +247,7 @@ void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
 
     mediaLibrary_ = RECT{
         0, std::max(workspaceTop, workspaceBottom - mediaLibraryHeight_), clientWidth, workspaceBottom};
-    mediaSplitter_ = RECT{0, std::max(workspaceTop, mediaLibrary_.top - SplitterSize),
+    mediaSplitter_ = RECT{0, std::max<LONG>(workspaceTop, mediaLibrary_.top - SplitterSize),
                           clientWidth, mediaLibrary_.top};
     const int upperBottom = mediaSplitter_.top;
 
@@ -245,8 +263,8 @@ void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
 
     sceneBrowser_ = RECT{0, workspaceTop, std::min(sceneBrowserWidth_, clientWidth), upperBottom};
     sceneSplitter_ = RECT{sceneBrowser_.right, workspaceTop,
-                          std::min(sceneBrowser_.right + SplitterSize, clientWidth), upperBottom};
-    inspector_ = RECT{std::max(sceneSplitter_.right, clientWidth - inspectorWidth_), workspaceTop,
+                          std::min<LONG>(sceneBrowser_.right + SplitterSize, clientWidth), upperBottom};
+    inspector_ = RECT{std::max<LONG>(sceneSplitter_.right, clientWidth - inspectorWidth_), workspaceTop,
                       clientWidth, upperBottom};
     inspectorSplitter_ = RECT{std::max(sceneSplitter_.right, inspector_.left - SplitterSize), workspaceTop,
                               inspector_.left, upperBottom};
@@ -254,8 +272,8 @@ void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
     viewportContent_ = viewportPanel_;
     viewportContent_.top = std::min(viewportContent_.bottom, viewportContent_.top + PanelHeaderHeight);
 
-    const int viewportWidth = std::max(0, viewportContent_.right - viewportContent_.left);
-    const int viewportHeight = std::max(0, viewportContent_.bottom - viewportContent_.top);
+    const int viewportWidth = std::max<LONG>(0, viewportContent_.right - viewportContent_.left);
+    const int viewportHeight = std::max<LONG>(0, viewportContent_.bottom - viewportContent_.top);
     requestedViewportWidth_ = static_cast<std::uint32_t>(viewportWidth);
     requestedViewportHeight_ = static_cast<std::uint32_t>(viewportHeight);
     if (viewportWindow_)
@@ -274,8 +292,8 @@ void EditorShell::Paint()
     const HDC windowContext = BeginPaint(window_, &paint);
     RECT client{};
     GetClientRect(window_, &client);
-    const int width = std::max(1, client.right - client.left);
-    const int height = std::max(1, client.bottom - client.top);
+    const int width = std::max<LONG>(1, client.right - client.left);
+    const int height = std::max<LONG>(1, client.bottom - client.top);
 
     const HDC bufferContext = CreateCompatibleDC(windowContext);
     const HBITMAP bufferBitmap = CreateCompatibleBitmap(windowContext, width, height);
@@ -321,7 +339,7 @@ void EditorShell::Paint()
     RECT selected{sceneBrowser_.left + 5, sceneY, sceneBrowser_.right - 5, sceneY + 27};
     FillRectangle(bufferContext, selected, SelectionColor);
     selected.left = sceneX + 18;
-    DrawTextLabel(bufferContext, L"\u25a0  Color Cube", selected, TextColor);
+    DrawTextLabel(bufferContext, L"\u25a0  " + sceneName_, selected, TextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     sceneY += 36;
     RECT hint{sceneX, sceneY, sceneBrowser_.right - 10, sceneY + 40};
     DrawTextLabel(bufferContext, L"Scene objects will appear here", hint, MutedTextColor, DT_LEFT | DT_WORDBREAK);
@@ -342,10 +360,10 @@ void EditorShell::Paint()
 
     // Inspector mock content
     const int inspectorX = inspector_.left + 12;
-    const int inspectorContentWidth = std::max(40, inspector_.right - inspectorX - 12);
+    const int inspectorContentWidth = std::max<LONG>(40, inspector_.right - inspectorX - 12);
     int inspectorY = inspector_.top + PanelHeaderHeight + 12;
     RECT objectName{inspectorX, inspectorY, inspector_.right - 12, inspectorY + 25};
-    DrawTextLabel(bufferContext, L"Color Cube", objectName, TextColor);
+    DrawTextLabel(bufferContext, sceneName_, objectName, TextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     inspectorY += 34;
     RECT sectionHeader{inspectorX, inspectorY, inspector_.right - 12, inspectorY + 24};
     FillRectangle(bufferContext, sectionHeader, HeaderBackground);
@@ -370,7 +388,7 @@ void EditorShell::Paint()
 
     // Media library mock content
     const int mediaTop = mediaLibrary_.top + PanelHeaderHeight;
-    const int folderPaneWidth = std::clamp((mediaLibrary_.right - mediaLibrary_.left) / 5, 150, 250);
+    const int folderPaneWidth = std::clamp<LONG>((mediaLibrary_.right - mediaLibrary_.left) / 5, 150, 250);
     RECT folderPane{mediaLibrary_.left + 1, mediaTop, mediaLibrary_.left + folderPaneWidth, mediaLibrary_.bottom - 1};
     FillRectangle(bufferContext, folderPane, RGB(36, 38, 43));
     RECT assetsLabel{folderPane.left + 12, folderPane.top + 12, folderPane.right - 8, folderPane.top + 36};
@@ -383,19 +401,43 @@ void EditorShell::Paint()
     DrawTextLabel(bufferContext, L"+ Add Folder", addFolder, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     RECT dropArea{folderPane.right + 20, mediaTop + 20, mediaLibrary_.right - 20, mediaLibrary_.bottom - 20};
     DrawBorder(bufferContext, dropArea, RGB(72, 75, 83));
-    RECT dropText = dropArea;
-    DrawTextLabel(bufferContext, L"Drag files here to import them into the project", dropText,
-                  MutedTextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    RECT libraryHint{dropArea.left + 8, dropArea.top, dropArea.right - 8, dropArea.top + 26};
+    DrawTextLabel(bufferContext, L"Drop FBX files here  |  Drag an asset into Scene to preview  |  Scroll to browse", libraryHint,
+                  MutedTextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    const RECT list = AssetListRectangle();
+    const int saved = SaveDC(bufferContext);
+    IntersectClipRect(bufferContext, list.left, list.top, list.right, list.bottom);
+    if (assets_.empty())
+        DrawTextLabel(bufferContext, L"No imported models", list, MutedTextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    for (int index = firstAsset_; index < static_cast<int>(assets_.size()); ++index)
+    {
+        RECT row{list.left, list.top + (index - firstAsset_) * 28, list.right,
+                 list.top + (index - firstAsset_ + 1) * 28};
+        if (row.top >= list.bottom) break;
+        if (index == selectedAsset_) FillRectangle(bufferContext, row, SelectionColor);
+        row.left += 8;
+        DrawTextLabel(bufferContext, L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
+                      DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    }
+    RestoreDC(bufferContext, saved);
 
     // Status bar and dormant progress indicator
     FillRectangle(bufferContext, statusBar_, RGB(30, 32, 36));
-    RECT statusText{statusBar_.left + 10, statusBar_.top, statusBar_.left + 320, statusBar_.bottom};
-    DrawTextLabel(bufferContext, L"Ready", statusText, TextColor);
+    RECT statusText{statusBar_.left + 10, statusBar_.top, statusBar_.right - 370, statusBar_.bottom};
+    DrawTextLabel(bufferContext, status_, statusText, TextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     RECT taskText{statusBar_.right - 360, statusBar_.top, statusBar_.right - 190, statusBar_.bottom};
-    DrawTextLabel(bufferContext, L"No tasks running", taskText, MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextLabel(bufferContext, assetWork_.valid() ? L"Processing asset..." : L"No tasks running", taskText,
+                  MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
     RECT progressTrack{statusBar_.right - 176, statusBar_.top + 8, statusBar_.right - 12, statusBar_.bottom - 8};
     FillRectangle(bufferContext, progressTrack, FieldColor);
     DrawBorder(bufferContext, progressTrack, BorderColor);
+    if (assetWork_.valid())
+    {
+        const LONG offset = static_cast<LONG>((GetTickCount64() / 15) % 120);
+        RECT activity{progressTrack.left + 2 + offset, progressTrack.top + 2,
+                      progressTrack.left + 30 + offset, progressTrack.bottom - 2};
+        FillRectangle(bufferContext, activity, RGB(63, 126, 201));
+    }
 
     BitBlt(windowContext, 0, 0, width, height, bufferContext, 0, 0, SRCCOPY);
     SelectObject(bufferContext, previousBitmap);
@@ -428,6 +470,129 @@ void EditorShell::BeginDrag(const POINT position)
     {
         SetCapture(window_);
     }
+}
+
+RECT EditorShell::AssetListRectangle() const
+{
+    const int folderWidth = std::clamp(static_cast<int>(mediaLibrary_.right - mediaLibrary_.left) / 5, 150, 250);
+    return {mediaLibrary_.left + folderWidth + 21, mediaLibrary_.top + PanelHeaderHeight + 48,
+            mediaLibrary_.right - 21, mediaLibrary_.bottom - 21};
+}
+
+void EditorShell::RefreshAssets()
+{
+    assets_.clear();
+    if (std::filesystem::exists(assetsDirectory_))
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(assetsDirectory_))
+        {
+            if (entry.is_directory() && std::filesystem::is_regular_file(entry.path() / "asset.ready") &&
+                std::filesystem::is_regular_file(entry.path() / "model.fbx"))
+                assets_.push_back(entry.path() / "model.fbx");
+        }
+    }
+    std::sort(assets_.begin(), assets_.end());
+    firstAsset_ = std::clamp(firstAsset_, 0, std::max(0, static_cast<int>(assets_.size()) - 1));
+    selectedAsset_ = -1;
+}
+
+void EditorShell::ReceiveFiles(HDROP drop)
+{
+    struct DropOwner { HDROP handle; ~DropOwner() { DragFinish(handle); } } owner{drop};
+    POINT location{};
+    if (!DragQueryPoint(drop, &location) || !PtInRect(&mediaLibrary_, location))
+    {
+        status_ = L"Drop FBX files into the Media Library first.";
+        InvalidateRect(window_, &statusBar_, FALSE);
+        return;
+    }
+    const UINT count = DragQueryFileW(drop, 0xffffffff, nullptr, 0);
+    for (UINT index = 0; index < count; ++index)
+    {
+        const UINT length = DragQueryFileW(drop, index, nullptr, 0);
+        std::vector<wchar_t> name(static_cast<std::size_t>(length) + 1);
+        if (DragQueryFileW(drop, index, name.data(), static_cast<UINT>(name.size())))
+            assetJobs_.push_back({std::filesystem::path(name.data()), false});
+    }
+}
+
+void EditorShell::PollAssetWork()
+{
+    if (assetWork_.valid() && assetWork_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        try
+        {
+            auto result = assetWork_.get();
+            if (result.replacePreview)
+            {
+                const auto textureWarnings = renderer_->SetModel(result.model);
+                result.warnings = std::move(result.model.warnings);
+                result.warnings.insert(result.warnings.end(), textureWarnings.begin(), textureWarnings.end());
+                sceneName_ = result.path.parent_path().filename().wstring();
+                SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + sceneName_).c_str());
+                status_ = L"Previewing " + sceneName_;
+            }
+            else
+            {
+                // Cancel a row drag before rebuilding the library order.
+                draggedAsset_ = -1;
+                if (GetCapture() == window_ && dragTarget_ == DragTarget::None) ReleaseCapture();
+                RefreshAssets();
+                status_ = L"Imported " + result.path.parent_path().filename().wstring();
+            }
+            if (!result.warnings.empty())
+                status_ += L" (albedo fallback: " + WideText(result.warnings.front()) + L")";
+        }
+        catch (const std::exception& error)
+        {
+            status_ = L"Asset operation failed: " + WideText(error.what());
+        }
+        InvalidateRect(window_, nullptr, FALSE);
+    }
+    if (!assetWork_.valid() && !assetJobs_.empty())
+    {
+        const auto job = assetJobs_.front();
+        assetJobs_.pop_front();
+        status_ = (job.replacePreview ? L"Loading " : L"Importing ") + job.path.filename().wstring();
+        const auto directory = assetsDirectory_;
+        assetWork_ = std::async(std::launch::async, [job, directory]() {
+            AssetResult result;
+            result.replacePreview = job.replacePreview;
+            result.path = job.path;
+            if (job.replacePreview) result.model = FbxImporter::Load(job.path, true);
+            else result.path = FbxImporter::Import(job.path, directory, result.warnings);
+            return result;
+        });
+    }
+    if (assetWork_.valid() && GetTickCount64() - lastBusyPaint_ > 100)
+    {
+        lastBusyPaint_ = GetTickCount64();
+        InvalidateRect(window_, &statusBar_, FALSE);
+    }
+}
+
+void EditorShell::BeginAssetDrag(POINT point)
+{
+    const RECT list = AssetListRectangle();
+    if (!PtInRect(&list, point)) return;
+    const int index = firstAsset_ + static_cast<int>(point.y - list.top) / 28;
+    if (index >= static_cast<int>(assets_.size())) return;
+    selectedAsset_ = draggedAsset_ = index;
+    assetDragStart_ = point;
+    assetDragMoved_ = false;
+    SetCapture(window_);
+    InvalidateRect(window_, &mediaLibrary_, FALSE);
+}
+
+void EditorShell::FinishAssetDrag(POINT point)
+{
+    if (draggedAsset_ < 0) return;
+    if (assetDragMoved_ && PtInRect(&viewportContent_, point))
+        assetJobs_.push_back({assets_.at(draggedAsset_), true});
+    draggedAsset_ = -1;
+    assetDragMoved_ = false;
+    ReleaseCapture();
+    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
 }
 
 void EditorShell::UpdateDrag(const POINT position)
@@ -477,8 +642,21 @@ LRESULT CALLBACK EditorShell::WindowProcedure(
         editor->window_ = window;
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(editor));
     }
-    return editor ? editor->HandleMessage(window, message, wParam, lParam)
-                  : DefWindowProcW(window, message, wParam, lParam);
+    try
+    {
+        return editor ? editor->HandleMessage(window, message, wParam, lParam)
+                      : DefWindowProcW(window, message, wParam, lParam);
+    }
+    catch (const std::exception& error)
+    {
+        // Never let C++ exceptions cross a Windows callback boundary.
+        if (editor)
+        {
+            editor->status_ = L"Editor error: " + WideText(error.what());
+            InvalidateRect(window, &editor->statusBar_, FALSE);
+        }
+        return 0;
+    }
 }
 
 LRESULT CALLBACK EditorShell::ViewportProcedure(
@@ -496,6 +674,9 @@ LRESULT EditorShell::HandleMessage(
 {
     switch (message)
     {
+    case WM_DROPFILES:
+        ReceiveFiles(reinterpret_cast<HDROP>(wParam));
+        return 0;
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED)
         {
@@ -521,8 +702,17 @@ LRESULT EditorShell::HandleMessage(
         return 1;
     case WM_LBUTTONDOWN:
         BeginDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        if (dragTarget_ == DragTarget::None) BeginAssetDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         return 0;
     case WM_MOUSEMOVE:
+        if (draggedAsset_ >= 0)
+        {
+            const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            assetDragMoved_ = assetDragMoved_ || std::abs(point.x - assetDragStart_.x) >= GetSystemMetrics(SM_CXDRAG) ||
+                              std::abs(point.y - assetDragStart_.y) >= GetSystemMetrics(SM_CYDRAG);
+            if (assetDragMoved_) SetCursor(LoadCursorW(nullptr, PtInRect(&viewportContent_, point) ? IDC_HAND : IDC_NO));
+            return 0;
+        }
         if (dragTarget_ != DragTarget::None)
         {
             UpdateDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
@@ -530,10 +720,27 @@ LRESULT EditorShell::HandleMessage(
         }
         break;
     case WM_LBUTTONUP:
+        FinishAssetDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         EndDrag();
         return 0;
+    case WM_MOUSEWHEEL:
+    {
+        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ScreenToClient(window_, &point);
+        if (PtInRect(&mediaLibrary_, point) && draggedAsset_ < 0)
+        {
+            const RECT list = AssetListRectangle();
+            const int visibleRows = std::max(1, static_cast<int>(list.bottom - list.top) / 28);
+            firstAsset_ = std::clamp(firstAsset_ - GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 3,
+                                    0, std::max(0, static_cast<int>(assets_.size()) - visibleRows));
+            InvalidateRect(window_, &mediaLibrary_, FALSE);
+        }
+        return 0;
+    }
     case WM_CAPTURECHANGED:
         dragTarget_ = DragTarget::None;
+        draggedAsset_ = -1;
+        assetDragMoved_ = false;
         return 0;
     case WM_SETCURSOR:
     {
@@ -556,6 +763,12 @@ LRESULT EditorShell::HandleMessage(
     case WM_KEYDOWN:
         if (wParam == VK_ESCAPE)
         {
+            if (draggedAsset_ >= 0)
+            {
+                draggedAsset_ = -1;
+                ReleaseCapture();
+                return 0;
+            }
             DestroyWindow(window);
             return 0;
         }

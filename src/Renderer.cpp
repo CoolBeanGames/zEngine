@@ -2,12 +2,17 @@
 
 #include <DirectXMath.h>
 #include <d3dcompiler.h>
+#include <wincodec.h>
 
 #include <array>
 #include <cstddef>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <sstream>
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -18,8 +23,9 @@ namespace
     {
         if (FAILED(result))
         {
-            throw std::runtime_error(std::string(operation) + " failed (HRESULT 0x" +
-                                     std::to_string(static_cast<unsigned long>(result)) + ").");
+            std::ostringstream message;
+            message << operation << " failed (HRESULT 0x" << std::hex << static_cast<unsigned long>(result) << ").";
+            throw std::runtime_error(message.str());
         }
     }
 
@@ -52,13 +58,6 @@ namespace
     }
 }
 
-struct Renderer::Vertex
-{
-    XMFLOAT3 position;
-    XMFLOAT3 normal;
-    XMFLOAT3 color;
-};
-
 struct Renderer::SceneConstants
 {
     XMFLOAT4X4 worldViewProjection;
@@ -72,6 +71,29 @@ void Renderer::Initialize(HWND window, const std::uint32_t width, const std::uin
     CreateRenderTargets(width, height);
     CreateShaders();
     CreateCube();
+    // White fallback makes the original vertex-colored cube use the same material path.
+    const std::uint32_t white = 0xffffffff;
+    D3D11_TEXTURE2D_DESC textureDescription{};
+    textureDescription.Width = textureDescription.Height = 1;
+    textureDescription.MipLevels = textureDescription.ArraySize = 1;
+    textureDescription.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    textureDescription.SampleDesc.Count = 1;
+    textureDescription.Usage = D3D11_USAGE_IMMUTABLE;
+    textureDescription.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA whiteData{&white, 4, 0};
+    ComPtr<ID3D11Texture2D> texture;
+    ThrowIfFailed(device_->CreateTexture2D(&textureDescription, &whiteData, &texture), "Create white texture");
+    ThrowIfFailed(device_->CreateShaderResourceView(texture.Get(), nullptr, &whiteTexture_), "Create white texture view");
+    D3D11_SAMPLER_DESC sampler{};
+    sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    sampler.MaxLOD = D3D11_FLOAT32_MAX;
+    ThrowIfFailed(device_->CreateSamplerState(&sampler, &albedoSampler_), "Create albedo sampler");
+    D3D11_RASTERIZER_DESC rasterizer{};
+    rasterizer.FillMode = D3D11_FILL_SOLID;
+    rasterizer.CullMode = D3D11_CULL_NONE; // Static previews also display mirrored/two-sided FBX geometry.
+    rasterizer.DepthClipEnable = TRUE;
+    ThrowIfFailed(device_->CreateRasterizerState(&rasterizer, &rasterizer_), "Create rasterizer");
     startTime_ = std::chrono::steady_clock::now();
 }
 
@@ -183,6 +205,8 @@ void Renderer::CreateShaders()
                                  offsetof(Vertex, normal), D3D11_INPUT_PER_VERTEX_DATA, 0},
         D3D11_INPUT_ELEMENT_DESC{"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,
                                  offsetof(Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
+        D3D11_INPUT_ELEMENT_DESC{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0,
+                                 offsetof(Vertex, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
     ThrowIfFailed(device_->CreateInputLayout(inputElements.data(), static_cast<UINT>(inputElements.size()),
                                               vertexBytecode->GetBufferPointer(), vertexBytecode->GetBufferSize(),
@@ -195,7 +219,7 @@ void Renderer::CreateCube()
     std::mt19937 randomEngine(std::random_device{}());
     std::uniform_real_distribution<float> colorChannel(0.2f, 1.0f);
     const auto randomColor = [&]() {
-        return XMFLOAT3{colorChannel(randomEngine), colorChannel(randomEngine), colorChannel(randomEngine)};
+        return Float3{colorChannel(randomEngine), colorChannel(randomEngine), colorChannel(randomEngine)};
     };
 
     std::array<Vertex, 8> vertices{
@@ -259,6 +283,114 @@ void Renderer::Resize(const std::uint32_t width, const std::uint32_t height)
     CreateRenderTargets(width, height);
 }
 
+std::vector<std::string> Renderer::SetModel(const ModelData& model)
+{
+    if (model.vertices.empty() || model.indices.empty() || model.parts.empty())
+        throw std::runtime_error("Model contains no drawable geometry.");
+    if (model.vertices.size() > UINT_MAX / sizeof(Vertex) || model.indices.size() > UINT_MAX / sizeof(std::uint32_t))
+        throw std::runtime_error("Model is too large for a GPU buffer.");
+    Float3 minimum = model.vertices.front().position;
+    Float3 maximum = minimum;
+    for (const auto& vertex : model.vertices)
+    {
+        minimum.x = std::min(minimum.x, vertex.position.x); maximum.x = std::max(maximum.x, vertex.position.x);
+        minimum.y = std::min(minimum.y, vertex.position.y); maximum.y = std::max(maximum.y, vertex.position.y);
+        minimum.z = std::min(minimum.z, vertex.position.z); maximum.z = std::max(maximum.z, vertex.position.z);
+    }
+    const float extent = std::max({maximum.x - minimum.x, maximum.y - minimum.y, maximum.z - minimum.z});
+    if (!std::isfinite(extent) || extent < 1.0e-12f) throw std::runtime_error("Model has invalid or zero-sized bounds.");
+    for (const auto index : model.indices)
+        if (index >= model.vertices.size()) throw std::runtime_error("Model contains an invalid vertex index.");
+    for (const auto& part : model.parts)
+        if (part.material >= model.materials.size() || part.firstIndex > model.indices.size() ||
+            part.indexCount > model.indices.size() - part.firstIndex)
+            throw std::runtime_error("Model contains an invalid material or mesh range.");
+
+    ComPtr<ID3D11Buffer> vertices, indices;
+    D3D11_BUFFER_DESC description{};
+    description.Usage = D3D11_USAGE_IMMUTABLE;
+    description.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    description.ByteWidth = static_cast<UINT>(model.vertices.size() * sizeof(Vertex));
+    const D3D11_SUBRESOURCE_DATA vertexData{model.vertices.data(), 0, 0};
+    ThrowIfFailed(device_->CreateBuffer(&description, &vertexData, &vertices), "Upload model vertices");
+    description.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    description.ByteWidth = static_cast<UINT>(model.indices.size() * sizeof(std::uint32_t));
+    const D3D11_SUBRESOURCE_DATA indexData{model.indices.data(), 0, 0};
+    ThrowIfFailed(device_->CreateBuffer(&description, &indexData, &indices), "Upload model indices");
+
+    std::vector<std::string> warnings;
+    std::vector<ComPtr<ID3D11ShaderResourceView>> textures(model.materials.size());
+    std::uint64_t textureBytes = 0;
+    for (std::size_t index = 0; index < model.materials.size(); ++index)
+    {
+        const auto& image = model.materials[index].image;
+        if (image.empty()) continue;
+        try
+        {
+            ComPtr<IWICImagingFactory> factory;
+            ThrowIfFailed(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                           IID_PPV_ARGS(&factory)), "Create image decoder");
+            ComPtr<IWICStream> stream;
+            ThrowIfFailed(factory->CreateStream(&stream), "Create image stream");
+            ThrowIfFailed(stream->InitializeFromMemory(const_cast<BYTE*>(image.data()), static_cast<DWORD>(image.size())),
+                          "Read albedo image");
+            ComPtr<IWICBitmapDecoder> decoder;
+            ThrowIfFailed(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder),
+                          "Decode albedo (PNG, JPEG, BMP, TIFF or GIF required)");
+            ComPtr<IWICBitmapFrameDecode> frame;
+            ThrowIfFailed(decoder->GetFrame(0, &frame), "Read albedo frame");
+            UINT width = 0, height = 0;
+            ThrowIfFailed(frame->GetSize(&width, &height), "Read albedo dimensions");
+            if (!width || !height || width > 32768 || height > 32768)
+                throw std::runtime_error("Invalid or oversized image dimensions.");
+            // Bound GPU allocations on low-spec machines. Keep the original image in the project.
+            const double scale = std::min(1.0, 2048.0 / std::max(width, height));
+            width = std::max(1u, static_cast<UINT>(width * scale));
+            height = std::max(1u, static_cast<UINT>(height * scale));
+            textureBytes += static_cast<std::uint64_t>(width) * height * 4;
+            if (textureBytes > 128 * 1024 * 1024) throw std::runtime_error("Preview texture budget exceeded (128 MB).");
+            ComPtr<IWICBitmapScaler> scaler;
+            ThrowIfFailed(factory->CreateBitmapScaler(&scaler), "Create albedo scaler");
+            ThrowIfFailed(scaler->Initialize(frame.Get(), width, height, WICBitmapInterpolationModeLinear), "Scale albedo");
+            ComPtr<IWICFormatConverter> converter;
+            ThrowIfFailed(factory->CreateFormatConverter(&converter), "Create albedo converter");
+            ThrowIfFailed(converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppRGBA,
+                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom), "Convert albedo to RGBA");
+            std::vector<BYTE> pixels(static_cast<std::size_t>(width) * height * 4);
+            ThrowIfFailed(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size()), pixels.data()),
+                          "Read albedo pixels");
+            D3D11_TEXTURE2D_DESC textureDescription{};
+            textureDescription.Width = width;
+            textureDescription.Height = height;
+            textureDescription.MipLevels = textureDescription.ArraySize = 1;
+            textureDescription.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            textureDescription.SampleDesc.Count = 1;
+            textureDescription.Usage = D3D11_USAGE_IMMUTABLE;
+            textureDescription.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            const D3D11_SUBRESOURCE_DATA pixelsData{pixels.data(), width * 4, 0};
+            ComPtr<ID3D11Texture2D> texture;
+            ThrowIfFailed(device_->CreateTexture2D(&textureDescription, &pixelsData, &texture), "Upload albedo");
+            ThrowIfFailed(device_->CreateShaderResourceView(texture.Get(), nullptr, &textures[index]), "Create albedo view");
+        }
+        catch (const std::exception& issue)
+        {
+            warnings.emplace_back(issue.what()); // Missing/bad images use material color, not a failed scene load.
+        }
+    }
+    auto parts = model.parts;
+    vertexBuffer_ = std::move(vertices);
+    indexBuffer_ = std::move(indices);
+    parts_ = std::move(parts);
+    albedoTextures_ = std::move(textures);
+    indexFormat_ = DXGI_FORMAT_R32_UINT;
+    modelCenter_ = {minimum.x + (maximum.x - minimum.x) * 0.5f,
+                    minimum.y + (maximum.y - minimum.y) * 0.5f,
+                    minimum.z + (maximum.z - minimum.z) * 0.5f};
+    modelScale_ = 2.0f / extent;
+    startTime_ = std::chrono::steady_clock::now();
+    return warnings;
+}
+
 void Renderer::Render()
 {
     if (!renderTargetView_ || width_ == 0 || height_ == 0)
@@ -268,9 +400,14 @@ void Renderer::Render()
 
     const float elapsedSeconds = std::chrono::duration<float>(
         std::chrono::steady_clock::now() - startTime_).count();
-    const XMMATRIX world = XMMatrixRotationY(elapsedSeconds) * XMMatrixRotationX(elapsedSeconds * 0.55f);
+    const XMMATRIX world = XMMatrixTranslation(-modelCenter_.x, -modelCenter_.y, -modelCenter_.z) *
+        XMMatrixScaling(modelScale_, modelScale_, modelScale_) *
+        XMMatrixRotationY(elapsedSeconds) * XMMatrixRotationX(elapsedSeconds * 0.55f);
+    const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
+    const float halfFov = std::min(XM_PI / 6.0f, std::atan(std::tan(XM_PI / 6.0f) * aspect));
+    const float distance = 1.75f / std::sin(halfFov) * 1.1f;
     const XMMATRIX view = XMMatrixLookAtLH(
-        XMVectorSet(0.0f, 1.5f, -5.0f, 1.0f), XMVectorZero(), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+        XMVectorSet(0.0f, distance * 0.28f, -distance, 1.0f), XMVectorZero(), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
     const XMMATRIX projection = XMMatrixPerspectiveFovLH(
         XMConvertToRadians(60.0f), static_cast<float>(width_) / static_cast<float>(height_), 0.1f, 100.0f);
 
@@ -290,17 +427,25 @@ void Renderer::Render()
     context_->ClearDepthStencilView(depthStencilView_.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
     context_->OMSetRenderTargets(1, renderTargetView_.GetAddressOf(), depthStencilView_.Get());
     context_->RSSetViewports(1, &viewport_);
+    context_->RSSetState(rasterizer_.Get());
 
     constexpr UINT stride = static_cast<UINT>(sizeof(Vertex));
     constexpr UINT offset = 0;
     context_->IASetVertexBuffers(0, 1, vertexBuffer_.GetAddressOf(), &stride, &offset);
-    context_->IASetIndexBuffer(indexBuffer_.Get(), DXGI_FORMAT_R16_UINT, 0);
+    context_->IASetIndexBuffer(indexBuffer_.Get(), indexFormat_, 0);
     context_->IASetInputLayout(inputLayout_.Get());
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
     context_->VSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf());
     context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
-    context_->DrawIndexed(36, 0, 0);
+    context_->PSSetSamplers(0, 1, albedoSampler_.GetAddressOf());
+    for (const auto& part : parts_)
+    {
+        ID3D11ShaderResourceView* texture = part.material < albedoTextures_.size() && albedoTextures_[part.material]
+            ? albedoTextures_[part.material].Get() : whiteTexture_.Get();
+        context_->PSSetShaderResources(0, 1, &texture);
+        context_->DrawIndexed(part.indexCount, part.firstIndex, 0);
+    }
 
     ThrowIfFailed(swapChain_->Present(1, 0), "Present frame");
 }
