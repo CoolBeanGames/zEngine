@@ -4,6 +4,8 @@ project(zEngine VERSION 0.1.0 LANGUAGES CXX)
 
 add_executable(zEngine WIN32
     src/Main.cpp
+    src/EditorShell.cpp
+    src/EditorShell.h
     src/Renderer.cpp
     src/Renderer.h
 )
@@ -33,4 +35,3 @@ add_custom_command(TARGET zEngine POST_BUILD
             "$<TARGET_FILE_DIR:zEngine>/shaders/ColorCube.hlsl"
     COMMENT "Copying shaders"
 )
-
