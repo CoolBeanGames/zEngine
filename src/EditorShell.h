@@ -11,8 +11,10 @@
 #include <string>
 #include <vector>
 #include "ModelData.h"
+#include "core/GameObject.h"
 
 class Renderer;
+class InspectorPanel;
 
 class EditorShell final
 {
@@ -26,6 +28,9 @@ public:
     [[nodiscard]] HWND Create(int showCommand, const std::filesystem::path& projectDirectory = {});
     void InitializeRenderer();
     void Render();
+    zengine::GameObject& CreateEmptyGameObject();
+    const zengine::ObjectStore& GameObjects() const noexcept { return objects_; }
+    const zengine::GameObject* SelectedGameObject() const noexcept { return objects_.Find(selectedObject_); }
 
 private:
     enum class DragTarget
@@ -53,6 +58,10 @@ private:
     void PollAssetWork();
     void BeginAssetDrag(POINT point);
     void FinishAssetDrag(POINT point);
+    void SelectGameObject(zengine::GameObjectId id);
+    void OnObjectChanged();
+    RECT CreateObjectRectangle() const;
+    RECT ObjectListRectangle() const;
 
     struct AssetJob { std::filesystem::path path; bool replacePreview = false; };
     struct AssetResult
@@ -67,7 +76,11 @@ private:
     std::deque<AssetJob> assetJobs_;
     std::future<AssetResult> assetWork_;
     std::wstring status_ = L"Ready - drop an FBX into the Media Library";
-    std::wstring sceneName_ = L"Color Cube";
+    zengine::ObjectStore objects_;
+    zengine::GameObjectId selectedObject_ = 0;
+    zengine::GameObjectId previewObject_ = 0;
+    int firstObject_ = 0;
+    std::unique_ptr<InspectorPanel> inspectorPanel_;
     int firstAsset_ = 0;
     int selectedAsset_ = -1;
     int draggedAsset_ = -1;

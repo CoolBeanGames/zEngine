@@ -1,6 +1,8 @@
 #include "FbxImporter.h"
 #include "Renderer.h"
 #include "EditorShell.h"
+#include "InspectorPanel.h"
+#include "RenderTransform.h"
 #include <objbase.h>
 #include <shlobj.h>
 
@@ -128,6 +130,15 @@ namespace
             try { renderer.SetModel(model); } catch (const std::exception&) { rejected = true; }
             Require(rejected, "Invalid GPU mesh must be rejected");
             renderer.Render(); // The last valid preview must still be usable.
+            ViewportFrame frame;
+            frame.showEditorGuides = true;
+            frame.modelTransform.SetPosition({0.5f, 0, 0});
+            frame.modelTransform.SetRotation({15, 30, 45});
+            frame.modelTransform.SetScale({2, -1, 0.5f});
+            frame.selectionTransform = frame.modelTransform;
+            renderer.Render(frame);
+            frame.modelTransform.SetScale({0, 1, 1});
+            renderer.Render(frame); // Singular scales must not cause inverse-matrix NaNs.
         }
         DestroyWindow(window);
         UnregisterClassW(windowClass.lpszClassName, instance);
@@ -207,6 +218,82 @@ namespace
         CoUninitialize();
         std::cout << "PASS: library-only OS drop, background import, library-to-viewport drag, model replacement, splitter resize\n";
     }
+
+    void GameObjectEditorTests()
+    {
+        Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM initialization failed");
+        TestDirectory test;
+        {
+            EditorShell editor(GetModuleHandleW(nullptr));
+            const HWND window = editor.Create(SW_HIDE, test.path / "Project");
+            editor.InitializeRenderer();
+            const auto previewId = editor.SelectedGameObject()->Id();
+            SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(80, 80));
+            SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(80, 80));
+            Require(editor.GameObjects().Size() == 2, "Create Empty did not add a scene-tree object");
+            const auto* object = editor.SelectedGameObject();
+            Require(object->Id() != previewId && object->BehaviorCount() == 0 && object->Tags().empty(), "New empty object state is wrong");
+            const HWND inspector = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+            Require(inspector != nullptr, "Inspector child missing");
+            const auto field = [&](int id) { return GetDlgItem(inspector, id); };
+            SetWindowTextW(field(InspectorPanel::NameField), L"Moving Empty");
+            SendMessageW(field(InspectorPanel::NameField), WM_KEYDOWN, VK_RETURN, 0);
+            Require(object->Name() == "Moving Empty", "Name field did not update GameObject");
+            SetWindowTextW(field(InspectorPanel::TagsField), L"enemy, movable, enemy");
+            Require(object->Tags().size() == 2 && object->HasTag("movable"), "Tag field did not update tag list");
+            const wchar_t* numbers[]{L"1.25", L"-2.5", L"0.5", L"10", L"20", L"90", L"2", L"-1", L"0.5"};
+            for (int i = 0; i < 9; ++i) SetWindowTextW(field(InspectorPanel::FirstTransformField + i), numbers[i]);
+            const auto& transform = object->GetTransform();
+            Require(transform.Position().x == 1.25f && transform.Position().y == -2.5f && transform.Position().z == 0.5f, "Position text is not live");
+            Require(transform.Rotation().x == 10 && transform.Rotation().y == 20 && transform.Rotation().z == 90, "Rotation text is not live");
+            Require(transform.Scale().x == 2 && transform.Scale().y == -1 && transform.Scale().z == 0.5f, "Scale text is not live");
+            const HWND x = field(InspectorPanel::FirstTransformField);
+            for (const auto* invalid : {L"nan", L"inf", L"-", L"", L"1x", L"1000001"})
+            {
+                SetWindowTextW(x, invalid);
+                Require(transform.Position().x == 1.25f, "Invalid text modified the object");
+                SendMessageW(x, WM_KEYDOWN, VK_RETURN, 0);
+            }
+            const auto drag = [&](HWND target, int delta, bool cancel) {
+                SendMessageW(target, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(8, 8));
+                SendMessageW(target, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(8 + delta, 8));
+                if (cancel) SendMessageW(target, WM_KEYDOWN, VK_ESCAPE, 0);
+                SendMessageW(target, WM_LBUTTONUP, 0, MAKELPARAM(8 + delta, 8));
+            };
+            drag(x, 20, false);
+            Require(std::abs(transform.Position().x - 1.45f) < 0.0001f, "Right drag must increase position live");
+            drag(x, -20, false);
+            Require(std::abs(transform.Position().x - 1.25f) < 0.0001f, "Left drag must decrease position live");
+            drag(x, 40, true);
+            Require(std::abs(transform.Position().x - 1.25f) < 0.0001f, "Escape must cancel scrubbing");
+            drag(field(InspectorPanel::FirstTransformField + 3), 20, false);
+            Require(transform.Rotation().x == 20, "Rotation scrub failed");
+            drag(field(InspectorPanel::FirstTransformField + 6), -20, false);
+            Require(std::abs(transform.Scale().x - 1.8f) < 0.0001f, "Scale scrub failed");
+            // A click without dragging enters text mode; Escape restores the pre-edit value.
+            SendMessageW(x, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(8, 8));
+            SendMessageW(x, WM_LBUTTONUP, 0, MAKELPARAM(8, 8));
+            SetWindowTextW(x, L"9");
+            SendMessageW(x, WM_KEYDOWN, VK_ESCAPE, 0);
+            Require(std::abs(transform.Position().x - 1.25f) < 0.0001f, "Escape must cancel a typed edit");
+            editor.Render();
+            // Select the original mesh object: empty transforms must not leak into it.
+            SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 140));
+            Require(editor.SelectedGameObject()->Id() == previewId, "Scene-tree selection failed");
+            Require(editor.SelectedGameObject()->GetTransform().Position().x == 0, "Object transforms are not independent");
+            SetWindowTextW(x, L"2");
+            editor.Render();
+            Require(editor.SelectedGameObject()->GetTransform().Position().x == 2, "Preview transform editing failed");
+            // Renderer adapter applies scale, then X/Y/Z degree rotations, then translation.
+            zengine::Transform example;
+            example.SetScale({2, 3, 4}); example.SetRotation({0, 0, 90}); example.SetPosition({3, 4, 5});
+            DirectX::XMFLOAT3 point;
+            DirectX::XMStoreFloat3(&point, DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(1, 0, 0, 1), TransformMatrix(example)));
+            Require(std::abs(point.x - 3) < 0.0001f && std::abs(point.y - 6) < 0.0001f && std::abs(point.z - 5) < 0.0001f, "Renderer TRS adapter is incorrect");
+        }
+        CoUninitialize();
+        std::cout << "PASS: Create Empty, scene selection, names/tags, all nine live transform fields, bidirectional scrubbing, cancellation, independent transforms, TRS adapter\n";
+    }
 }
 
 int main(int argc, char** argv)
@@ -215,6 +302,7 @@ int main(int argc, char** argv)
     {
         if (argc > 1 && std::string(argv[1]) == "--gpu") GpuTests();
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();
+        else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
         else if (argc == 1) ImportTests();
         else throw std::runtime_error("Unknown test mode");
         return 0;

@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "RenderTransform.h"
 
 #include <DirectXMath.h>
 #include <d3dcompiler.h>
@@ -61,7 +62,7 @@ namespace
 struct Renderer::SceneConstants
 {
     XMFLOAT4X4 worldViewProjection;
-    XMFLOAT4X4 world;
+    XMFLOAT4X4 normalWorld;
     XMFLOAT4 lightDirection;
 };
 
@@ -94,7 +95,7 @@ void Renderer::Initialize(HWND window, const std::uint32_t width, const std::uin
     rasterizer.CullMode = D3D11_CULL_NONE; // Static previews also display mirrored/two-sided FBX geometry.
     rasterizer.DepthClipEnable = TRUE;
     ThrowIfFailed(device_->CreateRasterizerState(&rasterizer, &rasterizer_), "Create rasterizer");
-    startTime_ = std::chrono::steady_clock::now();
+    CreateEditorGuides();
 }
 
 void Renderer::CreateDeviceAndSwapChain(HWND window, const std::uint32_t width, const std::uint32_t height)
@@ -283,6 +284,39 @@ void Renderer::Resize(const std::uint32_t width, const std::uint32_t height)
     CreateRenderTargets(width, height);
 }
 
+void Renderer::CreateEditorGuides()
+{
+    std::vector<Vertex> lines;
+    const auto line = [&](Float3 a, Float3 b, Float3 color) {
+        lines.push_back({a, {0, 1, 0}, color}); lines.push_back({b, {0, 1, 0}, color});
+    };
+    const auto upload = [&](ComPtr<ID3D11Buffer>& buffer, UINT& count) {
+        count = static_cast<UINT>(lines.size());
+        D3D11_BUFFER_DESC description{};
+        description.ByteWidth = static_cast<UINT>(lines.size() * sizeof(Vertex));
+        description.Usage = D3D11_USAGE_IMMUTABLE;
+        description.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        const D3D11_SUBRESOURCE_DATA data{lines.data(), 0, 0};
+        ThrowIfFailed(device_->CreateBuffer(&description, &data, &buffer), "Create editor guide buffer");
+    };
+    for (int i = -10; i <= 10; ++i)
+    {
+        const float p = static_cast<float>(i);
+        const Float3 color = i == 0 ? Float3{0.28f, 0.30f, 0.34f} : Float3{0.12f, 0.14f, 0.17f};
+        line({p, 0, -10}, {p, 0, 10}, color); line({-10, 0, p}, {10, 0, p}, color);
+    }
+    upload(gridBuffer_, gridVertexCount_);
+    lines.clear();
+    const Float3 red{1, 0.2f, 0.2f}, green{0.2f, 1, 0.3f}, blue{0.2f, 0.5f, 1};
+    line({0, 0, 0}, {1, 0, 0}, red); line({1, 0, 0}, {0.8f, 0.1f, 0}, red); line({1, 0, 0}, {0.8f, -0.1f, 0}, red);
+    line({0, 0, 0}, {0, 1, 0}, green); line({0, 1, 0}, {0.1f, 0.8f, 0}, green); line({0, 1, 0}, {-0.1f, 0.8f, 0}, green);
+    line({0, 0, 0}, {0, 0, 1}, blue); line({0, 0, 1}, {0.1f, 0, 0.8f}, blue); line({0, 0, 1}, {-0.1f, 0, 0.8f}, blue);
+    upload(axesBuffer_, axesVertexCount_);
+    D3D11_DEPTH_STENCIL_DESC depth{};
+    depth.DepthEnable = FALSE;
+    ThrowIfFailed(device_->CreateDepthStencilState(&depth, &overlayDepth_), "Create editor overlay depth state");
+}
+
 std::vector<std::string> Renderer::SetModel(const ModelData& model)
 {
     if (model.vertices.empty() || model.indices.empty() || model.parts.empty())
@@ -387,22 +421,18 @@ std::vector<std::string> Renderer::SetModel(const ModelData& model)
                     minimum.y + (maximum.y - minimum.y) * 0.5f,
                     minimum.z + (maximum.z - minimum.z) * 0.5f};
     modelScale_ = 2.0f / extent;
-    startTime_ = std::chrono::steady_clock::now();
     return warnings;
 }
 
-void Renderer::Render()
+void Renderer::Render(const ViewportFrame& frame)
 {
     if (!renderTargetView_ || width_ == 0 || height_ == 0)
     {
         return;
     }
 
-    const float elapsedSeconds = std::chrono::duration<float>(
-        std::chrono::steady_clock::now() - startTime_).count();
     const XMMATRIX world = XMMatrixTranslation(-modelCenter_.x, -modelCenter_.y, -modelCenter_.z) *
-        XMMatrixScaling(modelScale_, modelScale_, modelScale_) *
-        XMMatrixRotationY(elapsedSeconds) * XMMatrixRotationX(elapsedSeconds * 0.55f);
+        XMMatrixScaling(modelScale_, modelScale_, modelScale_) * TransformMatrix(frame.modelTransform);
     const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
     const float halfFov = std::min(XM_PI / 6.0f, std::atan(std::tan(XM_PI / 6.0f) * aspect));
     const float distance = 1.75f / std::sin(halfFov) * 1.1f;
@@ -411,16 +441,19 @@ void Renderer::Render()
     const XMMATRIX projection = XMMatrixPerspectiveFovLH(
         XMConvertToRadians(60.0f), static_cast<float>(width_) / static_cast<float>(height_), 0.1f, 100.0f);
 
-    SceneConstants constants{};
-    XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(world * view * projection));
-    XMStoreFloat4x4(&constants.world, XMMatrixTranspose(world));
-    constants.lightDirection = XMFLOAT4{-0.4f, -0.8f, 0.5f, 0.0f};
-
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped),
-                  "Map scene constants");
-    *static_cast<SceneConstants*>(mapped.pData) = constants;
-    context_->Unmap(sceneConstantBuffer_.Get(), 0);
+    const auto setConstants = [&](const XMMATRIX& matrix, bool unlit) {
+        SceneConstants constants{};
+        XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(matrix * view * projection));
+        const float determinant = XMVectorGetX(XMMatrixDeterminant(matrix));
+        const XMMATRIX normals = std::abs(determinant) > 1.0e-20f
+            ? XMMatrixTranspose(XMMatrixInverse(nullptr, matrix)) : XMMatrixIdentity();
+        XMStoreFloat4x4(&constants.normalWorld, XMMatrixTranspose(normals));
+        constants.lightDirection = XMFLOAT4{-0.4f, -0.8f, 0.5f, unlit ? 1.0f : 0.0f};
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map scene constants");
+        *static_cast<SceneConstants*>(mapped.pData) = constants;
+        context_->Unmap(sceneConstantBuffer_.Get(), 0);
+    };
 
     constexpr float clearColor[]{0.025f, 0.035f, 0.055f, 1.0f};
     context_->ClearRenderTargetView(renderTargetView_.Get(), clearColor);
@@ -428,6 +461,7 @@ void Renderer::Render()
     context_->OMSetRenderTargets(1, renderTargetView_.GetAddressOf(), depthStencilView_.Get());
     context_->RSSetViewports(1, &viewport_);
     context_->RSSetState(rasterizer_.Get());
+    context_->OMSetDepthStencilState(nullptr, 0);
 
     constexpr UINT stride = static_cast<UINT>(sizeof(Vertex));
     constexpr UINT offset = 0;
@@ -439,12 +473,28 @@ void Renderer::Render()
     context_->VSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf());
     context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
     context_->PSSetSamplers(0, 1, albedoSampler_.GetAddressOf());
+    const auto drawLines = [&](ID3D11Buffer* buffer, UINT count, const XMMATRIX& matrix) {
+        setConstants(matrix, true);
+        context_->IASetVertexBuffers(0, 1, &buffer, &stride, &offset);
+        context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+        context_->PSSetShaderResources(0, 1, whiteTexture_.GetAddressOf());
+        context_->Draw(count, 0);
+    };
+    if (frame.showEditorGuides) drawLines(gridBuffer_.Get(), gridVertexCount_, XMMatrixIdentity());
+    setConstants(world, false);
+    context_->IASetVertexBuffers(0, 1, vertexBuffer_.GetAddressOf(), &stride, &offset);
+    context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     for (const auto& part : parts_)
     {
         ID3D11ShaderResourceView* texture = part.material < albedoTextures_.size() && albedoTextures_[part.material]
             ? albedoTextures_[part.material].Get() : whiteTexture_.Get();
         context_->PSSetShaderResources(0, 1, &texture);
         context_->DrawIndexed(part.indexCount, part.firstIndex, 0);
+    }
+    if (frame.showEditorGuides && frame.selectionTransform)
+    {
+        context_->OMSetDepthStencilState(overlayDepth_.Get(), 0);
+        drawLines(axesBuffer_.Get(), axesVertexCount_, TransformMatrix(*frame.selectionTransform));
     }
 
     ThrowIfFailed(swapChain_->Present(1, 0), "Present frame");

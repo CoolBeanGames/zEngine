@@ -2,6 +2,7 @@
 
 #include "Renderer.h"
 #include "FbxImporter.h"
+#include "InspectorPanel.h"
 
 #include <windowsx.h>
 
@@ -13,6 +14,13 @@
 
 namespace
 {
+    std::string Utf8Text(const std::wstring& text)
+    {
+        const int count = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+        std::string result(count, ' ');
+        WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), count, nullptr, nullptr);
+        return result;
+    }
     std::wstring WideText(const std::string& text)
     {
         const int count = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
@@ -82,14 +90,6 @@ namespace
         DrawTextLabel(deviceContext, title, header, TextColor);
     }
 
-    void DrawField(HDC deviceContext, const int x, const int y, const int width, const std::wstring_view value)
-    {
-        RECT field{x, y, x + width, y + 23};
-        FillRectangle(deviceContext, field, FieldColor);
-        DrawBorder(deviceContext, field, BorderColor);
-        field.left += 7;
-        DrawTextLabel(deviceContext, value, field, TextColor);
-    }
 }
 
 EditorShell::EditorShell(const HINSTANCE instance)
@@ -134,6 +134,7 @@ EditorShell::EditorShell(const HINSTANCE instance)
 
 EditorShell::~EditorShell()
 {
+    inspectorPanel_.reset();
     renderer_.reset();
     if (window_ && IsWindow(window_))
     {
@@ -166,6 +167,10 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     }
 
     CreateViewport();
+    previewObject_ = objects_.Create("Color Cube").Id();
+    inspectorPanel_ = std::make_unique<InspectorPanel>();
+    inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
+    SelectGameObject(previewObject_);
     std::array<wchar_t, 32768> executable{};
     const DWORD pathLength = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
     if (!pathLength || pathLength == executable.size()) throw std::runtime_error("Cannot locate the project directory.");
@@ -223,7 +228,11 @@ void EditorShell::Render()
             rendererHeight_ = requestedViewportHeight_;
         }
     }
-    renderer_->Render();
+    ViewportFrame frame;
+    frame.showEditorGuides = true;
+    if (const auto* object = objects_.Find(previewObject_)) frame.modelTransform = object->GetTransform();
+    if (const auto* object = SelectedGameObject()) frame.selectionTransform = object->GetTransform();
+    renderer_->Render(frame);
 }
 
 void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
@@ -282,6 +291,12 @@ void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
                      viewportContent_.left, viewportContent_.top, viewportWidth, viewportHeight,
                      SWP_NOACTIVATE | SWP_NOZORDER);
     }
+    if (inspectorPanel_)
+    {
+        SetWindowPos(inspectorPanel_->Window(), nullptr, inspector_.left + 1, inspector_.top + PanelHeaderHeight,
+            std::max<LONG>(0, inspector_.right - inspector_.left - 2),
+            std::max<LONG>(0, inspector_.bottom - inspector_.top - PanelHeaderHeight - 1), SWP_NOACTIVATE | SWP_NOZORDER);
+    }
 
     InvalidateRect(window_, nullptr, FALSE);
 }
@@ -330,19 +345,31 @@ void EditorShell::Paint()
     DrawPanel(bufferContext, mediaLibrary_, L"Media Library");
     SelectObject(bufferContext, uiFont_);
 
-    // Scene browser mock content
+    // Live GameObject scene tree (flat until parent/child scene management is added).
     const int sceneX = sceneBrowser_.left + 13;
-    int sceneY = sceneBrowser_.top + PanelHeaderHeight + 12;
+    const RECT create = CreateObjectRectangle();
+    FillRectangle(bufferContext, create, FieldColor);
+    DrawBorder(bufferContext, create, BorderColor);
+    DrawTextLabel(bufferContext, L"+ Create Empty", create, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    int sceneY = create.bottom + 5;
     RECT sceneRoot{sceneX, sceneY, sceneBrowser_.right - 8, sceneY + 25};
     DrawTextLabel(bufferContext, L"\u25be  Untitled Scene", sceneRoot, TextColor);
-    sceneY += 30;
-    RECT selected{sceneBrowser_.left + 5, sceneY, sceneBrowser_.right - 5, sceneY + 27};
-    FillRectangle(bufferContext, selected, SelectionColor);
-    selected.left = sceneX + 18;
-    DrawTextLabel(bufferContext, L"\u25a0  " + sceneName_, selected, TextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    sceneY += 36;
-    RECT hint{sceneX, sceneY, sceneBrowser_.right - 10, sceneY + 40};
-    DrawTextLabel(bufferContext, L"Scene objects will appear here", hint, MutedTextColor, DT_LEFT | DT_WORDBREAK);
+    const RECT objectList = ObjectListRectangle();
+    const int treeClip = SaveDC(bufferContext);
+    IntersectClipRect(bufferContext, objectList.left, objectList.top, objectList.right, objectList.bottom);
+    for (int index = firstObject_; index < static_cast<int>(objects_.Size()); ++index)
+    {
+        RECT row{objectList.left, objectList.top + (index - firstObject_) * 27,
+                 objectList.right, objectList.top + (index - firstObject_ + 1) * 27};
+        if (row.top >= objectList.bottom) break;
+        const auto& object = objects_.At(index);
+        if (object.Id() == selectedObject_) FillRectangle(bufferContext, row, SelectionColor);
+        row.left += 12;
+        const std::wstring icon = object.Id() == previewObject_ ? L"\u25a0  " : L"\u25c7  ";
+        DrawTextLabel(bufferContext, icon + WideText(object.Name()), row, TextColor,
+                      DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    }
+    RestoreDC(bufferContext, treeClip);
 
     // Viewport header controls. Rendering occurs in the child window below this strip.
     const int centerX = (viewportPanel_.left + viewportPanel_.right) / 2;
@@ -358,33 +385,7 @@ void EditorShell::Paint()
     DrawTextLabel(bufferContext, L"\u2016", pauseButton, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     DrawTextLabel(bufferContext, L"\u25b8|", stepButton, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-    // Inspector mock content
-    const int inspectorX = inspector_.left + 12;
-    const int inspectorContentWidth = std::max<LONG>(40, inspector_.right - inspectorX - 12);
-    int inspectorY = inspector_.top + PanelHeaderHeight + 12;
-    RECT objectName{inspectorX, inspectorY, inspector_.right - 12, inspectorY + 25};
-    DrawTextLabel(bufferContext, sceneName_, objectName, TextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    inspectorY += 34;
-    RECT sectionHeader{inspectorX, inspectorY, inspector_.right - 12, inspectorY + 24};
-    FillRectangle(bufferContext, sectionHeader, HeaderBackground);
-    sectionHeader.left += 7;
-    DrawTextLabel(bufferContext, L"\u25be  Transform", sectionHeader, TextColor);
-    inspectorY += 32;
-    constexpr std::array<std::wstring_view, 3> propertyNames{L"Position", L"Rotation", L"Scale"};
-    constexpr std::array<std::wstring_view, 3> propertyValues{L"X  0    Y  0    Z  0", L"X  0    Y  0    Z  0", L"X  1    Y  1    Z  1"};
-    for (std::size_t index = 0; index < propertyNames.size(); ++index)
-    {
-        RECT propertyLabel{inspectorX, inspectorY, inspectorX + 68, inspectorY + 23};
-        DrawTextLabel(bufferContext, propertyNames[index], propertyLabel, MutedTextColor);
-        DrawField(bufferContext, inspectorX + 72, inspectorY,
-                  std::max(30, inspectorContentWidth - 72), propertyValues[index]);
-        inspectorY += 29;
-    }
-    inspectorY += 8;
-    RECT rendererSection{inspectorX, inspectorY, inspector_.right - 12, inspectorY + 24};
-    FillRectangle(bufferContext, rendererSection, HeaderBackground);
-    rendererSection.left += 7;
-    DrawTextLabel(bufferContext, L"\u25b8  Mesh Renderer", rendererSection, TextColor);
+    // Inspector content and edit controls are hosted by the reusable InspectorPanel child.
 
     // Media library mock content
     const int mediaTop = mediaLibrary_.top + PanelHeaderHeight;
@@ -472,6 +473,51 @@ void EditorShell::BeginDrag(const POINT position)
     }
 }
 
+RECT EditorShell::CreateObjectRectangle() const
+{
+    return {sceneBrowser_.left + 8, sceneBrowser_.top + PanelHeaderHeight + 8,
+            sceneBrowser_.right - 8, sceneBrowser_.top + PanelHeaderHeight + 34};
+}
+RECT EditorShell::ObjectListRectangle() const
+{
+    return {sceneBrowser_.left + 5, sceneBrowser_.top + PanelHeaderHeight + 69,
+            sceneBrowser_.right - 5, sceneBrowser_.bottom - 5};
+}
+zengine::GameObject& EditorShell::CreateEmptyGameObject()
+{
+    std::string name = "GameObject";
+    for (unsigned suffix = 1;; ++suffix)
+    {
+        bool exists = false;
+        for (std::size_t index = 0; index < objects_.Size(); ++index)
+            exists = exists || objects_.At(index).Name() == name;
+        if (!exists) break;
+        name = "GameObject (" + std::to_string(suffix) + ")";
+    }
+    auto& object = objects_.Create(std::move(name));
+    SelectGameObject(object.Id());
+    const auto list = ObjectListRectangle();
+    const int rows = std::max(1, static_cast<int>(list.bottom - list.top) / 27);
+    firstObject_ = std::max(0, static_cast<int>(objects_.Size()) - rows);
+    status_ = L"Created empty GameObject - edit its transform in the Inspector";
+    InvalidateRect(window_, nullptr, FALSE);
+    return object;
+}
+void EditorShell::SelectGameObject(zengine::GameObjectId id)
+{
+    auto* object = objects_.Find(id);
+    if (!object) return;
+    if (inspectorPanel_) inspectorPanel_->Bind(object);
+    selectedObject_ = id;
+    InvalidateRect(window_, &sceneBrowser_, FALSE);
+}
+void EditorShell::OnObjectChanged()
+{
+    if (const auto* preview = objects_.Find(previewObject_))
+        SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + WideText(preview->Name())).c_str());
+    InvalidateRect(window_, &sceneBrowser_, FALSE);
+}
+
 RECT EditorShell::AssetListRectangle() const
 {
     const int folderWidth = std::clamp(static_cast<int>(mediaLibrary_.right - mediaLibrary_.left) / 5, 150, 250);
@@ -528,9 +574,11 @@ void EditorShell::PollAssetWork()
                 const auto textureWarnings = renderer_->SetModel(result.model);
                 result.warnings = std::move(result.model.warnings);
                 result.warnings.insert(result.warnings.end(), textureWarnings.begin(), textureWarnings.end());
-                sceneName_ = result.path.parent_path().filename().wstring();
-                SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + sceneName_).c_str());
-                status_ = L"Previewing " + sceneName_;
+                const auto name = result.path.parent_path().filename().wstring();
+                objects_.Find(previewObject_)->SetName(Utf8Text(name));
+                SelectGameObject(previewObject_);
+                OnObjectChanged();
+                status_ = L"Previewing " + name;
             }
             else
             {
@@ -701,9 +749,21 @@ LRESULT EditorShell::HandleMessage(
     case WM_ERASEBKGND:
         return 1;
     case WM_LBUTTONDOWN:
+    {
+        SetFocus(window_);
+        const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const RECT create = CreateObjectRectangle(), list = ObjectListRectangle();
+        if (PtInRect(&create, point)) { CreateEmptyGameObject(); return 0; }
+        if (PtInRect(&list, point))
+        {
+            const auto index = firstObject_ + (point.y - list.top) / 27;
+            if (index >= 0 && index < static_cast<LONG>(objects_.Size())) SelectGameObject(objects_.At(index).Id());
+            return 0;
+        }
         BeginDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         if (dragTarget_ == DragTarget::None) BeginAssetDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         return 0;
+    }
     case WM_MOUSEMOVE:
         if (draggedAsset_ >= 0)
         {
@@ -727,6 +787,15 @@ LRESULT EditorShell::HandleMessage(
     {
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ScreenToClient(window_, &point);
+        if (PtInRect(&sceneBrowser_, point))
+        {
+            const auto list = ObjectListRectangle();
+            const int rows = std::max(1, static_cast<int>(list.bottom - list.top) / 27);
+            firstObject_ = std::clamp(firstObject_ - GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 3,
+                0, std::max(0, static_cast<int>(objects_.Size()) - rows));
+            InvalidateRect(window_, &sceneBrowser_, FALSE);
+            return 0;
+        }
         if (PtInRect(&mediaLibrary_, point) && draggedAsset_ < 0)
         {
             const RECT list = AssetListRectangle();
