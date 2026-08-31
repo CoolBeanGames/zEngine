@@ -77,7 +77,24 @@ int main()
         orderedHost.Stop(ordered);
         auto empty=script::Compiler::Compile("class Base : gameObject { func start() { int a=1; } } class Empty : Base { func start() {} func update(float dt) {} }");
         Check(empty && empty.program->HasCode("Base","start") && !empty.program->HasCode("Empty","start") && !empty.program->HasCode("Empty","update"),"Empty override must suppress inherited hooks");
-        std::cout<<"PASS: Play/Stop, native movement, exported values, instances, priorities, Draw gating, failure isolation, metadata\n";
+        ObjectStore signals; ScriptHost signalHost; auto& signalObject=signals.Create();
+        auto& listener=signalObject.AddBehavior<ScriptBehavior>("Listener.zsh");
+        Check(signalHost.Prepare(listener,R"(class Listener : gameObject {
+            export int moves; export int rotates; export int scales; export int custom;
+            signal test;
+            func start() { transform.was_moved.connect(moved); transform.was_rotated.connect(rotated); transform.was_scaled.connect(scaled); test.connect(receive); test.emit(7); }
+            func moved(Vector3 v) { moves += 1; }
+            func rotated(Vector3 v) { rotates += 1; }
+            func scaled(Vector3 v) { scales += 1; }
+            func receive(int n) { custom += n; }
+        })","Listener"),"Signal listener compile");
+        Check(signalHost.Play(signals) && Value(signalHost,listener,"custom")=="7","Custom signal on Start");
+        signalObject.GetTransform().SetPosition({0.1f,0,0}); signalObject.GetTransform().SetRotation({0,12,0}); signalObject.GetTransform().SetScale({2,2,2});
+        signalHost.Tick(signals,0.1f); signalHost.Tick(signals,0.1f);
+        Check(Value(signalHost,listener,"moves")=="1" && Value(signalHost,listener,"rotates")=="1" && Value(signalHost,listener,"scales")=="1","Native signals without update body or duplicate float notification");
+        signalHost.Stop(signals); Check(signalHost.Play(signals),"Signal restart");
+        Check(Value(signalHost,listener,"custom")=="7" && Value(signalHost,listener,"moves")=="0","Connections leaked across Play"); signalHost.Stop(signals);
+        std::cout<<"PASS: Play/Stop, native movement, exported values, instances, priorities, Draw gating, failure isolation, metadata, signals\n";
         return 0;
     }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }

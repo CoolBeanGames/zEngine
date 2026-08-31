@@ -239,8 +239,54 @@ void InspectorDiagnostics() {
     };
     for (const auto& [source, message] : cases) Error([&] { Compile(source); }, message);
 }
+void Signals() {
+    auto p = Compile(R"(
+        class Receiver { int sum; func receive(int n, string text) { sum += n; } }
+        class Base : gameObject { signal ping; }
+        class Sender : Base {
+            Receiver other = Receiver(); int sum; Vector3 moved; int moves;
+            func receive(int n, string text) { sum += n; }
+            func on_moved(Vector3 value) { moved = value; moves += 1; }
+            func start() {
+                ping.connect(receive); ping.connect(receive); ping.connect(other.receive);
+                transform.was_moved.connect(on_moved);
+            }
+            func send() { ping.emit(3, "test"); transform.position.x += 2; }
+            func remove() { ping.disconnect(receive); }
+            func connected() : bool { return ping.is_connected(receive); }
+        })");
+    Runtime vm(p); auto a=vm.Create("Sender"), b=vm.Create("Sender"); vm.Start(a); vm.Start(b);
+    vm.Call(a,"send");
+    Check(Int(vm.Get(a,"sum"))==3 && Int(vm.Get(b,"sum"))==0, "Signal isolation or duplicate connect");
+    Check(Int(vm.Get(std::get<ObjectRef>(vm.Get(a,"other")),"sum"))==3, "Other receiver not called");
+    Check(std::get<Vector3>(vm.Get(a,"moved")).x==2 && Int(vm.Get(a,"moves"))==1, "Transform signal not emitted");
+    vm.Call(a,"remove"); vm.Call(a,"send");
+    Check(!std::get<bool>(vm.Call(a,"connected")) && Int(vm.Get(a,"sum"))==3, "Disconnect failed");
+    const auto transform=std::get<ObjectRef>(vm.Get(a,"transform"));
+    vm.Set(transform,"position",Vector3{4,0,0});
+    Check(Int(vm.Get(a,"moves"))==2, "Unchanged transform emitted");
+    Error([&] { vm.Emit({a,"ping"},{true}); }, "argument count");
+    Runtime foreign(p); auto foreignObject=foreign.Create("Sender");
+    Error([&] { vm.Connect({a,"ping"},{foreignObject,"receive"}); }, "another runtime");
+    Error([&] { Compile("class A { signal ping; int ping; }"); }, "Duplicate");
+    Error([&] { Compile("class A { signal ping; func f() { ping = 1; } }"); }, "Unknown field");
+    Error([&] { Compile("class A { signal ping; func f() { ping.connect(3); } }"); }, "function reference");
+    auto recursion=Compile("class A { signal ping; func f() { ping.emit(); } func run() { ping.connect(f); ping.emit(); } }");
+    Runtime recursive(recursion, {1000,16,100,1024,4}); auto r=recursive.Create("A");
+    Error([&] { recursive.Call(r,"run"); }, "depth limit");
+    auto mutation=Compile(R"(class A {
+        signal ping; int count;
+        func first() { ping.disconnect(second); ping.connect(third); count += 1; }
+        func second() { count += 10; } func third() { count += 100; }
+        func run() { ping.connect(first); ping.connect(second); ping.emit(); }
+        func again() { ping.emit(); }
+    })");
+    Runtime m(mutation); auto o=m.Create("A"); m.Call(o,"run");
+    Check(Int(m.Get(o,"count"))==1,"Listener mutation during emission");
+    m.Call(o,"again"); Check(Int(m.Get(o,"count"))==102,"New listener not deferred to next emission");
+}
 void Examples() {
-    for (const auto& name : {"Counter.zsh", "EmptyBehavior.zsh", "Mover.zsh", "InspectorBehavior.zsh"}) {
+    for (const auto& name : {"Counter.zsh", "EmptyBehavior.zsh", "Mover.zsh", "InspectorBehavior.zsh", "SignalBehavior.zsh"}) {
         std::ifstream in(std::string(SCRIPT_EXAMPLES) + "/" + name, std::ios::binary);
         Check(static_cast<bool>(in), std::string("Missing example ") + name);
         Compile(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()));
@@ -249,6 +295,7 @@ void Examples() {
 }
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
+        {"signals", Signals},
         {"empty code and comments", EmptyAndComments}, {"movement and Vector3", Movement}, {"lifecycle and inheritance", LifecycleAndInheritance},
         {"values and control flow", ValuesAndControlFlow}, {"references and initializers", ReferencesAndInitializers},
         {"compile diagnostics", Diagnostics}, {"runtime limits", TestRuntimeLimits}, {"host boundary", HostBoundary}, {"native defaults and expression depth", InheritedNativeDefaultsAndExpressionDepth}, {"Inspector metadata", InspectorMetadata}, {"Inspector metadata has no execution cost", InspectorMetadataHasNoExecutionCost}, {"Inspector diagnostics", InspectorDiagnostics}, {"example files", Examples}

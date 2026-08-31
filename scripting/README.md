@@ -2,6 +2,16 @@
 
 Standalone C++20 compiler and stack bytecode VM. No engine/editor dependencies or downloads. The parent build now links this library through the separate `zEngineScriptHost` adapter; this directory can still be built/tested independently.
 
+## Signals
+
+Declare an instance signal with `signal custom_signal;`. Connect a void function reference (without calling it), then emit arguments: `custom_signal.connect(on_custom); custom_signal.emit(7);`. The recipient could be `func on_custom(int amount) { ... }` or a method on another script-created object, such as `receiver.on_custom`. Signals are inherited and isolated per instance; they cannot be assigned over or exported as scene data.
+
+`connect`, `disconnect`, and `is_connected` take one function reference. Duplicate connections are ignored. Emission is synchronous in connection order and forwards all arguments. All callback signatures are checked before dispatch. Listeners added during emission wait until the next emission; disconnected listeners are skipped. A callback error aborts emission and faults the owning engine behavior normally. Recursion shares the VM instruction/depth limits; each VM permits at most 4,096 connections by default.
+
+`transform.was_moved`, `transform.was_rotated`, and `transform.was_scaled` pass the new **local Vector3**. Script assignments emit immediately, including individual vector components; unchanged assignments do not emit. Native/other-behavior changes are observed before the listener's next scheduled callback (at least its next Update tick, even with an empty update body). Authoring and initial transform synchronization do not emit. Play/Stop rebuilds connections. Cross-attachment object lookup/connection UI remains deferred; references to script-created objects within one VM work now.
+
+See `examples/SignalBehavior.zsh` for a custom signal and transform listener you can attach and test in Play.
+
 ## Build and test
 
 From this directory in a Visual Studio Developer PowerShell:

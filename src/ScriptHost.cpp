@@ -56,8 +56,9 @@ namespace
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
               start(program->HasCode(name,"start")), update(program->HasCode(name,"update")), draw(program->HasCode(name,"draw"))
         { for (const auto& [field,value]:overrides) runtime.Set(object,field,value); }
-        bool HasStart() const noexcept override { return start; }
-        bool HasUpdate() const noexcept override { return update; }
+        bool HasStart() const noexcept override { return true; }
+        // Synchronize native transform signals even for a listener with no update body.
+        bool HasUpdate() const noexcept override { return true; }
         bool HasDraw() const noexcept override { return draw; }
         void Start(GameObject& owner) override { Invoke(owner,[&] { runtime.Start(object); }); }
         void Update(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.Update(object,delta); }); }
@@ -71,9 +72,15 @@ namespace
             // Resolve on each call: scripts may replace their transform reference.
             auto ref=std::get<ObjectRef>(runtime.Get(object,"transform"));
             auto& native=owner.GetTransform();
-            runtime.Set(ref,"position",ToScript(native.Position()));
-            runtime.Set(ref,"rotation",ToScript(native.Rotation()));
-            runtime.Set(ref,"scale",ToScript(native.Scale()));
+            const auto position = ToScript(native.Position()), rotation = ToScript(native.Rotation()), scale = ToScript(native.Scale());
+            runtime.Set(ref,"position",position,false);
+            runtime.Set(ref,"rotation",rotation,false);
+            runtime.Set(ref,"scale",scale,false);
+            if (synchronized) {
+                if (position != ToScript(previous.Position())) runtime.Emit({ref,"was_moved"},{position});
+                if (rotation != ToScript(previous.Rotation())) runtime.Emit({ref,"was_rotated"},{rotation});
+                if (scale != ToScript(previous.Scale())) runtime.Emit({ref,"was_scaled"},{scale});
+            }
             callback();
             ref=std::get<ObjectRef>(runtime.Get(object,"transform"));
             Transform next;
@@ -81,8 +88,11 @@ namespace
             next.SetRotation(ToNative(std::get<Vector3>(runtime.Get(ref,"rotation"))));
             next.SetScale(ToNative(std::get<Vector3>(runtime.Get(ref,"scale"))));
             native=next; // Commit all three only after validation/callback success.
+            previous=next; synchronized=true;
         }
         bool start, update, draw;
+        Transform previous;
+        bool synchronized=false;
     };
 }
 bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::string className)

@@ -23,7 +23,7 @@ bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
 bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
-    return words.contains(s);
+    return s == "signal" || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
     if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
@@ -102,7 +102,7 @@ struct Stmt {
 };
 struct FieldAst { Token name; std::string type; std::unique_ptr<Expr> initializer; };
 struct FunctionAst { Token name; std::string result = "void"; std::vector<FieldAst> params; Stmt body; };
-struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; std::vector<InspectorEntry> inspector; };
+struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; std::vector<InspectorEntry> inspector; std::vector<Token> signals; };
 class Parser {
     std::vector<Token> tokens;
     const std::string& source;
@@ -226,6 +226,8 @@ public:
                     InspectorEntry entry; entry.kind = InspectorEntry::Kind::Label; entry.text = Current().text; ++pos;
                     entry.declaringClass = c.name.text; entry.source = source; entry.line = declaration.line; entry.column = declaration.column;
                     Expect(")"); Expect(";"); c.inspector.push_back(std::move(entry));
+                } else if (Match("signal")) {
+                    c.signals.push_back(Identifier()); Expect(";");
                 } else if (Match("func")) {
                     FunctionAst f; f.name = Identifier(); Expect("(");
                     if (!Is(")")) do {
@@ -255,7 +257,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, MakeVector, SetComponent, Self, LoadLocal, StoreLocal, LoadField, StoreField, Call, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, MakeVector, SetComponent, Self, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -269,6 +271,7 @@ struct Class {
     std::vector<Field> fields;
     std::vector<InspectorEntry> inspector;
     std::map<std::string, Function> methods;
+    std::set<std::string> signals;
     Function initializer;
 };
 bool Numeric(const std::string& t) { return t == "int" || t == "float"; }
@@ -347,6 +350,12 @@ class BytecodeCompiler {
         Require(f != nullptr, field, "Unknown field '" + field.text + "' on '" + type + "'");
         return f->type;
     }
+    std::string MemberType(const std::string& type, const Token& token) const {
+        auto c = program.classes.find(type);
+        if (c != program.classes.end() && c->second.signals.contains(token.text)) return "signal";
+        if (program.Method(type, token.text)) return "callable";
+        return FieldType(type, token);
+    }
     std::string Expression(const Expr& e) {
         Guard guard(*this, e.token);
         const auto& t = e.token;
@@ -362,10 +371,10 @@ class BytecodeCompiler {
             if (t.text == "this") { Emit(Op::Self, t); return owner.name; }
             auto local = Local(t.text);
             if (local != std::numeric_limits<std::size_t>::max()) { Emit(Op::LoadLocal, t, local); return function.locals[local]; }
-            auto type = FieldType(owner.name, t); Emit(Op::Self, t); Emit(Op::LoadField, t, 0, t.text); return type;
+            auto type = MemberType(owner.name, t); Emit(Op::Self, t); Emit(Op::LoadField, t, 0, t.text); return type;
         }
         if (e.kind == Expr::Member) {
-            auto receiver = Expression(*e.children[0]); auto type = FieldType(receiver, t);
+            auto receiver = Expression(*e.children[0]); auto type = MemberType(receiver, t);
             Emit(Op::LoadField, t, 0, t.text); return type;
         }
         if (e.kind == Expr::Call) {
@@ -383,6 +392,20 @@ class BytecodeCompiler {
             if (callee.kind == Expr::Name) { Emit(Op::Self, t); receiver = owner.name; }
             else if (callee.kind == Expr::Member) receiver = Expression(*callee.children[0]);
             else Fail(program.source, t, "Expected a method or class name");
+            if (receiver == "signal") {
+                const auto& method = callee.token.text;
+                Require(method == "connect" || method == "disconnect" || method == "is_connected" || method == "emit", t, "Unknown signal method");
+                if (method != "emit") {
+                    Require(e.children.size() == 2, t, "Signal connection method takes one function reference");
+                    Require(Expression(*e.children[1]) == "callable", t, "Expected a function reference (without parentheses)");
+                } else {
+                    Require(e.children.size() <= 65, t, "Signal argument limit exceeded");
+                    for (std::size_t i = 1; i < e.children.size(); ++i)
+                        Require(Expression(*e.children[i]) != "void", t, "Signal arguments cannot be void");
+                }
+                Emit(Op::SignalCall, t, e.children.size() - 1, method);
+                return method == "is_connected" ? "bool" : "void";
+            }
             const auto* f = program.Method(receiver, callee.token.text);
             Require(f != nullptr, callee.token, "Unknown method '" + callee.token.text + "' on '" + receiver + "'");
             Require(f->params.size() == e.children.size() - 1, t, "Wrong argument count for '" + callee.token.text + "'");
@@ -514,6 +537,7 @@ public:
 };
 void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts) {
     Class transform; transform.name = "Transform";
+    transform.signals = {"was_moved", "was_rotated", "was_scaled"};
     for (const auto& name : {"position", "rotation", "scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
     program.classes.emplace("Transform", std::move(transform));
     Class gameObject; gameObject.name = "gameObject";
@@ -536,17 +560,22 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
+            c.signals = program.classes.at(c.base).signals;
+        }
+        for (const auto& signal : ast.signals) {
+            if (program.classes.contains(signal.text) || program.FindField(name, signal.text) || program.Method(c.base, signal.text) || !c.signals.insert(signal.text).second)
+                Fail(program.source, signal, "Duplicate/inherited signal member '" + signal.text + "'");
         }
         c.inspector.insert(c.inspector.end(), ast.inspector.begin(), ast.inspector.end());
         for (const auto& f : ast.fields) {
             if (!program.IsType(f.type)) Fail(program.source, f.name, "Unknown or invalid field type '" + f.type + "'");
             if (program.classes.contains(f.name.text)) Fail(program.source, f.name, "Class names are type keywords");
-            if (program.FindField(name, f.name.text) || program.Method(c.base, f.name.text)) Fail(program.source, f.name, "Duplicate/inherited member '" + f.name.text + "'");
+            if (c.signals.contains(f.name.text) || program.FindField(name, f.name.text) || program.Method(c.base, f.name.text)) Fail(program.source, f.name, "Duplicate/inherited member '" + f.name.text + "'");
             c.fields.push_back({f.name, f.type});
         }
         for (const auto& method : ast.methods) {
             if (program.classes.contains(method.name.text)) Fail(program.source, method.name, "Class names are type keywords");
-            if (c.methods.contains(method.name.text) || program.FindField(name, method.name.text)) Fail(program.source, method.name, "Duplicate member '" + method.name.text + "'");
+            if (c.signals.contains(method.name.text) || c.methods.contains(method.name.text) || program.FindField(name, method.name.text)) Fail(program.source, method.name, "Duplicate member '" + method.name.text + "'");
             Function f; f.token = method.name; f.result = method.result;
             if (f.result != "void" && !program.IsType(f.result)) Fail(program.source, method.name, "Unknown return type '" + f.result + "'");
             for (const auto& param : method.params) {
@@ -615,6 +644,7 @@ struct Runtime::Impl {
     struct Object {
         const Class* type = nullptr;
         std::vector<Value> fields;
+        std::map<std::string, std::vector<CallableRef>> connections;
         enum StartState { Pending, Starting, Started, StartFailed } start = Pending;
         bool failed = false;
     };
@@ -623,6 +653,7 @@ struct Runtime::Impl {
     std::uint64_t identity;
     std::vector<std::unique_ptr<Object>> objects;
     std::size_t remaining = 0, depth = 0;
+    std::size_t connectionCount = 0;
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
     [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
@@ -649,6 +680,7 @@ struct Runtime::Impl {
         switch (value.index()) {
         case 0: return "void"; case 1: return "int"; case 2: return "float";
         case 3: return "bool"; case 4: return "string"; case 6: return "Vector3";
+        case 7: return "signal"; case 8: return "callable";
         default: { auto ref = std::get<ObjectRef>(value); if (ref.id == 0 && ref.runtime == 0) return "null"; return Resolve(ref, t).type->name; }
         }
     }
@@ -663,14 +695,67 @@ struct Runtime::Impl {
     }
     Value Get(ObjectRef ref, const std::string& name, const Token& t = {}) const {
         auto& o = Resolve(ref, t); std::size_t index = 0;
+        if (o.type->signals.contains(name)) return SignalRef{ref, name};
+        if (program->Method(o.type->name, name)) return CallableRef{ref, name};
         if (!program->FindField(o.type->name, name, &index)) Error(t, "Unknown field '" + name + "'");
         return o.fields[index];
     }
-    void Set(ObjectRef ref, const std::string& name, Value value, const Token& t = {}) {
+    void Set(ObjectRef ref, const std::string& name, Value value, const Token& t = {}, bool notify = true) {
         auto& o = Resolve(ref, t); std::size_t index = 0;
         auto field = program->FindField(o.type->name, name, &index);
         if (!field) Error(t, "Unknown field '" + name + "'");
-        o.fields[index] = Coerce(std::move(value), field->type, t);
+        value = Coerce(std::move(value), field->type, t);
+        const bool changed = o.fields[index] != value;
+        o.fields[index] = value;
+        if (notify && changed && program->Assignable("Transform", o.type->name)) {
+            const std::string signal = name == "position" ? "was_moved" : name == "rotation" ? "was_rotated" : name == "scale" ? "was_scaled" : "";
+            if (!signal.empty()) Signal({ref, signal}, "emit", {value}, t);
+        }
+    }
+    Value Signal(const SignalRef& signal, const std::string& method, const std::vector<Value>& args, const Token& t) {
+        auto& owner = Resolve(signal.owner, t);
+        if (!owner.type->signals.contains(signal.name)) Error(t, "Unknown signal '" + signal.name + "'");
+        auto& connections = owner.connections[signal.name];
+        if (method == "emit") {
+            Frame frame(*this, t); Tick(t);
+            if (args.size() > 64) Error(t, "Signal argument limit exceeded");
+            if (program->Assignable("Transform", owner.type->name) &&
+                (signal.name == "was_moved" || signal.name == "was_rotated" || signal.name == "was_scaled")) {
+                if (args.size() != 1) Error(t, "Transform signals require one Vector3 argument");
+                Coerce(args[0], "Vector3", t);
+            }
+            // Snapshot permits safe connect/disconnect during a callback. New listeners wait until next emission.
+            const auto snapshot = connections;
+            // Validate every recipient before invoking any, avoiding partial dispatch on signature mistakes.
+            for (const auto& callback : snapshot) {
+                const auto* f = program->Method(Resolve(callback.owner, t).type->name, callback.name);
+                if (!f || f->params.size() != args.size()) Error(t, "Signal callback argument count mismatch");
+                for (std::size_t i = 0; i < args.size(); ++i) Coerce(args[i], f->params[i], t);
+            }
+            for (const auto& callback : snapshot) {
+                Tick(t);
+                if (std::find(connections.begin(), connections.end(), callback) != connections.end()) Invoke(callback.owner, callback.name, args, t);
+            }
+            return {};
+        }
+        if (args.size() != 1 || !std::holds_alternative<CallableRef>(args[0])) Error(t, "Expected one function reference");
+        const auto callback = std::get<CallableRef>(args[0]);
+        const auto* f = program->Method(Resolve(callback.owner, t).type->name, callback.name);
+        if (!f || f->result != "void") Error(t, "Signal callback must be a void function");
+        if (program->Assignable("Transform", owner.type->name) &&
+            (signal.name == "was_moved" || signal.name == "was_rotated" || signal.name == "was_scaled") && f->params != std::vector<std::string>{"Vector3"})
+            Error(t, "Transform signal callback must take one Vector3");
+        const auto found = std::find(connections.begin(), connections.end(), callback);
+        if (method == "is_connected") return found != connections.end();
+        if (method == "disconnect") {
+            if (found != connections.end()) { connections.erase(found); --connectionCount; }
+        } else if (method == "connect") {
+            if (found == connections.end()) {
+                if (connectionCount >= limits.signalConnections) Error(t, "Signal connection limit exceeded");
+                connections.push_back(callback); ++connectionCount;
+            }
+        } else Error(t, "Unknown signal method");
+        return {};
     }
     ObjectRef Create(const std::string& name, const Token& t) {
         auto found = program->classes.find(name);
@@ -798,6 +883,12 @@ struct Runtime::Impl {
                 for (std::size_t i = ins.a; i > 0; --i) arguments[i - 1] = pop();
                 auto target = Reference(pop(), t); stack.push_back(Invoke(target, ins.name, arguments, t)); break;
             }
+            case Op::SignalCall: {
+                std::vector<Value> arguments(ins.a);
+                for (std::size_t i = ins.a; i > 0; --i) arguments[i - 1] = pop();
+                const auto signal = std::get<SignalRef>(pop());
+                stack.push_back(Signal(signal, ins.name, arguments, t)); break;
+            }
             case Op::New: stack.push_back(Create(ins.name, t)); break;
             case Op::Pop: pop(); break;
             case Op::Return: return Coerce(pop(), f.result, t);
@@ -851,7 +942,9 @@ Value Runtime::Call(ObjectRef object, std::string_view method, const std::vector
     impl_->Reset(); return impl_->Invoke(object, std::string(method), arguments, {});
 }
 Value Runtime::Get(ObjectRef object, std::string_view field) const { return impl_->Get(object, std::string(field)); }
-void Runtime::Set(ObjectRef object, std::string_view field, Value value) { impl_->Set(object, std::string(field), std::move(value)); }
+void Runtime::Set(ObjectRef object, std::string_view field, Value value, bool notify) { impl_->Reset(); impl_->Set(object, std::string(field), std::move(value), {}, notify); }
+void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
+void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::Start(ObjectRef object) { impl_->Reset(); impl_->Start(object); }
 void Runtime::Update(ObjectRef object, double delta) {
     if (!std::isfinite(delta) || delta < 0) impl_->Error({}, "Delta must be finite and nonnegative");

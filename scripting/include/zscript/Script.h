@@ -21,7 +21,17 @@ struct Vector3 {
     double x = 0, y = 0, z = 0;
     bool operator==(const Vector3&) const = default;
 };
-using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3>;
+struct SignalRef {
+    ObjectRef owner;
+    std::string name;
+    bool operator==(const SignalRef&) const = default;
+};
+struct CallableRef {
+    ObjectRef owner;
+    std::string name;
+    bool operator==(const CallableRef&) const = default;
+};
+using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef>;
 struct Diagnostic {
     std::string source;
     std::size_t line = 1;
@@ -84,6 +94,7 @@ struct RuntimeLimits {
     std::size_t callDepth = 128;
     std::size_t objects = 10000;
     std::size_t stringBytes = 1024 * 1024;
+    std::size_t signalConnections = 4096;
 };
 class Runtime {
 public:
@@ -94,7 +105,9 @@ public:
     ObjectRef Create(std::string_view className);
     Value Call(ObjectRef object, std::string_view method, const std::vector<Value>& arguments = {});
     Value Get(ObjectRef object, std::string_view field) const;
-    void Set(ObjectRef object, std::string_view field, Value value);
+    void Set(ObjectRef object, std::string_view field, Value value, bool notify = true);
+    void Connect(SignalRef signal, CallableRef callback);
+    void Emit(SignalRef signal, const std::vector<Value>& arguments = {});
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);
