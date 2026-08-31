@@ -1,5 +1,7 @@
 #include "EditorShell.h"
 RECT EditorShell::ChromeRectangle(int index) const {
+    if(index==9)return {mediaLibrary_.right-116,mediaLibrary_.top+4,mediaLibrary_.right-10,mediaLibrary_.top+26};
+    if(index==10)return {mediaLibrary_.left+12,mediaLibrary_.top+73,mediaLibrary_.left+142,mediaLibrary_.top+99};
     if(index==0)return CreateObjectRectangle();
     if(index==1)return CreateScriptRectangle();
     if(index==2)return CreateSceneRectangle();
@@ -9,10 +11,12 @@ RECT EditorShell::ChromeRectangle(int index) const {
     return {left,viewportPanel_.top+4,left+28,viewportPanel_.top+26};
 }
 int EditorShell::ChromeHit(POINT point) const {
-    for(int i=0;i<9;++i){const auto r=ChromeRectangle(i);if(PtInRect(&r,point))return i;}
+    for(int i=0;i<11;++i){const auto r=ChromeRectangle(i);if(PtInRect(&r,point))return i;}
     return -1;
 }
 bool EditorShell::ChromeEnabled(int index) const {
+    if(index==9)return project_.has_value() && !Playing();
+    if(index==10)return project_.has_value() && AssetFolder()!=assetsDirectory_;
     if(index==0)return sceneOpen_ && !Playing();
     if(index==1 || index==2)return project_.has_value() && !Playing();
     if(index==3)return sceneOpen_ && editingPrefab_.empty();

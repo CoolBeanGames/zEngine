@@ -82,7 +82,7 @@ std::filesystem::path EditorShell::CreatePrefab(zengine::GameObjectId id)
     };
     zengine::scenes::Document prefab; prefab.objects.push_back(*root); prefab.objects.front().parent=0;
     for (const auto& object:document.objects) if (object.id!=id && belongs(object.id)) prefab.objects.push_back(object);
-    const auto file=zengine::prefabs::Create(assetsDirectory_,prefab);
+    const auto file=zengine::prefabs::Create(assetsDirectory_,prefab,AssetFolder());
     zengine::scenes::ObjectData reference; reference.id=id; reference.parent=root->parent; reference.name="Prefab instance";
     reference.prefab=AssetReference(file,assetsDirectory_);
     std::set<zengine::GameObjectId> children; for (const auto& object:prefab.objects) if (object.id!=id) children.insert(object.id);

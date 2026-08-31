@@ -11,6 +11,7 @@
 #include "PrefabAssets.h"
 #include "RenderTransform.h"
 #include "TransformOverrides.h"
+#include "AssetLibrary.h"
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include <commdlg.h>
@@ -569,14 +570,17 @@ void EditorShell::Paint()
     RECT assetsLabel{folderPane.left + 12, folderPane.top + 12, folderPane.right - 8, folderPane.top + 36};
     DrawTextLabel(bufferContext, L"\u25be  Assets", assetsLabel, TextColor);
     RECT folderHint{folderPane.left + 30, folderPane.top + 43, folderPane.right - 8, folderPane.top + 68};
-    DrawTextLabel(bufferContext, L"Project Files", folderHint, MutedTextColor);
+    button(10,L"Up one folder");
+    folderHint.top+=40;folderHint.bottom+=70;
+    const auto relative=project_?std::filesystem::relative(AssetFolder(),assetsDirectory_).wstring():L"";
+    DrawTextLabel(bufferContext,relative==L"."?L"Project Files":relative,folderHint,MutedTextColor,DT_LEFT|DT_WORDBREAK);
     RECT addFolder{mediaLibrary_.right - 116, mediaLibrary_.top + 4, mediaLibrary_.right - 10, mediaLibrary_.top + 26};
-    editorStyle::Button(bufferContext,addFolder,L"+ Add Folder",false);
+    button(9,L"+ Add Folder");
     button(1,L"+ New Script");button(2,L"+ New Scene");
     RECT dropArea{folderPane.right + 20, mediaTop + 20, mediaLibrary_.right - 20, mediaLibrary_.bottom - 20};
     DrawBorder(bufferContext, dropArea, RGB(72, 75, 83));
     RECT libraryHint{dropArea.left + 8, dropArea.top, dropArea.right - 8, dropArea.top + 26};
-    DrawTextLabel(bufferContext, L"FBX: drag to assign  |  ZSH: double-click to edit  |  Scene: double-click to open", libraryHint,
+    DrawTextLabel(bufferContext, L"Double-click folders to browse | New assets and imports go into this folder", libraryHint,
                   MutedTextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     const RECT list = AssetListRectangle();
     const int saved = SaveDC(bufferContext);
@@ -590,8 +594,8 @@ void EditorShell::Paint()
         if (row.top >= list.bottom) break;
         if (index == selectedAsset_) FillRectangle(bufferContext, row, SelectionColor);
         row.left += 8;
-        const bool script = zengine::scripts::IsScript(assets_[index]);
-        DrawTextLabel(bufferContext, assets_[index].extension()==L".zinput" ? L"INPUT MAP   Input (project)" : script ? L"ZSH   " + assets_[index].filename().wstring() : zengine::prefabs::IsPrefab(assets_[index])?L"PREFAB   "+assets_[index].filename().wstring():zengine::scenes::IsScene(assets_[index]) ? L"SCENE   "+assets_[index].filename().wstring() : L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
+        const auto kind=assetLibrary::Type(assets_[index]);assetLibrary::Icon(bufferContext,kind,row.left,row.top+3);row.left+=27;
+        DrawTextLabel(bufferContext, kind==assetLibrary::Kind::Input ? L"Input Map (project)" : kind==assetLibrary::Kind::Model && assetLibrary::Package(assets_[index].parent_path()) ? assets_[index].parent_path().filename().wstring() : assets_[index].filename().wstring(), row, TextColor,
                       DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
     RestoreDC(bufferContext, saved);
@@ -715,26 +719,9 @@ void EditorShell::RefreshAssets()
     if (project_ && std::filesystem::exists(assetsDirectory_))
     {
         zengine::input::Ensure(assetsDirectory_);
-        assets_.push_back(zengine::input::AssetPath(assetsDirectory_));
-        for (const auto& entry : std::filesystem::directory_iterator(assetsDirectory_))
-        {
-            if (entry.is_directory() && std::filesystem::is_regular_file(entry.path() / "asset.ready") &&
-                std::filesystem::is_regular_file(entry.path() / "model.fbx"))
-                assets_.push_back(entry.path() / "model.fbx");
-        }
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(assetsDirectory_))
-        {
-            if (entry.is_regular_file() && (zengine::scripts::IsScript(entry.path()) || zengine::scenes::IsScene(entry.path()) || zengine::prefabs::IsPrefab(entry.path())))
-            {
-                try { assets_.push_back(zengine::prefabs::IsPrefab(entry.path())?zengine::prefabs::Resolve(assetsDirectory_,entry.path()):zengine::scenes::IsScene(entry.path()) ? zengine::scenes::Resolve(assetsDirectory_,entry.path()) : zengine::scripts::Resolve(assetsDirectory_, entry.path())); }
-                catch (const std::exception&) {} // Ignore assets escaping the project via links.
-            }
-        }
+        try {if(!std::filesystem::is_directory(AssetFolder()))assetFolder_.clear();}catch(const std::exception&){assetFolder_.clear();}
+        assets_=assetLibrary::List(assetsDirectory_,AssetFolder());
     }
-    std::sort(assets_.begin(), assets_.end(),[](const auto& a,const auto& b){
-        if((a.extension()==L".zinput")!=(b.extension()==L".zinput"))return b.extension()==L".zinput";
-        return a<b;
-    });
     firstAsset_ = std::clamp(firstAsset_, 0, std::max(0, static_cast<int>(assets_.size()) - 1));
     selectedAsset_ = -1;
 }
@@ -755,8 +742,9 @@ void EditorShell::ReceiveFiles(HDROP drop)
     {
         const UINT length = DragQueryFileW(drop, index, nullptr, 0);
         std::vector<wchar_t> name(static_cast<std::size_t>(length) + 1);
-        if (DragQueryFileW(drop, index, name.data(), static_cast<UINT>(name.size())))
-            assetJobs_.push_back({std::filesystem::path(name.data()), false});
+        if (DragQueryFileW(drop, index, name.data(), static_cast<UINT>(name.size()))) {
+            AssetJob job;job.path=name.data();job.destination=AssetFolder();assetJobs_.push_back(std::move(job));
+        }
     }
 }
 
@@ -821,7 +809,7 @@ void EditorShell::PollAssetWork()
         assetJobs_.pop_front();
         activeAssetJob_=job;
         status_ = (job.loadMesh ? L"Loading " : L"Importing ") + job.path.filename().wstring();
-        const auto directory = assetsDirectory_;
+        const auto directory = job.destination.empty()?assetsDirectory_:assetLibrary::Resolve(assetsDirectory_,job.destination);
         const MeshHandle cached = job.loadMesh ? meshCache_[job.path].lock() : nullptr;
         assetWork_ = std::async(std::launch::async, [job, directory, cached]() {
             AssetResult result;
@@ -832,7 +820,14 @@ void EditorShell::PollAssetWork()
             result.path = job.path;
             result.cachedMesh = cached;
             if (job.loadMesh) { if (!cached) result.model = FbxImporter::Load(job.path, true); }
-            else result.path = FbxImporter::Import(job.path, directory, result.warnings);
+            else if(assetLibrary::Type(job.path)==assetLibrary::Kind::Model)result.path = FbxImporter::Import(job.path, directory, result.warnings);
+            else {
+                const auto kind=assetLibrary::Type(job.path);
+                if(kind!=assetLibrary::Kind::Image && kind!=assetLibrary::Kind::Script)throw std::runtime_error("Import FBX models, images, or .zsh scripts. Create folders in the library.");
+                if(kind==assetLibrary::Kind::Script)zengine::scripts::Load(job.path);
+                result.path=directory/job.path.filename();
+                if(!std::filesystem::copy_file(job.path,result.path,std::filesystem::copy_options::none))throw std::runtime_error("Asset already exists; original preserved.");
+            }
             return result;
         });
     }
@@ -849,7 +844,8 @@ void EditorShell::BeginAssetDrag(POINT point)
     if (!PtInRect(&list, point)) return;
     const int index = firstAsset_ + static_cast<int>(point.y - list.top) / 28;
     if (index >= static_cast<int>(assets_.size())) return;
-    if(assets_[index].extension()==L".zinput"){selectedAsset_=index;draggedAsset_=-1;InvalidateRect(window_,&mediaLibrary_,FALSE);return;}
+    const auto kind=assetLibrary::Type(assets_[index]);
+    if(kind==assetLibrary::Kind::Input || kind==assetLibrary::Kind::Folder || kind==assetLibrary::Kind::Image || kind==assetLibrary::Kind::File){selectedAsset_=index;draggedAsset_=-1;InvalidateRect(window_,&mediaLibrary_,FALSE);return;}
     selectedAsset_ = draggedAsset_ = index;
     assetDragStart_ = point;
     assetDragMoved_ = false;
@@ -971,7 +967,7 @@ bool EditorShell::NewScene()
     if (!editingPrefab_.empty() && !ClosePrefab()) return false;
     RequireProject();
     if (!ConfirmSceneClose()) return false;
-    const auto file=zengine::scenes::Create(assetsDirectory_);
+    const auto file=zengine::scenes::Create(AssetFolder());
     const auto source=zengine::scenes::Load(file);
     ApplyScene(file,source,zengine::scenes::Decode(source)); return true;
 }
@@ -1054,7 +1050,7 @@ bool EditorShell::TranslateShortcut(const MSG& message)
 std::filesystem::path EditorShell::CreateScriptAsset()
 {
     RequireProject();
-    const auto path = zengine::scripts::Create(assetsDirectory_);
+    const auto path = zengine::scripts::Create(AssetFolder());
     RefreshAssets();
     selectedAsset_ = static_cast<int>(std::find(assets_.begin(),assets_.end(),path)-assets_.begin());
     const auto list = AssetListRectangle();
@@ -1180,9 +1176,8 @@ void EditorShell::ClearMesh(zengine::GameObjectId id)
 }
 std::filesystem::path EditorShell::ResolveModel(const std::filesystem::path& path) const
 {
-    const auto file = std::filesystem::weakly_canonical(path.is_absolute() ? path : assetsDirectory_/path);
-    const auto root = std::filesystem::weakly_canonical(assetsDirectory_);
-    if (_wcsicmp(file.parent_path().parent_path().c_str(),root.c_str()) != 0 || _wcsicmp(file.filename().c_str(),L"model.fbx") != 0 ||
+    const auto file = assetLibrary::Resolve(assetsDirectory_,path);
+    if (_wcsicmp(file.filename().c_str(),L"model.fbx") != 0 ||
         !std::filesystem::is_regular_file(file) || !std::filesystem::is_regular_file(file.parent_path()/"asset.ready"))
         throw std::runtime_error("Choose an imported model.fbx from this project's Assets library. Import external FBX files first.");
     return file;
@@ -1308,6 +1303,8 @@ LRESULT EditorShell::HandleMessage(
         if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
     case WM_COMMAND:
+        if(LOWORD(wParam)==NewFolderCommand){NewAssetFolderDialog();return 0;}
+        if(LOWORD(wParam)==UpFolderCommand){if(AssetFolder()!=assetsDirectory_)OpenAssetFolder(AssetFolder().parent_path());return 0;}
         if (LOWORD(wParam)==SavePrefabCommand) { SavePrefab(); return 0; }
         if (LOWORD(wParam)==ClosePrefabCommand) { ClosePrefab(); return 0; }
         if (LOWORD(wParam)>=MoveToolCommand && LOWORD(wParam)<=ScaleToolCommand) { SetTransformTool(static_cast<gizmo::Mode>(LOWORD(wParam)-MoveToolCommand)); return 0; }
@@ -1326,12 +1323,14 @@ LRESULT EditorShell::HandleMessage(
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
+        AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),NewFolderCommand,L"New Folder...");
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0),NewSceneCommand,L"Create Scene (.zscene)");
         const auto command=TrackPopupMenu(menu, TPM_RETURNCMD|TPM_RIGHTBUTTON, screen.x,screen.y,0,window_,nullptr);
         DestroyMenu(menu);
         if (command == 1) OpenScript(CreateScriptAsset());
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
         if (command==NewSceneCommand) NewScene();
+        if(command==NewFolderCommand)NewAssetFolderDialog();
         return 0;
     }
     case WM_LBUTTONDBLCLK:
@@ -1344,7 +1343,8 @@ LRESULT EditorShell::HandleMessage(
             if (index >= 0 && index < static_cast<LONG>(assets_.size()))
             {
                 const auto asset=assets_[index];
-                if (asset.extension()==L".zinput") OpenInputMap();
+                if(std::filesystem::is_directory(asset))OpenAssetFolder(asset);
+                else if (asset.extension()==L".zinput") OpenInputMap();
                 else if (zengine::scripts::IsScript(asset)) OpenScript(asset);
                 else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
                 else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
@@ -1385,6 +1385,10 @@ LRESULT EditorShell::HandleMessage(
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         hoveredChrome_=ChromeHit(point);pressedChrome_=hoveredChrome_;
         if(pressedChrome_>=0){InvalidateRect(window_,nullptr,FALSE);if(!ChromeEnabled(pressedChrome_)){pressedChrome_=-1;return 0;}}
+        if(pressedChrome_==9){NewAssetFolderDialog();return 0;}
+        if(pressedChrome_==10){SendMessageW(window_,WM_COMMAND,UpFolderCommand,0);return 0;}
+        const RECT assetRoot{mediaLibrary_.left+12,mediaLibrary_.top+PanelHeaderHeight+12,mediaLibrary_.left+150,mediaLibrary_.top+PanelHeaderHeight+36};
+        if(project_ && PtInRect(&assetRoot,point)){OpenAssetFolder(assetsDirectory_);return 0;}
         for (int i=0;i<3;++i) { const auto rectangle=ToolRectangle(i); if (PtInRect(&rectangle,point)) { SetTransformTool(static_cast<gizmo::Mode>(i)); return 0; } }
         const RECT fileMenu{44,optionsBar_.top,99,optionsBar_.bottom};
         if (PtInRect(&fileMenu,point))

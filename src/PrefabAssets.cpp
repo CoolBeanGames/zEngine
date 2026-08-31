@@ -47,12 +47,12 @@ void Save(const std::filesystem::path& assets,const std::filesystem::path& path,
     }
     catch (...) { if (file!=INVALID_HANDLE_VALUE) CloseHandle(file); DeleteFileW(temp.c_str()); throw; }
 }
-std::filesystem::path Create(const std::filesystem::path& assets,const scenes::Document& document)
+std::filesystem::path Create(const std::filesystem::path& assets,const scenes::Document& document,const std::filesystem::path& folder)
 {
     std::filesystem::create_directories(assets);
     for (unsigned i=0;i<10000;++i)
     {
-        const auto file=assets/(L"NewPrefab"+(i?std::to_wstring(i):L"")+L".zprefab");
+        const auto file=Resolve(assets,(folder.empty()?assets:folder)/(L"NewPrefab"+(i?std::to_wstring(i):L"")+L".zprefab"));
         if (!std::filesystem::exists(file)) { Save(assets,file,document); return file; }
     }
     throw std::runtime_error("Too many prefabs with this name.");

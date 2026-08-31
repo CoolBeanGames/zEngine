@@ -8,6 +8,7 @@
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
 #include "SceneAssets.h"
+#include "AssetLibrary.h"
 #include <objbase.h>
 #include <shlobj.h>
 
@@ -585,6 +586,35 @@ void SceneEditorTests(bool capture)
 }
 
 void ProjectTests(bool capture);
+void FolderTests(bool capture) {
+    TestDirectory test;Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));const auto window=editor.Create(SW_HIDE,test.path/L"Project");editor.InitializeRenderer();
+        const auto root=editor.AssetsDirectory(),actors=editor.CreateAssetFolder(L"Actors");
+        editor.OpenAssetFolder(actors);const auto scripts=editor.CreateAssetFolder(L"Scripts");editor.OpenAssetFolder(scripts);
+        const auto script=editor.CreateScriptAsset();Require(script.parent_path()==scripts,"Script ignored current folder");
+        Require(editor.NewScene() && editor.ScenePath().parent_path()==scripts,"Scene ignored current folder");
+        auto& object=editor.CreateEmptyGameObject();editor.AssignCube(object.Id());
+        const auto prefab=editor.CreatePrefab(object.Id());Require(prefab.parent_path()==scripts,"Prefab ignored current folder");Require(editor.SaveScene(),"Save nested scene failed");
+        std::vector<std::string> warnings;const auto model=FbxImporter::Import(CreateSource(test.path/L"source"),actors,warnings);
+        const auto id=editor.CreateEmptyGameObject().Id();editor.QueueModel(model,id);
+        const auto deadline=GetTickCount64()+10000;while(editor.BuildSceneFrame().meshes.size()<2 && GetTickCount64()<deadline){editor.Render();Sleep(2);}
+        Require(editor.BuildSceneFrame().meshes.size()==2,"Model in nested asset folder could not render");Require(editor.SaveScene(),"Save folder model failed");
+        editor.OpenAssetFolder(root);const auto entries=assetLibrary::List(root,root);
+        Require(entries.size()==2 && assetLibrary::Type(entries[1])==assetLibrary::Kind::Input && entries[0]==actors,"Root listing flattened folders or lost protected Input Map");
+        bool rejected=false;try{editor.OpenAssetFolder(test.path);}catch(...){rejected=true;}Require(rejected,"Folder navigation escaped project");
+        rejected=false;try{editor.CreateAssetFolder(L"../bad");}catch(...){rejected=true;}Require(rejected,"Folder name allowed traversal");
+        rejected=false;try{editor.CreateAssetFolder(L"Actors");}catch(...){rejected=true;}Require(rejected,"Existing folder overwritten");
+        RECT area{};GetClientRect(window,&area);
+        SendMessageW(window,WM_LBUTTONDBLCLK,MK_LBUTTON,MAKELPARAM(350,area.bottom-220));
+        Require(editor.AssetFolder()==actors,"Double-click did not open folder");
+        SendMessageW(window,WM_COMMAND,EditorShell::UpFolderCommand,0);Require(editor.AssetFolder()==root,"Up navigation failed");
+        editor.OpenAssetFolder(scripts);
+        Require(assetLibrary::Type(script)==assetLibrary::Kind::Script && assetLibrary::Type(prefab)==assetLibrary::Kind::Prefab && assetLibrary::Type(editor.ScenePath())==assetLibrary::Kind::Scene && assetLibrary::Type(model)==assetLibrary::Kind::Model,"Asset icon classification failed");
+        if(capture){editor.Render();CaptureWindow(window,L"asset-folders-qa.bmp");}
+    }
+    CoUninitialize();std::cout<<"PASS: folder creation, scoped listing, navigation, nested script/scene/prefab/model assets, protected Input Map, path containment\n";
+}
 void GizmoTests(bool capture);
 void PrefabTests();
 void ProjectStartupTests(const std::string& mode,bool capture);
@@ -593,6 +623,7 @@ int main(int argc, char** argv)
     try
     {
         if (argc > 1 && std::string(argv[1]) == "--gpu") GpuTests();
+        else if(argc>1 && std::string(argv[1])=="--folders")FolderTests(argc>2);
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");

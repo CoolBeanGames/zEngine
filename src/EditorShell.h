@@ -43,6 +43,10 @@ public:
     bool OpenProject(const std::filesystem::path& file);
     const zengine::projects::Project* CurrentProject() const noexcept { return project_ ? &*project_ : nullptr; }
     const std::filesystem::path& AssetsDirectory() const noexcept { return assetsDirectory_; }
+    std::filesystem::path AssetFolder() const;
+    void OpenAssetFolder(const std::filesystem::path&);
+    std::filesystem::path CreateAssetFolder(const std::wstring&);
+    static constexpr int NewFolderCommand=3400,UpFolderCommand=3401;
     bool HasOpenScene() const noexcept { return sceneOpen_; }
     static constexpr int SavePrefabCommand=3300, ClosePrefabCommand=3301;
     std::filesystem::path CreatePrefab(zengine::GameObjectId);
@@ -102,6 +106,7 @@ private:
     [[nodiscard]] DragTarget HitTestSplitter(POINT position) const;
     RECT AssetListRectangle() const;
     void RefreshAssets();
+    void NewAssetFolderDialog();
     void ReceiveFiles(HDROP drop);
     void PollAssetWork();
     void BeginAssetDrag(POINT point);
@@ -187,6 +192,7 @@ private:
         std::uint64_t revision = 0;
         std::uint64_t scene = 0;
         bool restoreOnly = false;
+        std::filesystem::path destination;
     };
     struct AssetResult
     {
@@ -201,6 +207,7 @@ private:
         std::vector<std::string> warnings;
     };
     std::filesystem::path assetsDirectory_;
+    std::filesystem::path assetFolder_;
     std::vector<std::filesystem::path> assets_;
     std::deque<AssetJob> assetJobs_;
     std::future<AssetResult> assetWork_;

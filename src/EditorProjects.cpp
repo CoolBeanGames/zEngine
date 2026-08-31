@@ -67,7 +67,7 @@ void EditorShell::ActivateProject(zengine::projects::Project project)
     meshBindings_.clear(); meshCache_.clear(); meshRevisions_.clear();
     prefabLinks_.clear(); prefabGenerated_.clear(); prefabSources_.clear(); editingPrefab_.clear(); prefabReturn_.reset();
     scriptHost_=zengine::ScriptHost{}; objects_=zengine::ObjectStore{};
-    project_=std::move(project); assetsDirectory_=assets;
+    project_=std::move(project); assetsDirectory_=assets;assetFolder_.clear();
     sceneOpen_=false; sceneDirty_=false; scenePath_.clear(); sceneSource_.clear();
     sceneBaseline_.clear(); playScene_.reset(); selectedObject_=0; firstObject_=0; firstAsset_=0;
     SetWindowTextW(viewportWindow_,L"Scene Viewport");

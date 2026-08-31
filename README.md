@@ -2,6 +2,8 @@
 
 ## Script editing assistance
 
+The Media Library supports named folders. **Add Folder** (or right-click → **New Folder**) creates one in the current directory. Double-click a folder to enter it, use **Up one folder** to go back, or click **Assets** to return to the project root. New scripts/scenes/prefabs and dropped FBX/image/script imports go into the current folder. Each asset type has its own small icon. The single Input Map remains at the root; model packages stay together and appear as models, not browsable implementation folders. Existing asset moves/renames with automatic reference rewriting are not implemented yet; create your folders before creating/importing assets.
+
 Enter indents to the current brace depth (four spaces). Closing a function declaration with `)` inserts its body when one is not already present; ordinary calls and control-flow conditions are not expanded. Closing `}` on an indentation-only line dedents it. These edits are undoable.
 
 Known names appear as grey inline suggestions at the end of a line; **Tab** accepts them. After `.` a member list opens: use **Up/Down**, then **Tab**, or click an entry. **Escape** dismisses suggestions. Suggestions are not stored in the source until accepted. The tolerant index includes built-ins, classes/inherited members, signals, function parameters and in-scope locals, other project scripts, Input Map action names, and tags from open/registered scenes. Quoted strings suggest known project values. Project files are refreshed on opening/saving the script window, not on every keystroke. Mixed-array entries have no statically known member type: assign one to a typed local after an `is` check to get typed member suggestions.

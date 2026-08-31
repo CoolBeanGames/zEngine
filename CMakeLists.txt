@@ -57,6 +57,7 @@ add_executable(zEngine WIN32
     src/EditorPrefabs.cpp
     src/EditorInput.cpp
     src/EditorChrome.cpp
+    src/EditorFolders.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
@@ -146,6 +147,7 @@ if(BUILD_TESTING)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorInput.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorChrome.cpp)
+    target_sources(zEngineAssetTests PRIVATE src/EditorFolders.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineInputTools)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos zEnginePrefabs)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
@@ -163,6 +165,8 @@ if(BUILD_TESTING)
     add_test(NAME ProjectEditorIntegration COMMAND zEngineAssetTests --projects)
     add_test(NAME TransformGizmos COMMAND zEngineAssetTests --gizmos)
     add_test(NAME PrefabWorkflow COMMAND zEngineAssetTests --prefabs)
+    add_test(NAME AssetFolders COMMAND zEngineAssetTests --folders)
+    set_tests_properties(AssetFolders PROPERTIES TIMEOUT 45)
     set_tests_properties(PrefabWorkflow PROPERTIES TIMEOUT 45)
     set_tests_properties(TransformGizmos PROPERTIES TIMEOUT 45)
     set_tests_properties(ProjectEditorIntegration PROPERTIES TIMEOUT 60)
