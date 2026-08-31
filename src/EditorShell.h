@@ -41,6 +41,9 @@ public:
     const zengine::projects::Project* CurrentProject() const noexcept { return project_ ? &*project_ : nullptr; }
     const std::filesystem::path& AssetsDirectory() const noexcept { return assetsDirectory_; }
     bool HasOpenScene() const noexcept { return sceneOpen_; }
+    static constexpr int MoveToolCommand=3200, RotateToolCommand=3201, ScaleToolCommand=3202;
+    void SetTransformTool(gizmo::Mode mode);
+    gizmo::Mode TransformTool() const { return transformTool_; }
     void Render();
     bool Play();
     void Stop();
@@ -114,6 +117,15 @@ private:
     std::wstring SceneName() const;
     RECT CreateSceneRectangle() const;
     bool PendingModels(bool assignmentsOnly=false) const;
+    LRESULT HandleViewportMessage(HWND,UINT,WPARAM,LPARAM);
+    void EndGizmoDrag(bool cancel);
+    void UpdateGizmoDrag(gizmo::Point);
+    RECT ToolRectangle(int index) const;
+    gizmo::Mode transformTool_=gizmo::Mode::Move;
+    std::optional<gizmo::Drag> gizmoDrag_;
+    zengine::GameObjectId gizmoObject_=0;
+    bool gizmoWasDirty_=false;
+    int hoveredAxis_=-1;
     void RequireProject() const;
     void RequireScene() const;
     bool ConfirmProjectClose();

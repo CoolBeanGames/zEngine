@@ -22,9 +22,18 @@ The editor provides an options bar, resizable scene browser, resizable inspector
 - Press and drag horizontally on a numeric field: right increases, left decreases. Position/scale change by 0.01 per pixel and rotation by 0.5 degrees per pixel. Hold **Shift before dragging** for ten-times finer changes. Escape or losing mouse capture cancels an unfinished drag.
 - Position is world-space; rotation uses X, then Y, then Z Euler angles in degrees; scale is per-axis. Zero and negative scales are supported. Inspector values are bounded to +/-1,000,000 and must be finite. Small inspector panels scroll to keep fields accessible.
 
-An empty object contains only its transform and metadata: it has no mesh and no behaviors by default. The selected object's **editor-only colored axes** show its position, orientation, and scale (X red, Y green, Z blue), against a world grid. These guides are not runtime GameObject components. A cube is a regular GameObject with a Mesh Renderer behavior. Moving one object never changes another object's transform. Moving objects far from the fixed camera can move them out of view; camera navigation is not implemented yet.
+An empty object contains only its transform and metadata: it has no mesh and no behaviors by default. The selected object's **editor-only transform handles** use X red, Y green, and Z blue against a world grid. These guides are not runtime GameObject components. A cube is a regular GameObject with a Mesh Renderer behavior. Moving one object never changes another object's transform. Moving objects far from the fixed camera can move them out of view; camera navigation is not implemented yet.
 
-GameObjects, attachments, priorities, mesh assignments, and authored Inspector variables persist when you save the current **scene asset**. Parenting, scene undo/redo, and viewport picking/manipulator dragging are still deferred.
+GameObjects, attachments, priorities, mesh assignments, and authored Inspector variables persist when you save the current **scene asset**. Parenting, scene undo/redo, and clicking meshes to select objects are still deferred.
+
+### Viewport transform tools
+
+- Select an object in the Scene Browser, then choose **Move W**, **Rotate E**, or **Scale R** in the top toolbar. W/E/R also switch tools when the viewport or main editor has keyboard focus; typing in Inspector/script fields is unaffected.
+- **Move:** drag a colored arrow to move along world X, Y, or Z. **Rotate:** drag a colored ring to change that Inspector Euler angle, following the engine's X-then-Y-then-Z rotation order. Near edge-on rings use a tangential drag fallback. **Scale:** drag a box-ended local axis outward/inward to increase/decrease that scale component. Zero and negative scale values remain supported and recoverable.
+- The hovered/active axis turns yellow. Handles have an approximately constant screen size independent of mesh size and object scale. They render over geometry so even an empty or zero-scale object can be edited. The default camera uses a slight three-quarter angle so the world axes do not overlap head-on.
+- Changes update the model and Inspector live. Release the mouse to finish; save the scene to persist the transform. **Escape**, capture/focus loss, resizing the editor, or changing tools cancels an unfinished drag and restores its original transform without clearing earlier unsaved edits. Gizmo dragging is disabled during Play.
+
+`zEngineGizmos` contains shared handle geometry, projection, hit testing, and drag math without a GPU/window dependency. `ViewportCamera` keeps renderer and picking projection consistent. `EditorGizmos.cpp` owns selection, native input, and drag transactions. The renderer draws the same bounded geometry used for picking through a small reusable vertex buffer; no external gizmo/UI framework is required. Plane handles, uniform-scale handles, snapping, and scene undo/redo are not implemented yet.
 
 ## Scene assets
 

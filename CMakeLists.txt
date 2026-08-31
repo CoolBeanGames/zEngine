@@ -5,6 +5,8 @@ include(CTest)
 add_subdirectory(scripting)
 
 add_library(zEngineCore STATIC src/core/GameObject.cpp src/core/BehaviorLifecycle.cpp)
+add_library(zEngineGizmos STATIC src/TransformGizmo.cpp)
+target_link_libraries(zEngineGizmos PUBLIC zEngineCore)
 target_compile_features(zEngineCore PUBLIC cxx_std_20)
 target_include_directories(zEngineCore PUBLIC src)
 
@@ -41,6 +43,7 @@ add_executable(zEngine WIN32
     src/Main.cpp
     src/EditorShell.cpp
     src/EditorProjects.cpp
+    src/EditorGizmos.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
@@ -66,6 +69,7 @@ target_link_libraries(zEngine PRIVATE
     shell32
     zEngineAssets
     zEngineCore
+    zEngineGizmos
     comctl32
     comdlg32
     zEngineScriptTools
@@ -110,7 +114,8 @@ if(BUILD_TESTING)
     add_executable(zEngineCoreTests tests/CoreTests.cpp)
     target_link_libraries(zEngineCoreTests PRIVATE zEngineCore)
     add_test(NAME GameObjectCore COMMAND zEngineCoreTests)
-    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp src/Renderer.cpp src/EditorShell.cpp src/EditorProjects.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
+    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/Renderer.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
+    target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
     target_compile_definitions(zEngineAssetTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
         TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
@@ -124,6 +129,8 @@ if(BUILD_TESTING)
     add_test(NAME ScriptEditorIntegration COMMAND zEngineAssetTests --scripts)
     add_test(NAME SceneEditorIntegration COMMAND zEngineAssetTests --scenes)
     add_test(NAME ProjectEditorIntegration COMMAND zEngineAssetTests --projects)
+    add_test(NAME TransformGizmos COMMAND zEngineAssetTests --gizmos)
+    set_tests_properties(TransformGizmos PROPERTIES TIMEOUT 45)
     set_tests_properties(ProjectEditorIntegration PROPERTIES TIMEOUT 60)
     add_test(NAME ProjectSceneRecovery COMMAND zEngineAssetTests --project-recovery)
     add_test(NAME ProjectCreationDialog COMMAND zEngineAssetTests --project-dialog)

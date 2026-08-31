@@ -218,7 +218,7 @@ void EditorShell::CreateViewport()
     viewportWindow_ = CreateWindowExW(
         0, ViewportWindowClass, L"Scene Viewport",
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-        0, 0, 1, 1, window_, nullptr, instance_, nullptr);
+        0, 0, 1, 1, window_, nullptr, instance_, this);
     if (!viewportWindow_)
     {
         throw std::runtime_error("Could not create the Direct3D viewport window.");
@@ -309,6 +309,7 @@ bool EditorShell::PrepareScripts()
 }
 bool EditorShell::Play()
 {
+    EndGizmoDrag(false);
     if (!sceneOpen_) { status_=L"Create or open a scene before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     if (Playing()) return true;
     if (PendingModels()) { status_=L"Wait for this scene's models to finish loading before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
@@ -376,6 +377,7 @@ ViewportFrame EditorShell::BuildSceneFrame() const
 {
     ViewportFrame frame;
     frame.showEditorGuides = true;
+    frame.tool=transformTool_; frame.highlightedAxis=hoveredAxis_;
     for (std::size_t i = 0; i < objects_.Size(); ++i)
     {
         const auto& object = objects_.At(i);
@@ -390,6 +392,7 @@ ViewportFrame EditorShell::BuildSceneFrame() const
 
 void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
 {
+    EndGizmoDrag(true);
     const int clientWidth = static_cast<int>(width);
     const int clientHeight = static_cast<int>(height);
     if (clientWidth <= 0 || clientHeight <= 0)
@@ -486,6 +489,14 @@ void EditorShell::Paint()
         menuX += (menu == L"Window") ? 70 : 55;
     }
     RECT projectName{optionsBar_.right - 240, optionsBar_.top, optionsBar_.right - 12, optionsBar_.bottom};
+    const wchar_t* toolNames[]={L"Move W",L"Rotate E",L"Scale R"};
+    for (int i=0;i<3;++i)
+    {
+        const auto rectangle=ToolRectangle(i);
+        FillRectangle(bufferContext,rectangle,static_cast<int>(transformTool_)==i?SelectionColor:FieldColor);
+        DrawBorder(bufferContext,rectangle,BorderColor);
+        DrawTextLabel(bufferContext,toolNames[i],rectangle,TextColor,DT_CENTER|DT_SINGLELINE|DT_VCENTER);
+    }
     DrawTextLabel(bufferContext, project_?WideText(project_->config.name):L"No project open", projectName, MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     RECT optionLine{0, optionsBar_.bottom - 1, optionsBar_.right, optionsBar_.bottom};
     FillRectangle(bufferContext, optionLine, BorderColor);
@@ -669,6 +680,7 @@ zengine::GameObject& EditorShell::CreateEmptyGameObject()
 }
 void EditorShell::SelectGameObject(zengine::GameObjectId id)
 {
+    EndGizmoDrag(true);
     auto* object = objects_.Find(id);
     if (!object) return;
     if (inspectorPanel_) inspectorPanel_->Bind(object);
@@ -883,6 +895,7 @@ bool EditorShell::PendingModels(bool assignmentsOnly) const
 }
 bool EditorShell::ConfirmSceneClose()
 {
+    EndGizmoDrag(false);
     if (!sceneOpen_) return true;
     if (Playing()) throw std::runtime_error("Stop Play before switching scenes.");
     SetFocus(window_);
@@ -896,6 +909,7 @@ bool EditorShell::ConfirmSceneClose()
 }
 bool EditorShell::SaveScene(const std::filesystem::path& path)
 {
+    EndGizmoDrag(false);
     RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before saving a scene.");
     if (PendingModels(true)) throw std::runtime_error("Wait for pending model assignments before saving the scene.");
@@ -910,6 +924,7 @@ bool EditorShell::SaveScene(const std::filesystem::path& path)
 }
 bool EditorShell::SaveSceneAs()
 {
+    EndGizmoDrag(false);
     RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before saving a scene.");
     if (PendingModels(true)) throw std::runtime_error("Wait for pending model assignments before saving the scene.");
@@ -953,6 +968,7 @@ bool EditorShell::OpenScene(const std::filesystem::path& path)
 }
 void EditorShell::ApplyScene(const std::filesystem::path& file,std::string source,const zengine::scenes::Document& scene)
 {
+    EndGizmoDrag(true);
     auto next=zengine::scenes::Instantiate(scene); // Build first; bad data cannot destroy the current scene.
     inspectorPanel_->Bind(nullptr);
     ++sceneGeneration_;
@@ -1211,11 +1227,18 @@ LRESULT CALLBACK EditorShell::WindowProcedure(
 LRESULT CALLBACK EditorShell::ViewportProcedure(
     const HWND window, const UINT message, const WPARAM wParam, const LPARAM lParam)
 {
-    if (message == WM_ERASEBKGND)
+    auto* editor=reinterpret_cast<EditorShell*>(GetWindowLongPtrW(window,GWLP_USERDATA));
+    if (message==WM_NCCREATE)
     {
-        return 1;
+        editor=static_cast<EditorShell*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+        SetWindowLongPtrW(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(editor));
     }
-    return DefWindowProcW(window, message, wParam, lParam);
+    try { return editor?editor->HandleViewportMessage(window,message,wParam,lParam):DefWindowProcW(window,message,wParam,lParam); }
+    catch (const std::exception& error)
+    {
+        if (editor) { editor->EndGizmoDrag(true); editor->status_=L"Transform tool error: "+WideText(error.what()); InvalidateRect(editor->window_,nullptr,FALSE); }
+        return 0;
+    }
 }
 
 LRESULT EditorShell::HandleMessage(
@@ -1224,9 +1247,11 @@ LRESULT EditorShell::HandleMessage(
     switch (message)
     {
     case WM_CLOSE:
+        EndGizmoDrag(true);
         if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
     case WM_COMMAND:
+        if (LOWORD(wParam)>=MoveToolCommand && LOWORD(wParam)<=ScaleToolCommand) { SetTransformTool(static_cast<gizmo::Mode>(LOWORD(wParam)-MoveToolCommand)); return 0; }
         if (LOWORD(wParam)==NewProjectCommand) { NewProjectDialog(); return 0; }
         if (LOWORD(wParam)==OpenProjectCommand) { ChooseProject(); return 0; }
         if (LOWORD(wParam)==NewSceneCommand) { NewScene(); return 0; }
@@ -1296,6 +1321,7 @@ LRESULT EditorShell::HandleMessage(
     {
         SetFocus(window_);
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        for (int i=0;i<3;++i) { const auto rectangle=ToolRectangle(i); if (PtInRect(&rectangle,point)) { SetTransformTool(static_cast<gizmo::Mode>(i)); return 0; } }
         const RECT fileMenu{44,optionsBar_.top,99,optionsBar_.bottom};
         if (PtInRect(&fileMenu,point))
         {
@@ -1403,6 +1429,7 @@ LRESULT EditorShell::HandleMessage(
         break;
     }
     case WM_KEYDOWN:
+        if (wParam=='W' || wParam=='E' || wParam=='R') { SetTransformTool(wParam=='W'?gizmo::Mode::Move:wParam=='E'?gizmo::Mode::Rotate:gizmo::Mode::Scale); return 0; }
         if (wParam == VK_ESCAPE)
         {
             if (draggedAsset_ >= 0)
@@ -1414,6 +1441,9 @@ LRESULT EditorShell::HandleMessage(
             SendMessageW(window, WM_CLOSE, 0, 0);
             return 0;
         }
+        break;
+    case WM_ACTIVATEAPP:
+        if (!wParam) EndGizmoDrag(true);
         break;
     case WM_DESTROY:
         viewportWindow_ = nullptr;

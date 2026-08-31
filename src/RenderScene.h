@@ -1,5 +1,6 @@
 #pragma once
 #include "core/GameObject.h"
+#include "TransformGizmo.h"
 #include <memory>
 #include <optional>
 #include <vector>
@@ -17,4 +18,6 @@ struct ViewportFrame
     std::vector<MeshDraw> meshes;
     std::optional<zengine::Transform> selectionTransform;
     bool showEditorGuides = false;
+    gizmo::Mode tool = gizmo::Mode::Move;
+    int highlightedAxis = -1;
 };

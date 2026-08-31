@@ -321,11 +321,10 @@ void Renderer::CreateEditorGuides()
     }
     upload(gridBuffer_, gridVertexCount_);
     lines.clear();
-    const Float3 red{1, 0.2f, 0.2f}, green{0.2f, 1, 0.3f}, blue{0.2f, 0.5f, 1};
-    line({0, 0, 0}, {1, 0, 0}, red); line({1, 0, 0}, {0.8f, 0.1f, 0}, red); line({1, 0, 0}, {0.8f, -0.1f, 0}, red);
-    line({0, 0, 0}, {0, 1, 0}, green); line({0, 1, 0}, {0.1f, 0.8f, 0}, green); line({0, 1, 0}, {-0.1f, 0.8f, 0}, green);
-    line({0, 0, 0}, {0, 0, 1}, blue); line({0, 0, 1}, {0.1f, 0, 0.8f}, blue); line({0, 0, 1}, {-0.1f, 0, 0.8f}, blue);
-    upload(axesBuffer_, axesVertexCount_);
+    D3D11_BUFFER_DESC handles{};
+    handles.ByteWidth=1024*sizeof(Vertex); handles.Usage=D3D11_USAGE_DYNAMIC;
+    handles.BindFlags=D3D11_BIND_VERTEX_BUFFER; handles.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
+    ThrowIfFailed(device_->CreateBuffer(&handles,nullptr,&axesBuffer_),"Create transform handle buffer");
     D3D11_DEPTH_STENCIL_DESC depth{};
     depth.DepthEnable = FALSE;
     ThrowIfFailed(device_->CreateDepthStencilState(&depth, &overlayDepth_), "Create editor overlay depth state");
@@ -446,13 +445,8 @@ void Renderer::Render(const ViewportFrame& frame)
         return;
     }
 
-    const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
-    const float halfFov = std::min(XM_PI / 6.0f, std::atan(std::tan(XM_PI / 6.0f) * aspect));
-    const float distance = 1.75f / std::sin(halfFov) * 1.1f;
-    const XMMATRIX view = XMMatrixLookAtLH(
-        XMVectorSet(0.0f, distance * 0.28f, -distance, 1.0f), XMVectorZero(), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
-    const XMMATRIX projection = XMMatrixPerspectiveFovLH(
-        XMConvertToRadians(60.0f), static_cast<float>(width_) / static_cast<float>(height_), 0.1f, 100.0f);
+    const ViewportCamera camera(static_cast<float>(width_),static_cast<float>(height_));
+    const XMMATRIX view=camera.view,projection=camera.projection;
 
     const auto setConstants = [&](const XMMATRIX& matrix, bool unlit) {
         SceneConstants constants{};
@@ -512,8 +506,21 @@ void Renderer::Render(const ViewportFrame& frame)
     }
     if (frame.showEditorGuides && frame.selectionTransform)
     {
+        const auto shape=gizmo::Build(camera,*frame.selectionTransform,frame.tool);
+        if (shape.lines.size()*2>1024) throw std::runtime_error("Transform handle buffer overflow.");
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        ThrowIfFailed(context_->Map(axesBuffer_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"Map transform handles");
+        auto* vertices=static_cast<Vertex*>(mapped.pData);
+        const Float3 colors[]={{1,.2f,.2f},{.2f,1,.3f},{.2f,.5f,1}};
+        for (const auto& segment:shape.lines)
+        {
+            const auto color=segment.axis==frame.highlightedAxis?Float3{1,.85f,.15f}:colors[segment.axis];
+            for (const auto p:{segment.a,segment.b}) *vertices++=Vertex{{p.x,p.y,p.z},{0,1,0},color};
+        }
+        context_->Unmap(axesBuffer_.Get(),0);
+        axesVertexCount_=static_cast<UINT>(shape.lines.size()*2);
         context_->OMSetDepthStencilState(overlayDepth_.Get(), 0);
-        drawLines(axesBuffer_.Get(), axesVertexCount_, TransformMatrix(*frame.selectionTransform));
+        drawLines(axesBuffer_.Get(), axesVertexCount_, XMMatrixIdentity());
     }
 
     // Do not let pipeline bindings keep an otherwise released model alive in an empty scene.

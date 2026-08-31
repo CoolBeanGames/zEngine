@@ -54,6 +54,7 @@ void EditorShell::RememberProjectScene()
 }
 void EditorShell::ActivateProject(zengine::projects::Project project)
 {
+    EndGizmoDrag(true);
     const auto assets=zengine::projects::Assets(project);
     inspectorPanel_->Bind(nullptr);
     scriptEditors_.clear();
