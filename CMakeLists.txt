@@ -25,7 +25,7 @@ target_compile_features(zEngineAssets PUBLIC cxx_std_20)
 target_include_directories(zEngineAssets PUBLIC src)
 target_link_libraries(zEngineAssets PRIVATE ufbx)
 
-add_library(zEngineScriptTools STATIC src/ScriptAssets.cpp src/ScriptEditor.cpp)
+add_library(zEngineScriptTools STATIC src/ScriptAssets.cpp src/ScriptEditor.cpp src/ScriptCompletion.cpp)
 target_compile_features(zEngineScriptTools PUBLIC cxx_std_20)
 target_include_directories(zEngineScriptTools PUBLIC src)
 target_compile_definitions(zEngineScriptTools PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

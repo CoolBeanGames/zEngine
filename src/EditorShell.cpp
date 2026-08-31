@@ -1071,6 +1071,20 @@ void EditorShell::OpenScript(const std::filesystem::path& path)
     for (const auto& editor : scriptEditors_)
         if (_wcsicmp(editor->Path().c_str(), resolved.c_str()) == 0) { editor->Show(); return; }
     auto editor = std::make_unique<ScriptEditor>(window_, assetsDirectory_, resolved);
+    editor->SetCompletionContext([this]() {
+        std::vector<std::wstring> values;
+        for(std::size_t i=0;i<objects_.Size();++i) {
+            values.push_back(WideText(objects_.At(i).Name()));
+            for(const auto& tag:objects_.At(i).Tags())values.push_back(WideText(tag));
+        }
+        try {for(const auto& action:zengine::input::Decode(zengine::input::Load(assetsDirectory_)))values.push_back(WideText(action.name));}catch(const std::exception&){}
+        std::size_t bytes=0;
+        if(project_)for(const auto& scene:project_->config.scenes)try {
+            const auto text=zengine::scenes::Load(zengine::projects::ScenePath(*project_,scene));bytes+=text.size();if(bytes>16*1024*1024)break;
+            for(const auto& object:zengine::scenes::Decode(text).objects)for(const auto& tag:object.tags)values.push_back(WideText(tag));
+        }catch(const std::exception&){}
+        return values;
+    });
     editor->SetSavedHandler([this]() {
         if (!Playing()) PrepareScripts();
         else { status_=L"Script saved - Stop and Play to run the new code"; InvalidateRect(window_,&statusBar_,FALSE); }

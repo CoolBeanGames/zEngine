@@ -1,5 +1,11 @@
 # zEngine
 
+## Script editing assistance
+
+Enter indents to the current brace depth (four spaces). Closing a function declaration with `)` inserts its body when one is not already present; ordinary calls and control-flow conditions are not expanded. Closing `}` on an indentation-only line dedents it. These edits are undoable.
+
+Known names appear as grey inline suggestions at the end of a line; **Tab** accepts them. After `.` a member list opens: use **Up/Down**, then **Tab**, or click an entry. **Escape** dismisses suggestions. Suggestions are not stored in the source until accepted. The tolerant index includes built-ins, classes/inherited members, signals, function parameters and in-scope locals, other project scripts, Input Map action names, and tags from open/registered scenes. Quoted strings suggest known project values. Project files are refreshed on opening/saving the script window, not on every keystroke. Mixed-array entries have no statically known member type: assign one to a typed local after an `is` check to get typed member suggestions.
+
 zEngine currently contains a small Direct3D 11 renderer hosted inside a lightweight native Windows editor shell. Startup restores the last project and scene, or prompts to create/open one. New scenes start empty. Add a Mesh Renderer and choose **Use Cube** to render the built-in indexed, depth-tested cube. Each cube vertex receives a random color when the program starts, and a directional light is calculated in the vertex shader. The cube/model is controlled by its GameObject transform instead of automatically rotating.
 
 The editor provides an options bar, resizable scene browser, resizable inspector, resizable media library, central scene viewport, and status/progress bar. Drag the narrow gaps between panels to resize them. Projects, scene assets, the File menu, FBX import, multi-object mesh rendering, GameObject creation, script editing/execution, Inspector variables, and Play/Pause/Step are functional. The other top options menus and Add Folder remain placeholders.

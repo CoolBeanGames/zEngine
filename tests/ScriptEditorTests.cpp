@@ -1,6 +1,7 @@
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
 #include "ScriptTyping.h"
+#include "ScriptCompletion.h"
 #include "core/ScriptBehavior.h"
 #include <windows.h>
 #include <richedit.h>
@@ -41,6 +42,24 @@ int main(int argc, char**)
     try
     {
         using namespace zengine::scripts;
+        {
+            scriptCompletion::Index index;
+            index.AddSource(L"class Base { signal ping; int count; func work():Vector3 { return Vector3(); } } class Other : Base { float speed; }");
+            index.AddString(L"move_left");index.AddString(L"Enemy");
+            const auto complete=[&](const std::wstring& text){return index.Complete(text,text.size());};
+            const auto has=[](const auto& result,const wchar_t* name){return std::any_of(result.items.begin(),result.items.end(),[&](const auto& item){return item.name==name;});};
+            Check(has(complete(L"class A : gameObject { func upd"),L"update"),"Lifecycle completion missing");
+            Check(has(complete(L"class A { func f() { Other obj; obj."),L"speed"),"Typed member completion missing");
+            Check(has(complete(L"class A { func f() { Other obj; obj."),L"ping"),"Inherited signal missing");
+            Check(!has(complete(L"class A { func f() { Vector3 v; v."),L"speed"),"Unrelated member leaked into list");
+            Check(has(complete(L"class A { func f() { Other obj; obj.work()."),L"x"),"Return-type chain completion missing");
+            Check(has(complete(L"class A { func f() { Input.action(\"move_left\")."),L"just_pressed"),"Input action chain missing");
+            Check(has(complete(L"class A { func f() { Input.is_action_pressed(\"move_"),L"move_left"),"Input name completion missing");
+            Check(has(complete(L"class A { func f() { string tag=\"En"),L"Enemy"),"Tag completion missing");
+            Check(complete(L"// Input.").items.empty(),"Completion active in comment");
+            Check(!has(complete(L"class A { func f(){ int hidden; } func g(){ hid"),L"hidden"),"Function-local name leaked to another function");
+            Check(!has(complete(L"class A { func f(){ { int hidden; } hid"),L"hidden"),"Block-local name escaped its scope");
+        }
         {
             const std::wstring source=L"class A {\r    func update(float delta";
             auto edit=scriptTyping::OnCharacter(source,source.size(),source.size(),L')');
@@ -85,6 +104,17 @@ int main(int argc, char**)
             ScriptEditor editor(nullptr,root,first);
             HWND control=GetDlgItem(editor.Window(),ScriptEditor::SourceControl);
             Check(control!=nullptr,"Source editor control missing");
+            SetWindowTextW(control,L"class A : gameObject { func up");SendMessageW(control,EM_SETSEL,-1,-1);
+            SendMessageW(control,WM_CHAR,'d',0);
+            wchar_t suggestion[200]{};GetWindowTextW(control,suggestion,200);
+            Check(std::wstring(suggestion).ends_with(L"upd"),"Ghost completion modified source before acceptance");
+            SendMessageW(control,WM_CHAR,VK_TAB,0);GetWindowTextW(control,suggestion,200);
+            Check(std::wstring(suggestion).ends_with(L"update"),"Tab did not accept inline suggestion");
+            SendMessageW(control,EM_UNDO,0,0);GetWindowTextW(control,suggestion,200);
+            Check(std::wstring(suggestion).ends_with(L"upd"),"Completion undo was not atomic");
+            SetWindowTextW(control,L"class A { func f() { Vector3 v; v");SendMessageW(control,EM_SETSEL,-1,-1);SendMessageW(control,WM_CHAR,'.',0);
+            SendMessageW(control,WM_KEYDOWN,VK_DOWN,0);SendMessageW(control,WM_CHAR,VK_TAB,0);GetWindowTextW(control,suggestion,200);
+            Check(std::wstring(suggestion).ends_with(L"v.y"),"Member dropdown selection/Tab failed");
             SetWindowTextW(control,L"class A {\r    func update(float delta");
             SendMessageW(control,EM_SETSEL,-1,-1);SendMessageW(control,WM_CHAR,')',0);
             wchar_t typed[200]{};GetWindowTextW(control,typed,200);

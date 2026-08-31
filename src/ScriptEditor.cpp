@@ -70,6 +70,11 @@ ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, cons
         // Syntax formatting needs rich-text mode; clipboard paste is restricted to plain text below.
         SendMessageW(source_, EM_SETTEXTMODE, TM_RICHTEXT | TM_MULTILEVELUNDO, 0);
         SetWindowSubclass(source_, EditProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
+        completions_=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,L"LISTBOX",L"",WS_POPUP|WS_BORDER|WS_VSCROLL|LBS_NOTIFY,
+            0,0,1,1,window_,nullptr,instance,nullptr);
+        if(!completions_)throw std::runtime_error("Cannot create completion list.");
+        SendMessageW(completions_,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+        SetWindowSubclass(completions_,CompletionProcedure,1,reinterpret_cast<DWORD_PTR>(this));
         Reload(); Layout();
     }
     catch (...)
@@ -87,6 +92,7 @@ ScriptEditor::~ScriptEditor()
 }
 void ScriptEditor::Show()
 {
+    RefreshCompletionIndex();HideCompletion();
     if (!dirty_) Reload();
     ShowWindow(window_, SW_SHOWNORMAL); SetForegroundWindow(window_); SetFocus(source_);
 }
@@ -114,6 +120,7 @@ void ScriptEditor::Reload()
     SendMessageW(source_, EM_EMPTYUNDOBUFFER, 0, 0);
     formatting_ = false;
     loaded_ = disk; dirty_ = false; Title(); Highlight();
+    RefreshCompletionIndex();HideCompletion();
 }
 bool ScriptEditor::Save()
 {
@@ -127,6 +134,7 @@ bool ScriptEditor::Save()
         zengine::scripts::Save(assets_, path_, bytes, &loaded_);
         loaded_ = bytes; dirty_ = false; Title(); Highlight();
         if (saved_) saved_();
+        RefreshCompletionIndex();HideCompletion();
         return true;
     }
     catch (const std::exception& e) { MessageBoxW(window_, Wide(e.what()).c_str(), L"Script save failed", MB_OK | MB_ICONERROR); return false; }
@@ -247,9 +255,12 @@ LRESULT ScriptEditor::HandleMessage(UINT message, WPARAM w, LPARAM l)
 {
     switch (message)
     {
+    case WM_CTLCOLORLISTBOX:
+        SetTextColor(reinterpret_cast<HDC>(w),RGB(225,228,232));SetBkColor(reinterpret_cast<HDC>(w),RGB(30,32,36));return reinterpret_cast<LRESULT>(editorStyle::Shared().panel);
     case WM_CTLCOLOREDIT: case WM_CTLCOLORSTATIC: case WM_CTLCOLORBTN:
         return editorStyle::ControlColor(message,w);
-    case WM_SIZE: Layout(); return 0;
+    case WM_SIZE: HideCompletion();Layout(); return 0;
+    case WM_ACTIVATE: if(LOWORD(w)==WA_INACTIVE)HideCompletion();break;
     case WM_GETMINMAXINFO: reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize = {500,360}; return 0;
     case WM_CLOSE: if (ConfirmClose()) ShowWindow(window_, SW_HIDE); return 0;
     case WM_TIMER: if (w == 1) Highlight(); return 0;
@@ -281,6 +292,16 @@ LRESULT ScriptEditor::HandleMessage(UINT message, WPARAM w, LPARAM l)
 LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR data)
 {
     auto* self = reinterpret_cast<ScriptEditor*>(data);
+    if(message==WM_PAINT){const auto result=DefSubclassProc(window,message,w,l);self->PaintCompletion(window);return result;}
+    if(message==WM_KILLFOCUS || message==WM_LBUTTONDOWN || message==WM_VSCROLL || message==WM_HSCROLL || message==WM_MOUSEWHEEL)self->HideCompletion();
+    if(message==WM_KEYDOWN) {
+        if(w==VK_ESCAPE && !self->completion_.items.empty()){self->HideCompletion();return 0;}
+        if((w==VK_UP || w==VK_DOWN) && !self->completion_.items.empty() && self->completion_.members) {
+            self->completionSelection_=(self->completionSelection_+(w==VK_DOWN?1:static_cast<int>(self->completion_.items.size())-1))%self->completion_.items.size();
+            SendMessageW(self->completions_,LB_SETCURSEL,self->completionSelection_,0);InvalidateRect(window,nullptr,FALSE);return 0;
+        }
+        if(w==VK_LEFT || w==VK_RIGHT || w==VK_HOME || w==VK_END)self->HideCompletion();
+    }
     if (message == WM_PASTE) return SendMessageW(window, EM_PASTESPECIAL, CF_UNICODETEXT, 0);
     if (message == WM_KEYDOWN && (GetKeyState(VK_CONTROL) & 0x8000))
     {
@@ -288,7 +309,10 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
         if (w == 'A') { SendMessageW(window, EM_SETSEL, 0, -1); return 0; }
     }
     if (message == WM_CHAR && (w == 19 || w == 18 || w == 1)) return 0;
-    if (message == WM_CHAR && w == VK_TAB) { SendMessageW(window, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"    ")); return 0; }
+    if (message == WM_CHAR && w == VK_TAB) {
+        if(self->AcceptCompletion())return 0;
+        SendMessageW(window, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"    ")); return 0;
+    }
     if (message == WM_CHAR && (w == VK_RETURN || w == ')' || w == '}')) {
         CHARRANGE range{}; SendMessageW(window,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&range));
         if (const auto edit=scriptTyping::OnCharacter(self->Text(),range.cpMin,range.cpMax,static_cast<wchar_t>(w))) {
@@ -300,6 +324,82 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
             SendMessageW(window,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&range));
             SendMessageW(window,EM_SCROLLCARET,0,0);return 0;
         }
+    }
+    const auto result=DefSubclassProc(window,message,w,l);
+    if(message==WM_CHAR && w>=32)self->UpdateCompletion();
+    else if(message==WM_CHAR && w==VK_BACK)self->UpdateCompletion();
+    return result;
+}
+
+void ScriptEditor::RefreshCompletionIndex() {
+    completionIndex_=scriptCompletion::Index{};std::size_t bytes=0,count=0;
+    // Filesystem reads happen on open/save, not every keystroke. Stay project-contained.
+    std::error_code error;
+    for(std::filesystem::recursive_directory_iterator it(assets_,std::filesystem::directory_options::skip_permission_denied,error),end;it!=end && !error;it.increment(error)) {
+        if(it->is_symlink(error)){it.disable_recursion_pending();continue;}
+        if(!it->is_regular_file(error)||!zengine::scripts::IsScript(it->path())||it->path()==path_)continue;
+        if(++count>512)break;
+        try {const auto text=zengine::scripts::Load(zengine::scripts::Resolve(assets_,it->path()));bytes+=text.size();if(bytes>8*1024*1024)break;completionIndex_.AddSource(Wide(text));}catch(const std::exception&){}
+    }
+    if(completionContext_)for(auto& value:completionContext_())completionIndex_.AddString(std::move(value));
+}
+void ScriptEditor::HideCompletion() {
+    completion_={};completionSelection_=0;if(completions_)ShowWindow(completions_,SW_HIDE);if(source_)InvalidateRect(source_,nullptr,FALSE);
+}
+void ScriptEditor::UpdateCompletion() {
+    if(suppressCompletion_ || formatting_)return;
+    CHARRANGE range{};SendMessageW(source_,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&range));
+    if(range.cpMin!=range.cpMax){HideCompletion();return;}
+    completion_=completionIndex_.Complete(Text(),range.cpMin);completionSelection_=0;
+    ShowWindow(completions_,SW_HIDE);
+    if(completion_.members && !completion_.items.empty()) {
+        SendMessageW(completions_,LB_RESETCONTENT,0,0);
+        for(const auto& item:completion_.items){const auto label=item.name+(item.function?L"()":L"")+L"  : "+item.type;SendMessageW(completions_,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));}
+        SendMessageW(completions_,LB_SETCURSEL,0,0);
+        POINTL caret{};SendMessageW(source_,EM_POSFROMCHAR,reinterpret_cast<WPARAM>(&caret),range.cpMin);
+        POINT pos{caret.x,caret.y+22};ClientToScreen(source_,&pos);
+        MONITORINFO info{sizeof(info)};GetMonitorInfoW(MonitorFromPoint(pos,MONITOR_DEFAULTTONEAREST),&info);
+        const int height=std::min(8,static_cast<int>(completion_.items.size()))*22+4;
+        pos.x=std::clamp(pos.x,info.rcWork.left,std::max(info.rcWork.left,info.rcWork.right-340));
+        pos.y=std::clamp(pos.y,info.rcWork.top,std::max(info.rcWork.top,info.rcWork.bottom-height));
+        SetWindowPos(completions_,HWND_TOP,pos.x,pos.y,340,height,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+    }
+    InvalidateRect(source_,nullptr,FALSE);
+}
+bool ScriptEditor::AcceptCompletion() {
+    if(completion_.items.empty())return false;
+    CHARRANGE range{};SendMessageW(source_,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&range));
+    if(range.cpMin!=range.cpMax || range.cpMin!=completion_.start+completion_.prefix.size()){HideCompletion();return false;}
+    const auto text=Text();if(text.substr(completion_.start,completion_.prefix.size())!=completion_.prefix){HideCompletion();return false;}
+    const auto value=completion_.items.at(completionSelection_).name;
+    range.cpMin=static_cast<LONG>(completion_.start);suppressCompletion_=true;
+    SendMessageW(source_,EM_STOPGROUPTYPING,0,0);SendMessageW(source_,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&range));
+    SendMessageW(source_,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(value.c_str()));
+    suppressCompletion_=false;HideCompletion();return true;
+}
+void ScriptEditor::PaintCompletion(HWND window) {
+    if(completion_.items.empty() || GetFocus()!=window)return;
+    CHARRANGE range{};SendMessageW(window,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&range));
+    if(range.cpMin!=range.cpMax || range.cpMin!=completion_.start+completion_.prefix.size())return;
+    const auto text=Text();if(range.cpMin<text.size() && text[range.cpMin]!=L'\r' && text[range.cpMin]!=L'\n')return;
+    const auto suffix=completion_.items.at(completionSelection_).name.substr(completion_.prefix.size());
+    POINTL point{};SendMessageW(window,EM_POSFROMCHAR,reinterpret_cast<WPARAM>(&point),range.cpMin);
+    HDC dc=GetDC(window);auto old=SelectObject(dc,font_);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,RGB(130,136,146));
+    RECT clip{};SendMessageW(window,EM_GETRECT,0,reinterpret_cast<LPARAM>(&clip));IntersectClipRect(dc,clip.left,clip.top,clip.right,clip.bottom);
+    TextOutW(dc,point.x,point.y,suffix.c_str(),static_cast<int>(suffix.size()));SelectObject(dc,old);ReleaseDC(window,dc);
+}
+LRESULT CALLBACK ScriptEditor::CompletionProcedure(HWND window,UINT message,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR data) {
+    auto* self=reinterpret_cast<ScriptEditor*>(data);
+    if(message==WM_MOUSEACTIVATE)return MA_NOACTIVATE;
+    if(message==WM_LBUTTONDOWN) {
+        const auto index=SendMessageW(window,LB_ITEMFROMPOINT,0,l);
+        if(!HIWORD(index))SendMessageW(window,LB_SETCURSEL,LOWORD(index),0);
+        return 0; // Keep keyboard focus/caret in RichEdit.
+    }
+    if(message==WM_LBUTTONUP) {
+        const auto index=SendMessageW(window,LB_ITEMFROMPOINT,0,l);
+        if(!HIWORD(index) && LOWORD(index)<self->completion_.items.size()){self->completionSelection_=LOWORD(index);self->AcceptCompletion();}
+        return 0;
     }
     return DefSubclassProc(window,message,w,l);
 }

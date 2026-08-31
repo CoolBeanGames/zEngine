@@ -1,5 +1,6 @@
 #pragma once
 #include "ScriptAssets.h"
+#include "ScriptCompletion.h"
 #include <windows.h>
 #include <commctrl.h>
 #include <functional>
@@ -17,6 +18,7 @@ public:
     const std::filesystem::path& Path() const { return path_; }
     bool Dirty() const noexcept { return dirty_; }
     void SetSavedHandler(std::function<void()> handler) { saved_ = std::move(handler); }
+    void SetCompletionContext(std::function<std::vector<std::wstring>()> provider) { completionContext_=std::move(provider); }
 private:
     static LRESULT CALLBACK WindowProcedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK EditProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
@@ -27,6 +29,18 @@ private:
     void Highlight();
     void Title();
     std::wstring Text() const;
+    void RefreshCompletionIndex();
+    void UpdateCompletion();
+    void HideCompletion();
+    bool AcceptCompletion();
+    void PaintCompletion(HWND);
+    static LRESULT CALLBACK CompletionProcedure(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR);
+    scriptCompletion::Index completionIndex_;
+    scriptCompletion::Result completion_;
+    std::function<std::vector<std::wstring>()> completionContext_;
+    HWND completions_=nullptr;
+    int completionSelection_=0;
+    bool suppressCompletion_=false;
     std::filesystem::path assets_, path_;
     std::string loaded_;
     HWND window_ = nullptr, source_ = nullptr, errors_ = nullptr;
