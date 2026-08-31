@@ -30,6 +30,7 @@ void EditorShell::RequireScene() const
 }
 bool EditorShell::ConfirmProjectClose()
 {
+    if(Building())throw std::runtime_error("Wait for the game build before switching projects.");
     if (!editingPrefab_.empty() && !ClosePrefab()) return false;
     if (Playing()) throw std::runtime_error("Stop Play before switching projects.");
     // Imports write into their captured Assets folder. Finish them before releasing that project.

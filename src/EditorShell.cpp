@@ -252,6 +252,7 @@ void EditorShell::Render()
     const double elapsed=std::min(0.1,std::chrono::duration<double>(now-lastTick_).count());
     lastTick_=now;
     CameraTick(static_cast<float>(elapsed));
+    PollBuild();
     PollAssetWork();
     for (auto it = meshCache_.begin(); it != meshCache_.end();)
         if (it->second.expired()) it = meshCache_.erase(it); else ++it;
@@ -605,12 +606,16 @@ void EditorShell::Paint()
     RECT statusText{statusBar_.left + 10, statusBar_.top, statusBar_.right - 370, statusBar_.bottom};
     DrawTextLabel(bufferContext, status_, statusText, TextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     RECT taskText{statusBar_.right - 360, statusBar_.top, statusBar_.right - 190, statusBar_.bottom};
-    DrawTextLabel(bufferContext, assetWork_.valid() ? L"Processing asset..." : L"No tasks running", taskText,
+    DrawTextLabel(bufferContext,buildWork_.valid()?L"Building game...":assetWork_.valid() ? L"Processing asset..." : L"No tasks running", taskText,
                   MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
     RECT progressTrack{statusBar_.right - 176, statusBar_.top + 8, statusBar_.right - 12, statusBar_.bottom - 8};
     FillRectangle(bufferContext, progressTrack, FieldColor);
     DrawBorder(bufferContext, progressTrack, BorderColor);
-    if (assetWork_.valid())
+    if(buildWork_.valid() && buildProgress_) {
+        std::lock_guard lock(buildProgress_->mutex);RECT progress=progressTrack;InflateRect(&progress,-2,-2);
+        progress.right=progress.left+static_cast<LONG>((progress.right-progress.left)*buildProgress_->percent/100);FillRectangle(bufferContext,progress,RGB(63,126,201));
+    }
+    else if (assetWork_.valid())
     {
         const LONG offset = static_cast<LONG>((GetTickCount64() / 15) % 120);
         RECT activity{progressTrack.left + 2 + offset, progressTrack.top + 2,
@@ -1298,11 +1303,13 @@ LRESULT EditorShell::HandleMessage(
     switch (message)
     {
     case WM_CLOSE:
+        if(buildWork_.valid())throw std::runtime_error("Wait for the game build to finish before closing the editor.");
         EndGizmoDrag(true);
         if (!editingPrefab_.empty() && !ClosePrefab()) return 0;
         if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
     case WM_COMMAND:
+        if(LOWORD(wParam)==BuildProjectCommand){ChooseBuildFolder();return 0;}
         if(LOWORD(wParam)==NewFolderCommand){NewAssetFolderDialog();return 0;}
         if(LOWORD(wParam)==UpFolderCommand){if(AssetFolder()!=assetsDirectory_)OpenAssetFolder(AssetFolder().parent_path());return 0;}
         if (LOWORD(wParam)==SavePrefabCommand) { SavePrefab(); return 0; }
@@ -1400,6 +1407,8 @@ LRESULT EditorShell::HandleMessage(
             AppendMenuW(menu,flags,NewSceneCommand,L"New Scene"); AppendMenuW(menu,flags,OpenSceneCommand,L"Open Scene...");
             const UINT saveFlags=flags|(!sceneOpen_?MF_GRAYED:0);
             AppendMenuW(menu,saveFlags,SaveSceneCommand,L"Save Scene\tCtrl+S"); AppendMenuW(menu,saveFlags,SaveSceneAsCommand,L"Save Scene As...\tCtrl+Shift+S");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+            AppendMenuW(menu,saveFlags|((Building()||!editingPrefab_.empty())?MF_GRAYED:0),BuildProjectCommand,L"Build Standalone Game...");
             if (!editingPrefab_.empty()) { AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,SavePrefabCommand,L"Save Prefab\tCtrl+S"); AppendMenuW(menu,MF_STRING,ClosePrefabCommand,L"Close Prefab / Return to Scene"); }
             POINT at{44,optionsBar_.bottom}; ClientToScreen(window_,&at);
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,at.x,at.y,0,window_,nullptr); DestroyMenu(menu);

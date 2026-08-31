@@ -21,6 +21,7 @@
 #include "input/InputMap.h"
 #include <optional>
 #include <chrono>
+#include <mutex>
 
 class Renderer;
 class InspectorPanel;
@@ -47,6 +48,11 @@ public:
     void OpenAssetFolder(const std::filesystem::path&);
     std::filesystem::path CreateAssetFolder(const std::wstring&);
     static constexpr int NewFolderCommand=3400,UpFolderCommand=3401;
+    static constexpr int BuildProjectCommand=3500;
+    bool BuildProject(const std::filesystem::path& outputParent);
+    bool Building() const {return buildWork_.valid();}
+    const std::filesystem::path& LastBuild() const {return lastBuild_;}
+    const std::string& BuildError() const {return buildError_;}
     bool HasOpenScene() const noexcept { return sceneOpen_; }
     static constexpr int SavePrefabCommand=3300, ClosePrefabCommand=3301;
     std::filesystem::path CreatePrefab(zengine::GameObjectId);
@@ -107,6 +113,13 @@ private:
     RECT AssetListRectangle() const;
     void RefreshAssets();
     void NewAssetFolderDialog();
+    void ChooseBuildFolder();
+    void PollBuild();
+    struct BuildProgress {std::mutex mutex;unsigned percent=0;std::string message;};
+    std::shared_ptr<BuildProgress> buildProgress_;
+    std::future<std::filesystem::path> buildWork_;
+    std::filesystem::path lastBuild_;
+    std::string buildError_;
     void ReceiveFiles(HDROP drop);
     void PollAssetWork();
     void BeginAssetDrag(POINT point);

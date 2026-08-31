@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(zEngine VERSION 0.1.0 LANGUAGES C CXX)
+# Keep standalone games self-contained: no MSVC redistributable installation.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT zEngine)
 include(CTest)
 add_subdirectory(scripting)
@@ -49,6 +51,20 @@ target_include_directories(zEngineProjects PUBLIC src)
 target_compile_definitions(zEngineProjects PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(zEngineProjects PRIVATE shell32 ole32)
 
+add_library(zEngineGameRuntime STATIC src/runtime/GameSession.cpp src/runtime/GamePackage.cpp)
+target_link_libraries(zEngineGameRuntime PUBLIC zEngineProjects zEnginePrefabs zEngineScriptTools zEngineInputTools zEngineAssets)
+target_compile_definitions(zEngineGameRuntime PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+add_library(zEngineRenderer STATIC src/Renderer.cpp)
+target_link_libraries(zEngineRenderer PUBLIC zEngineAssets zEngineCore zEngineGizmos d3d11 dxgi d3dcompiler windowscodecs ole32)
+target_compile_definitions(zEngineRenderer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+add_executable(zPlayer WIN32 src/runtime/PlayerMain.cpp)
+target_compile_definitions(zPlayer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(zPlayer PRIVATE zEngineGameRuntime zEngineRenderer)
+add_custom_command(TARGET zPlayer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:zPlayer>/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorCube.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/ColorCube.hlsl"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx/LICENSE" "$<TARGET_FILE_DIR:zPlayer>/ufbx-LICENSE.txt")
+
 add_executable(zEngine WIN32
     src/Main.cpp
     src/EditorShell.cpp
@@ -58,11 +74,11 @@ add_executable(zEngine WIN32
     src/EditorInput.cpp
     src/EditorChrome.cpp
     src/EditorFolders.cpp
+    src/EditorBuild.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
     src/ProjectDialog.cpp
-    src/Renderer.cpp
     src/Renderer.h
 )
 
@@ -93,7 +109,10 @@ target_link_libraries(zEngine PRIVATE
     zEngineProjects
     zEnginePrefabs
     zEngineInputTools
+    zEngineGameRuntime
+    zEngineRenderer
 )
+add_dependencies(zEngine zPlayer)
 
 if(MSVC)
     target_compile_options(zEngine PRIVATE /W4 /permissive- /EHsc)
@@ -143,11 +162,13 @@ if(BUILD_TESTING)
     add_executable(zEngineCoreTests tests/CoreTests.cpp)
     target_link_libraries(zEngineCoreTests PRIVATE zEngineCore)
     add_test(NAME GameObjectCore COMMAND zEngineCoreTests)
-    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/Renderer.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
+    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
+    target_link_libraries(zEngineAssetTests PRIVATE zEngineRenderer zEngineGameRuntime)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorInput.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorChrome.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorFolders.cpp)
+    target_sources(zEngineAssetTests PRIVATE src/EditorBuild.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineInputTools)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos zEnginePrefabs)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
@@ -166,6 +187,10 @@ if(BUILD_TESTING)
     add_test(NAME TransformGizmos COMMAND zEngineAssetTests --gizmos)
     add_test(NAME PrefabWorkflow COMMAND zEngineAssetTests --prefabs)
     add_test(NAME AssetFolders COMMAND zEngineAssetTests --folders)
+    add_test(NAME StandaloneGameBuild COMMAND zEngineAssetTests --build)
+    add_test(NAME StandaloneEditorBuild COMMAND zEngineAssetTests --editor-build)
+    set_tests_properties(StandaloneEditorBuild PROPERTIES TIMEOUT 60)
+    set_tests_properties(StandaloneGameBuild PROPERTIES TIMEOUT 120)
     set_tests_properties(AssetFolders PROPERTIES TIMEOUT 45)
     set_tests_properties(PrefabWorkflow PROPERTIES TIMEOUT 45)
     set_tests_properties(TransformGizmos PROPERTIES TIMEOUT 45)

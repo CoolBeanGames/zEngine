@@ -9,6 +9,9 @@
 #include "ScriptEditor.h"
 #include "SceneAssets.h"
 #include "AssetLibrary.h"
+#include "runtime/GamePackage.h"
+#include "runtime/GameSession.h"
+#include "input/InputAssets.h"
 #include <objbase.h>
 #include <shlobj.h>
 
@@ -586,6 +589,69 @@ void SceneEditorTests(bool capture)
 }
 
 void ProjectTests(bool capture);
+void EditorBuildTests() {
+    TestDirectory test;Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    const auto output=test.path/L"Builds";std::filesystem::create_directory(output);
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));(void)editor.Create(SW_HIDE,test.path/L"Project");editor.InitializeRenderer();
+        Require(editor.SaveScene(editor.AssetsDirectory()/L"Launch.zscene"),"Could not save build fixture");
+        Require(editor.BuildProject(output) && editor.Building(),"Editor did not start asynchronous game build");
+        bool rejected=false;try{editor.BuildProject(output);}catch(...){rejected=true;}Require(rejected,"Editor started overlapping builds");
+        const auto deadline=GetTickCount64()+30000;while(editor.Building() && GetTickCount64()<deadline){editor.Render();Sleep(2);}
+        Require(!editor.Building() && editor.BuildError().empty() && std::filesystem::is_regular_file(editor.LastBuild()),"Editor game build did not complete");
+        const auto packaged=zengine::projects::Open(editor.LastBuild().parent_path()/L"Data"/L"Game.zproject");
+        Require(packaged.config.lastScene=="Assets/Launch.zscene","Editor exported wrong startup scene");
+        Require(editor.Play(),"Play after build failed");rejected=false;try{editor.BuildProject(output);}catch(...){rejected=true;}Require(rejected,"Building during Play was allowed");editor.Stop();
+    }
+    CoUninitialize();std::cout<<"PASS: asynchronous editor build, startup scene selection, overlap and Play guards\n";
+}
+void BuildTests() {
+    TestDirectory test;Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    const auto output=test.path/L"Output with spaces";std::filesystem::create_directory(output);
+    auto project=zengine::projects::Create(test.path,L"Game \u03a9");const auto assets=zengine::projects::Assets(project);
+    zengine::input::Ensure(assets);zengine::input::Map map{{"move",zengine::input::Kind::Button,{"Space"}}};
+    const auto inputSource=zengine::input::Load(assets);zengine::input::Save(assets,map,&inputSource);
+    std::filesystem::create_directory(assets/L"Scripts");
+    const auto script=zengine::scripts::Create(assets/L"Scripts","Spinner");const auto original=zengine::scripts::Load(script);
+    zengine::scripts::Save(assets,script,"class Spinner : gameObject { export float speed=60; func start(){transform.position.x+=2;} func update(float dt){transform.rotation.y+=speed*dt; if(Input.is_action_just_pressed(\"move\")){transform.position.y+=3;}} }",&original);
+    std::vector<std::string> warnings;const auto model=FbxImporter::Import(CreateSource(test.path/L"source"),assets/L"Models",warnings);
+    zengine::scenes::Document scene;zengine::scenes::ObjectData object;object.id=1;object.name="Exported Actor";
+    zengine::scenes::BehaviorData mesh;const auto modelRef=std::filesystem::relative(model,assets).generic_u8string();mesh.asset.assign(modelRef.begin(),modelRef.end());object.behaviors.push_back(mesh);
+    zengine::scenes::BehaviorData behavior;behavior.kind=zengine::scenes::BehaviorData::Kind::Script;behavior.asset="Scripts/Spinner.zsh";behavior.variables["speed"]=120.0;object.behaviors.push_back(behavior);scene.objects.push_back(object);
+    const auto first=assets/L"First.zscene";zengine::scenes::Save(assets,first,zengine::scenes::Encode(scene));zengine::projects::TrackScene(project,first);
+    scene.objects[0].name="Second Actor";scene.objects[0].behaviors[1].variables["speed"]=30.0;
+    const auto second=assets/L"Second.zscene";zengine::scenes::Save(assets,second,zengine::scenes::Encode(scene));zengine::projects::TrackScene(project,second);zengine::projects::Save(project);
+    {zengine::game::Session session(project,"Assets/First.zscene");session.Start();zengine::input::Hardware hardware;hardware.keys[VK_SPACE]=true;session.Tick(1.0f/60,hardware);session.Tick(1.0f/60,hardware);
+        Require(session.Objects().At(0).GetTransform().Position().y==3,"Standalone runtime input edge failed");}
+    unsigned progress=0;const auto executable=zengine::game::Export(project,first,{},output,zengine::game::ExecutableDirectory(),[&](unsigned value,const std::string&){Require(value>=progress,"Build progress regressed");progress=value;});
+    Require(progress==100 && std::filesystem::exists(executable) && !std::filesystem::exists(executable.parent_path()/L"zEngine.exe"),"Export did not produce an editor-independent executable");
+    Require(std::filesystem::exists(executable.parent_path()/L"Data"/L"Assets"/std::filesystem::relative(model,assets)),"Packaged model missing");
+    Require(std::filesystem::exists(executable.parent_path()/L"Data"/L"Assets"/std::filesystem::relative(model.parent_path()/L"albedo"/L"2.image",assets)),"Packaged albedo missing");
+    const auto duplicate=zengine::game::Export(project,first,{},output,zengine::game::ExecutableDirectory());Require(duplicate!=executable && std::filesystem::exists(executable),"Build overwrote previous output");
+    bool rejected=false;try{zengine::game::Export(project,first,{},assets,zengine::game::ExecutableDirectory());}catch(...){rejected=true;}Require(rejected,"Build was allowed inside source Assets");
+    const auto goodCode=zengine::scripts::Load(script);zengine::scripts::Save(assets,script,"broken source",&goodCode);
+    rejected=false;try{zengine::game::Export(project,first,{},output,zengine::game::ExecutableDirectory());}catch(...){rejected=true;}Require(rejected && std::distance(std::filesystem::directory_iterator(output),std::filesystem::directory_iterator{})==2,"Failed build published partial output or damaged existing builds");
+    const auto brokenCode=zengine::scripts::Load(script);zengine::scripts::Save(assets,script,goodCode,&brokenCode);
+    const auto run=[&](const std::wstring& args,DWORD expected){
+        std::wstring command=L"\""+executable.wstring()+L"\" --frames 3 "+args;
+        STARTUPINFOW start{sizeof(start)};start.dwFlags=STARTF_USESHOWWINDOW;start.wShowWindow=SW_HIDE;PROCESS_INFORMATION process{};
+        Require(CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,test.path.c_str(),&start,&process)!=FALSE,"Could not launch packaged game");
+        CloseHandle(process.hThread);const auto wait=WaitForSingleObject(process.hProcess,30000);DWORD code=999;GetExitCodeProcess(process.hProcess,&code);
+        if(wait!=WAIT_OBJECT_0)TerminateProcess(process.hProcess,99);CloseHandle(process.hProcess);
+        Require(wait==WAIT_OBJECT_0 && code==expected,"Packaged game returned unexpected status");
+    };
+    // Move the source project away: the exported game must depend only on its own files.
+    std::filesystem::rename(project.file.parent_path(),test.path/L"Original project moved");
+    std::filesystem::rename(test.path/L"source",test.path/L"Original import moved");
+    const auto report=test.path/L"player-report.txt";run(L"--report \""+report.wstring()+L"\"",0);
+    std::ifstream in(report);std::string text{std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>()};
+    Require(text.find("meshes 1")!=text.npos && text.find("position 2 0 0 rotation 0 6 0")!=text.npos,"Packaged game did not render model and execute exported script values");
+    run(L"--scene Assets/Second.zscene --report \""+report.wstring()+L"\"",0);std::ifstream secondReport(report);text.assign(std::istreambuf_iterator<char>(secondReport),{});
+    Require(text.find("Second Actor")!=text.npos && text.find("rotation 0 1.5 0")!=text.npos,"Packaged scenes lost independent variables");
+    run(L"--scene Assets/Missing.zscene",1);
+    std::filesystem::rename(executable.parent_path()/L"Data"/L"Assets"/L"Scripts",executable.parent_path()/L"Data"/L"Assets"/L"MissingScripts");run(L"",1);
+    CoUninitialize();std::cout<<"PASS: standalone runtime input, all-scene packaging, albedo, exported variables, Unicode/spaces, relocated source, non-editor process, missing-data errors, non-overwriting builds\n";
+}
 void FolderTests(bool capture) {
     TestDirectory test;Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
     {
@@ -624,6 +690,8 @@ int main(int argc, char** argv)
     {
         if (argc > 1 && std::string(argv[1]) == "--gpu") GpuTests();
         else if(argc>1 && std::string(argv[1])=="--folders")FolderTests(argc>2);
+        else if(argc>1 && std::string(argv[1])=="--build")BuildTests();
+        else if(argc>1 && std::string(argv[1])=="--editor-build")EditorBuildTests();
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
