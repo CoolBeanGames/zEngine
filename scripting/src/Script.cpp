@@ -23,7 +23,7 @@ bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
 bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
-    return s == "signal" || words.contains(s);
+    return s == "signal" || s == "Input" || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
     if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
@@ -257,7 +257,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, MakeVector, SetComponent, Self, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, MakeVector, SetComponent, Self, Input, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -368,6 +368,7 @@ class BytecodeCompiler {
             return "null";
         }
         if (e.kind == Expr::Name) {
+            if (t.text == "Input") { Emit(Op::Input,t); return "InputService"; }
             if (t.text == "this") { Emit(Op::Self, t); return owner.name; }
             auto local = Local(t.text);
             if (local != std::numeric_limits<std::size_t>::max()) { Emit(Op::LoadLocal, t, local); return function.locals[local]; }
@@ -385,6 +386,7 @@ class BytecodeCompiler {
                 Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
+                Require(callee.token.text != "InputService" && callee.token.text != "InputAction",t,"Input objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
@@ -460,6 +462,7 @@ class BytecodeCompiler {
         Require(e.kind == Expr::Member, e.token, "Assignment target must be a variable or field");
         auto receiver = Expression(*e.children[0]);
         Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
+        Require(receiver != "InputAction",e.token,"Input state is read-only");
         return {FieldType(receiver, e.token), true, 0, e.token.text};
     }
     void Load(const Slot& slot, const Token& t) {
@@ -536,6 +539,15 @@ public:
     }
 };
 void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts) {
+    Class input; input.name="InputService";
+    for(const auto& name:{"is_action_pressed","is_action_just_pressed","is_action_just_released","get_axis","get_vector","action"}) {
+        Function f;f.params={"string"};f.result=std::string(name)=="action"?"InputAction":std::string(name)=="get_axis"?"float":std::string(name)=="get_vector"?"Vector3":"bool";
+        input.methods.emplace(name,std::move(f));
+    }
+    program.classes.emplace(input.name,std::move(input));
+    Class action;action.name="InputAction";action.signals={"just_pressed","just_released","is_pressed","was_just_pressed","was_just_released"};
+    action.fields={{{Token::Identifier,"pressed"},"bool"},{{Token::Identifier,"axis"},"float"},{{Token::Identifier,"value"},"Vector3"}};
+    program.classes.emplace(action.name,std::move(action));
     Class transform; transform.name = "Transform";
     transform.signals = {"was_moved", "was_rotated", "was_scaled"};
     for (const auto& name : {"position", "rotation", "scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
@@ -551,12 +563,13 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     }
     std::map<std::string, int> state;
     auto build = [&](auto&& self, const std::string& name, std::size_t depth) -> void {
-        if (name == "gameObject" || name == "Transform" || state[name] == 2) return;
+        if (name == "gameObject" || name == "Transform" || name == "InputService" || name == "InputAction" || state[name] == 2) return;
         const auto& ast = *byName.at(name); auto& c = program.classes.at(name);
         if (state[name] == 1) Fail(program.source, ast.name, "Inheritance cycle");
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
+            if(c.base=="InputService" || c.base=="InputAction")Fail(program.source,ast.name,"Cannot inherit native input types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -635,7 +648,7 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
                 for (const auto& [methodName, f] : current->methods) if (seen.insert(methodName).second && !f.code.empty()) active = true;
                 current = current->base.empty() ? nullptr : &p->classes.at(current->base);
             }
-            if (name != "gameObject" && name != "Transform" && active) ++p->stats.executableClasses;
+            if (name != "gameObject" && name != "Transform" && name != "InputService" && name != "InputAction" && active) ++p->stats.executableClasses;
         }
         return {std::shared_ptr<const Program>(new Program(std::move(p))), {}};
     } catch (const ScriptError& error) { return {nullptr, {error.Detail()}}; }
@@ -654,6 +667,9 @@ struct Runtime::Impl {
     std::vector<std::unique_ptr<Object>> objects;
     std::size_t remaining = 0, depth = 0;
     std::size_t connectionCount = 0;
+    ObjectRef inputService;
+    InputFrame inputFrame;
+    std::map<std::string,ObjectRef> inputActions;
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
     [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
@@ -704,6 +720,7 @@ struct Runtime::Impl {
         auto& o = Resolve(ref, t); std::size_t index = 0;
         auto field = program->FindField(o.type->name, name, &index);
         if (!field) Error(t, "Unknown field '" + name + "'");
+        if(o.type->name=="InputAction")Error(t,"Input state is read-only");
         value = Coerce(std::move(value), field->type, t);
         const bool changed = o.fields[index] != value;
         o.fields[index] = value;
@@ -742,6 +759,7 @@ struct Runtime::Impl {
         const auto callback = std::get<CallableRef>(args[0]);
         const auto* f = program->Method(Resolve(callback.owner, t).type->name, callback.name);
         if (!f || f->result != "void") Error(t, "Signal callback must be a void function");
+        if(owner.type->name=="InputAction" && !f->params.empty())Error(t,"Input signal callbacks take no arguments");
         if (program->Assignable("Transform", owner.type->name) &&
             (signal.name == "was_moved" || signal.name == "was_rotated" || signal.name == "was_scaled") && f->params != std::vector<std::string>{"Vector3"})
             Error(t, "Transform signal callback must take one Vector3");
@@ -837,6 +855,21 @@ struct Runtime::Impl {
     }
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
+        if(object.type->name=="InputService") {
+            if(args.size()!=1 || !std::holds_alternative<std::string>(args[0]))Error(t,"Input calls take one action name");
+            const auto& action=std::get<std::string>(args[0]);const auto found=inputFrame.find(action);
+            const InputState empty;const auto& state=found==inputFrame.end()?empty:found->second;
+            if(name=="action") {
+                if(found==inputFrame.end())Error(t,"Unknown input action '"+action+"'");
+                return inputActions.at(action);
+            }
+            if(name=="is_action_pressed")return state.pressed;
+            if(name=="is_action_just_pressed")return state.justPressed;
+            if(name=="is_action_just_released")return state.justReleased;
+            if(name=="get_axis")return state.x;
+            if(name=="get_vector")return Vector3{state.x,state.y,0};
+            Error(t,"Unknown Input method");
+        }
         const auto* function = program->Method(object.type->name, name);
         if (!function) Error(t, "Unknown method '" + name + "'");
         return Execute(ref, *function, args, t);
@@ -869,6 +902,7 @@ struct Runtime::Impl {
                 stack.push_back(Coerce(v, "Vector3", t)); break;
             }
             case Op::Self: stack.push_back(ref); break;
+            case Op::Input: if(!inputService.id)inputService=Create("InputService",t);stack.push_back(inputService);break;
             case Op::LoadLocal: stack.push_back(locals[ins.a]); break;
             case Op::StoreLocal: locals[ins.a] = Coerce(pop(), f.locals[ins.a], t); break;
                         case Op::LoadField: {
@@ -912,6 +946,22 @@ struct Runtime::Impl {
         }
         Error(f.token, "Function ended without returning");
     }
+    void SetInput(const InputFrame& frame,bool emitEvents) {
+        if(frame.size()>256)Error({},"Input action limit exceeded");
+        for(const auto& [name,s]:frame)if(name.empty() || name.size()>80 || !std::isfinite(s.x) || !std::isfinite(s.y) || std::abs(s.x)>1 || std::abs(s.y)>1)Error({},"Invalid input state");
+        inputFrame=frame;
+        for(const auto& [name,s]:frame) {
+            if(!inputActions.contains(name))inputActions.emplace(name,Create("InputAction",{}));
+            auto& fields=Resolve(inputActions.at(name)).fields;fields[0]=s.pressed;fields[1]=s.x;fields[2]=Vector3{s.x,s.y,0};
+        }
+        for(const auto& [name,ref]:inputActions)if(!frame.contains(name)){auto& f=Resolve(ref).fields;f[0]=false;f[1]=0.0;f[2]=Vector3{};}
+        if(emitEvents)for(const auto& [name,s]:frame) {
+            const auto ref=inputActions.at(name);
+            if(s.justPressed){Signal({ref,"just_pressed"},"emit",{},{});Signal({ref,"was_just_pressed"},"emit",{},{});}
+            if(s.justReleased){Signal({ref,"just_released"},"emit",{},{});Signal({ref,"was_just_released"},"emit",{},{});}
+            if(s.pressed)Signal({ref,"is_pressed"},"emit",{},{});
+        }
+    }
     void Behavior(ObjectRef ref) const {
         const auto& object = Resolve(ref);
         if (!program->Assignable("gameObject", object.type->name)) Error({}, "Lifecycle hooks require a gameObject-derived behavior");
@@ -945,6 +995,7 @@ Value Runtime::Get(ObjectRef object, std::string_view field) const { return impl
 void Runtime::Set(ObjectRef object, std::string_view field, Value value, bool notify) { impl_->Reset(); impl_->Set(object, std::string(field), std::move(value), {}, notify); }
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
+void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}
 void Runtime::Start(ObjectRef object) { impl_->Reset(); impl_->Start(object); }
 void Runtime::Update(ObjectRef object, double delta) {
     if (!std::isfinite(delta) || delta < 0) impl_->Error({}, "Delta must be finite and nonnegative");

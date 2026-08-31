@@ -1,4 +1,5 @@
 #include "EditorShell.h"
+#include "input/InputMapEditor.h"
 
 #include "Renderer.h"
 #include "FbxImporter.h"
@@ -269,7 +270,7 @@ void EditorShell::Render()
         if (!paused_)
         {
             tickAccumulator_+=elapsed;
-            while (tickAccumulator_>=1.0/60.0) { scriptHost_.Tick(objects_,1.0f/60.0f); tickAccumulator_-=1.0/60.0; }
+            while (tickAccumulator_>=1.0/60.0) { TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f); tickAccumulator_-=1.0/60.0; }
         }
         if (!paused_ || stepDraw_)
             scriptHost_.Draw(objects_,[&](zengine::GameObjectId id) {
@@ -315,6 +316,10 @@ bool EditorShell::Play()
     EndGizmoDrag(false);
     if (!sceneOpen_) { status_=L"Create or open a scene before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     if (Playing()) return true;
+    if(inputEditor_ && inputEditor_->Dirty()){status_=L"Save or reload Input Map edits before Play.";InvalidateRect(window_,nullptr,FALSE);return false;}
+    try { zengine::input::Ensure(assetsDirectory_);inputSystem_.Configure(zengine::input::Decode(zengine::input::Load(assetsDirectory_))); }
+    catch(const std::exception& e){status_=WideText(e.what());InvalidateRect(window_,nullptr,FALSE);return false;}
+    zengine::script::InputFrame input;for(const auto& [name,state]:inputSystem_.Current())input.emplace(name,zengine::script::InputState{});scriptHost_.SetInput(std::move(input));
     if (PendingModels()) { status_=L"Wait for this scene's models to finish loading before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     for (const auto& editor:scriptEditors_) if (editor->Dirty())
     { status_=L"Save your script edits (Ctrl+S) before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
@@ -357,7 +362,7 @@ void EditorShell::SetPaused(bool paused)
 void EditorShell::Step()
 {
     if (!Playing()) return;
-    SetPaused(true); scriptHost_.Tick(objects_,1.0f/60.0f); stepDraw_=true;
+    SetPaused(true); TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f); stepDraw_=true;
     inspectorPanel_->RefreshLiveValues(); ReportScriptErrors();
 }
 void EditorShell::ReportScriptErrors()
@@ -603,7 +608,7 @@ void EditorShell::Paint()
         if (index == selectedAsset_) FillRectangle(bufferContext, row, SelectionColor);
         row.left += 8;
         const bool script = zengine::scripts::IsScript(assets_[index]);
-        DrawTextLabel(bufferContext, script ? L"ZSH   " + assets_[index].filename().wstring() : zengine::prefabs::IsPrefab(assets_[index])?L"PREFAB   "+assets_[index].filename().wstring():zengine::scenes::IsScene(assets_[index]) ? L"SCENE   "+assets_[index].filename().wstring() : L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
+        DrawTextLabel(bufferContext, assets_[index].extension()==L".zinput" ? L"INPUT MAP   Input (project)" : script ? L"ZSH   " + assets_[index].filename().wstring() : zengine::prefabs::IsPrefab(assets_[index])?L"PREFAB   "+assets_[index].filename().wstring():zengine::scenes::IsScene(assets_[index]) ? L"SCENE   "+assets_[index].filename().wstring() : L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
                       DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
     RestoreDC(bufferContext, saved);
@@ -726,6 +731,8 @@ void EditorShell::RefreshAssets()
     assets_.clear();
     if (project_ && std::filesystem::exists(assetsDirectory_))
     {
+        zengine::input::Ensure(assetsDirectory_);
+        assets_.push_back(zengine::input::AssetPath(assetsDirectory_));
         for (const auto& entry : std::filesystem::directory_iterator(assetsDirectory_))
         {
             if (entry.is_directory() && std::filesystem::is_regular_file(entry.path() / "asset.ready") &&
@@ -741,7 +748,10 @@ void EditorShell::RefreshAssets()
             }
         }
     }
-    std::sort(assets_.begin(), assets_.end());
+    std::sort(assets_.begin(), assets_.end(),[](const auto& a,const auto& b){
+        if((a.extension()==L".zinput")!=(b.extension()==L".zinput"))return b.extension()==L".zinput";
+        return a<b;
+    });
     firstAsset_ = std::clamp(firstAsset_, 0, std::max(0, static_cast<int>(assets_.size()) - 1));
     selectedAsset_ = -1;
 }
@@ -856,6 +866,7 @@ void EditorShell::BeginAssetDrag(POINT point)
     if (!PtInRect(&list, point)) return;
     const int index = firstAsset_ + static_cast<int>(point.y - list.top) / 28;
     if (index >= static_cast<int>(assets_.size())) return;
+    if(assets_[index].extension()==L".zinput"){selectedAsset_=index;draggedAsset_=-1;InvalidateRect(window_,&mediaLibrary_,FALSE);return;}
     selectedAsset_ = draggedAsset_ = index;
     assetDragStart_ = point;
     assetDragMoved_ = false;
@@ -873,6 +884,7 @@ void EditorShell::FinishAssetDrag(POINT point)
     ReleaseCapture();
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
     if (!moved) return;
+    if(path.extension()==L".zinput")return;
     if (zengine::prefabs::IsPrefab(path))
     {
         const auto parent=ScriptDropTarget(point);
@@ -1041,6 +1053,12 @@ void EditorShell::ChooseScene()
 }
 bool EditorShell::TranslateShortcut(const MSG& message)
 {
+    if(inputEditor_ && (message.hwnd==inputEditor_->Window() || IsChild(inputEditor_->Window(),message.hwnd))) {
+        if(message.message==WM_KEYDOWN && (GetKeyState(VK_CONTROL)&0x8000) && message.wParam=='S') {
+            SendMessageW(inputEditor_->Window(),WM_COMMAND,InputMapEditor::Save,0);return true;
+        }
+        MSG copy=message;return IsDialogMessageW(inputEditor_->Window(),&copy)!=FALSE;
+    }
     if (message.message!=WM_KEYDOWN || message.wParam!='S' || !(GetKeyState(VK_CONTROL)&0x8000) ||
         (message.hwnd!=window_ && !IsChild(window_,message.hwnd))) return false;
     SendMessageW(window_,WM_COMMAND,(GetKeyState(VK_SHIFT)&0x8000)?SaveSceneAsCommand:SaveSceneCommand,0); return true;
@@ -1191,6 +1209,7 @@ void EditorShell::ChooseModel()
 }
 bool EditorShell::ConfirmScriptClose()
 {
+    if(inputEditor_ && !inputEditor_->ConfirmClose())return false;
     for (const auto& editor : scriptEditors_) if (!editor->ConfirmClose()) return false;
     return true;
 }
@@ -1323,7 +1342,8 @@ LRESULT EditorShell::HandleMessage(
             if (index >= 0 && index < static_cast<LONG>(assets_.size()))
             {
                 const auto asset=assets_[index];
-                if (zengine::scripts::IsScript(asset)) OpenScript(asset);
+                if (asset.extension()==L".zinput") OpenInputMap();
+                else if (zengine::scripts::IsScript(asset)) OpenScript(asset);
                 else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
                 else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
             }

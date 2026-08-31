@@ -52,16 +52,16 @@ namespace
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
-              start(program->HasCode(name,"start")), update(program->HasCode(name,"update")), draw(program->HasCode(name,"draw"))
-        { for (const auto& [field,value]:overrides) runtime.Set(object,field,value); }
+              draw(program->HasCode(name,"draw")), input(inputFrame)
+        { runtime.SetInput(input,false); for (const auto& [field,value]:overrides) runtime.Set(object,field,value); }
         bool HasStart() const noexcept override { return true; }
         // Synchronize native transform signals even for a listener with no update body.
         bool HasUpdate() const noexcept override { return true; }
         bool HasDraw() const noexcept override { return draw; }
         void Start(GameObject& owner) override { Invoke(owner,[&] { runtime.Start(object); }); }
-        void Update(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.Update(object,delta); }); }
+        void Update(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.SetInput(input); runtime.Update(object,delta); }); }
         void Draw(GameObject& owner) override { Invoke(owner,[&] { runtime.Draw(object); }); }
         std::shared_ptr<const Program> program;
         Runtime runtime;
@@ -90,7 +90,8 @@ namespace
             native=next; // Commit all three only after validation/callback success.
             previous=next; synchronized=true;
         }
-        bool start, update, draw;
+        bool draw;
+        const InputFrame& input;
         Transform previous;
         bool synchronized=false;
     };
@@ -185,7 +186,7 @@ bool ScriptHost::Play(ObjectStore& objects)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides)); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,input_)); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();

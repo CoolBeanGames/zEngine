@@ -121,6 +121,35 @@ class NewBehavior : gameObject
 
 `zEngineScripting` is the standalone compiler/VM. `zEngineScriptHost` is a separate platform-independent adapter linking that VM to the core, with no filesystem, Win32, or renderer dependencies. `BehaviorLifecycle` in the core handles scheduling. The editor supplies saved source, session controls, and render-submission eligibility. Each attachment owns a bounded VM context; compiled definitions can be shared, but mutable fields are independent. All three transform vectors synchronize before/after each callback, so scripts on the same GameObject see earlier scripts' changes in priority order. Cross-object scene lookup/binding, hot reload, and behavior removal remain future work. See `scripting/README.md` for language syntax and runtime limits.
 
+## Project Input Map
+
+Every project has one protected `Assets/Input.zinput`, including projects created before this feature. It is listed as **INPUT MAP** in the library root. Double-click it to open its resizable editor; it cannot be dragged, renamed, duplicated, or deleted through the editor. If removed externally, opening/refreshing the project restores an empty map. Extra `.zinput` files are not recognized as project maps.
+
+Use **+ Action**, choose a name/type and bindings, then **Apply Action** or **Save / Ctrl+S**. Selection changes also apply valid fields; invalid names/settings keep the current action selected and report the error. **Remove Action** removes only that action, never the map. Saves are explicit, atomic, and reject external conflicts. Unsaved edits prompt on close/project switch and block Play. Saved changes take effect on the next Play.
+
+- **Button:** one keyboard key, mouse button, or XInput-compatible controller button.
+- **Button Axis 1D:** negative/positive X buttons. **Button Axis 2D:** negative/positive X and negative/positive Y buttons. Opposing buttons cancel; diagonals are normalized to length 1.
+- **Analog Axis 1D:** left/right stick X or Y, or a trigger. **Analog Axis 2D:** left or right stick. Choose controller 1-4 and a deadzone from 0 to less than 1. Sticks use a radial deadzone and rescale the remaining range; triggers range from 0 to 1. Positive Y is up.
+
+Action names are case-sensitive strings (up to 80 printable ASCII characters). The initial map is empty. Create `jump` as a Button bound to Space and `move` as a Button Axis 2D bound to A/D/S/W to use `scripting/examples/InputMover.zsh`.
+
+```cpp
+Input.is_action_pressed("jump");
+Input.is_action_just_pressed("jump");
+Input.is_action_just_released("jump");
+Input.get_axis("horizontal");       // float: -1 to 1
+Input.get_vector("move");           // Vector3(x, y, 0)
+Input.action("jump").just_pressed.connect(jump);
+Input.action("jump").just_released.connect(released);
+Input.action("jump").is_pressed.connect(held);
+```
+
+Input signal callbacks are void functions with no arguments. `just_pressed`/`just_released` fire once on the corresponding fixed tick; `is_pressed` fires every held tick, including the press tick. `was_just_pressed` and `was_just_released` are aliases in meaning. The action also exposes read-only `pressed`, `axis`, and `value` fields. Polling an unknown action returns neutral input; connecting via `Input.action` diagnoses an unknown name. All state is sampled before script Update, with one shared snapshot for polling/signals across behaviors. Pause freezes ticks; Step samples one tick; Stop clears runtime connections/state.
+
+Gameplay input is active only while the main editor or viewport has focus, not while typing in Inspector/script/tool windows. Losing focus or disconnecting a controller releases held actions on the next tick. Click the viewport to resume. Polling is fixed-tick based, so taps entirely between samples may be missed. Raw HID/DirectInput controllers, rebinding during Play, multiple alternative bindings per button action, and mouse-motion/wheel axes are deferred.
+
+`zEngineInput` is the platform-independent data/codec/evaluation module; `zEngineInputTools` contains project asset I/O, Windows polling, and its editor. The compiler accepts host-provided input snapshots without depending on Win32 or the engine input module. Limits: 256 actions, four controllers, 256 KiB map files. XInput is loaded from Windows only when needed; no SDK downloads or UI framework dependencies are added.
+
 ## Mesh Renderer behavior
 
 1. Select a GameObject and click **+ Add Behavior → Mesh Renderer**. The component initially has no model, so an empty object stays invisible until assigned one. Only one Mesh Renderer can be added through the Inspector. **Add Behavior → Script...** opens the existing script attachment picker; the **+ Add Script** shortcut is also retained.

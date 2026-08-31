@@ -23,6 +23,7 @@ namespace zengine
         void Tick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.Tick(objects, delta); }
         void Draw(ObjectStore& objects, const std::function<bool(GameObjectId)>& visible) { if (playing_) lifecycle_.Draw(objects, visible); }
         bool Playing() const noexcept { return playing_; }
+        void SetInput(script::InputFrame frame) { input_=std::move(frame); }
     private:
         struct Record
         {
@@ -36,5 +37,6 @@ namespace zengine
         std::map<GameObjectId, Transform> transforms_;
         BehaviorLifecycle lifecycle_;
         bool playing_ = false;
+        script::InputFrame input_;
     };
 }

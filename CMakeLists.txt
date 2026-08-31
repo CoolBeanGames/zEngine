@@ -3,6 +3,12 @@ cmake_minimum_required(VERSION 3.24)
 project(zEngine VERSION 0.1.0 LANGUAGES C CXX)
 include(CTest)
 add_subdirectory(scripting)
+add_library(zEngineInput STATIC src/input/InputMap.cpp)
+target_compile_features(zEngineInput PUBLIC cxx_std_20)
+target_include_directories(zEngineInput PUBLIC src)
+add_library(zEngineInputTools STATIC src/input/InputAssets.cpp src/input/InputMapEditor.cpp)
+target_link_libraries(zEngineInputTools PUBLIC zEngineInput PRIVATE comctl32)
+target_compile_definitions(zEngineInputTools PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 add_library(zEngineCore STATIC src/core/GameObject.cpp src/core/BehaviorLifecycle.cpp)
 add_library(zEngineGizmos STATIC src/TransformGizmo.cpp)
@@ -48,6 +54,7 @@ add_executable(zEngine WIN32
     src/EditorProjects.cpp
     src/EditorGizmos.cpp
     src/EditorPrefabs.cpp
+    src/EditorInput.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
@@ -81,6 +88,7 @@ target_link_libraries(zEngine PRIVATE
     zEngineSceneAssets
     zEngineProjects
     zEnginePrefabs
+    zEngineInputTools
 )
 
 if(MSVC)
@@ -98,6 +106,11 @@ add_custom_command(TARGET zEngine POST_BUILD
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(zEngineInputTests tests/InputTests.cpp)
+    target_link_libraries(zEngineInputTests PRIVATE zEngineInputTools zEngineScriptHost)
+    target_compile_definitions(zEngineInputTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    add_test(NAME InputMap COMMAND zEngineInputTests)
+    set_tests_properties(InputMap PROPERTIES TIMEOUT 30)
     add_executable(zEngineSceneTests tests/SceneTests.cpp)
     target_link_libraries(zEngineSceneTests PRIVATE zEngineSceneAssets)
     target_compile_definitions(zEngineSceneTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -121,6 +134,8 @@ if(BUILD_TESTING)
     add_test(NAME GameObjectCore COMMAND zEngineCoreTests)
     add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/Renderer.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
+    target_sources(zEngineAssetTests PRIVATE src/EditorInput.cpp)
+    target_link_libraries(zEngineAssetTests PRIVATE zEngineInputTools)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos zEnginePrefabs)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
     target_compile_definitions(zEngineAssetTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN

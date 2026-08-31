@@ -107,6 +107,7 @@ void ProjectTests(bool capture)
         Check(!editor.CurrentProject() && !editor.HasOpenScene() && !editor.Play(),"Editor needs a project and scene before Play");
         Reject([&] { editor.CreateScriptAsset(); }); Reject([&] { editor.NewScene(); });
         Check(editor.CreateProject(L"First Game",test.path),"Cannot create editor project"); first=editor.CurrentProject()->file;
+        Check(std::filesystem::is_regular_file(editor.AssetsDirectory()/L"Input.zinput"),"Project Input Map missing");
         Check(!editor.HasOpenScene() && editor.NewScene(),"New project/scene state wrong"); firstScene=editor.ScenePath();
         auto& object=editor.CreateEmptyGameObject(); object.SetName("Persistent object"); object.GetTransform().SetPosition({3,4,5});
         script=editor.CreateScriptAsset(); Check(editor.AttachScript(object.Id(),script),"Cannot attach owned script");

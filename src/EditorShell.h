@@ -18,12 +18,14 @@
 #include "Scene.h"
 #include "Project.h"
 #include "Prefab.h"
+#include "input/InputMap.h"
 #include <optional>
 #include <chrono>
 
 class Renderer;
 class InspectorPanel;
 class ScriptEditor;
+class InputMapEditor;
 
 class EditorShell final
 {
@@ -158,6 +160,10 @@ private:
     void ChooseProject();
     void PromptForScene();
     void RememberProjectScene();
+    void OpenInputMap();
+    void TickInput();
+    std::unique_ptr<InputMapEditor> inputEditor_;
+    zengine::input::System inputSystem_;
     std::optional<zengine::projects::Project> project_;
     std::filesystem::path recentSessionFile_;
     bool sceneOpen_ = false;

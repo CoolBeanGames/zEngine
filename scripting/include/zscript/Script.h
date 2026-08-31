@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -96,6 +97,8 @@ struct RuntimeLimits {
     std::size_t stringBytes = 1024 * 1024;
     std::size_t signalConnections = 4096;
 };
+struct InputState { double x=0,y=0; bool pressed=false,justPressed=false,justReleased=false; };
+using InputFrame = std::map<std::string,InputState>;
 class Runtime {
 public:
     explicit Runtime(std::shared_ptr<const Program> program, RuntimeLimits limits = {});
@@ -108,6 +111,8 @@ public:
     void Set(ObjectRef object, std::string_view field, Value value, bool notify = true);
     void Connect(SignalRef signal, CallableRef callback);
     void Emit(SignalRef signal, const std::vector<Value>& arguments = {});
+    // Host snapshot for one fixed tick, before Update. Events share one VM budget.
+    void SetInput(const InputFrame& frame, bool emitEvents = true);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);

@@ -3,6 +3,7 @@
 #include "InspectorPanel.h"
 #include "ScriptEditor.h"
 #include "SceneAssets.h"
+#include "input/InputMapEditor.h"
 #include <commdlg.h>
 #include <array>
 #include <stdexcept>
@@ -57,8 +58,10 @@ void EditorShell::ActivateProject(zengine::projects::Project project)
 {
     EndGizmoDrag(true);
     const auto assets=zengine::projects::Assets(project);
+    zengine::input::Ensure(assets); // Validate/ensure the one project-owned root asset before switching state.
     inspectorPanel_->Bind(nullptr);
     scriptEditors_.clear();
+    inputEditor_.reset(); inputSystem_.Configure({});
     ++sceneGeneration_;
     assetJobs_.clear(); activeAssetJob_.reset();
     meshBindings_.clear(); meshCache_.clear(); meshRevisions_.clear();
