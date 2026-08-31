@@ -9,6 +9,7 @@
 #include <string_view>
 #include <variant>
 #include <vector>
+#include <functional>
 
 namespace zengine::script {
 
@@ -120,6 +121,8 @@ public:
     void Emit(SignalRef signal, const std::vector<Value>& arguments = {});
     // Host snapshot for one fixed tick, before Update. Events share one VM budget.
     void SetInput(const InputFrame& frame, bool emitEvents = true);
+    // Host lookup returns same-VM scene proxies. Missing names return a null reference.
+    void SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);

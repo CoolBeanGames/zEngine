@@ -70,7 +70,7 @@ void EditorShell::ActivateProject(zengine::projects::Project project)
     scriptHost_=zengine::ScriptHost{}; objects_=zengine::ObjectStore{};
     project_=std::move(project); assetsDirectory_=assets;assetFolder_.clear();
     sceneOpen_=false; sceneDirty_=false; scenePath_.clear(); sceneSource_.clear();
-    sceneBaseline_.clear(); playScene_.reset(); selectedObject_=0; firstObject_=0; firstAsset_=0;
+    sceneBaseline_.clear(); playScene_.reset(); selectedObject_=0; firstObject_=0; firstAsset_=0; collapsedObjects_.clear();
     SetWindowTextW(viewportWindow_,L"Scene Viewport");
     status_=L"Opened project: "+Wide(project_->config.name);
     RefreshAssets(); RememberProjectScene(); UpdateSceneTitle(); InvalidateRect(window_,nullptr,FALSE);

@@ -53,6 +53,9 @@ public:
     bool Building() const {return buildWork_.valid();}
     const std::filesystem::path& LastBuild() const {return lastBuild_;}
     const std::string& BuildError() const {return buildError_;}
+    void SetObjectParent(zengine::GameObjectId child,zengine::GameObjectId parent);
+    void RevertPrefabTransform(zengine::GameObjectId);
+    static constexpr int UnparentCommand=3600,RevertPrefabTransformCommand=3601;
     bool HasOpenScene() const noexcept { return sceneOpen_; }
     static constexpr int SavePrefabCommand=3300, ClosePrefabCommand=3301;
     std::filesystem::path CreatePrefab(zengine::GameObjectId);
@@ -152,6 +155,9 @@ private:
     bool CanEdit(zengine::GameObjectId,bool transformOnly=false) const;
     void RecordTransformOverride(zengine::GameObjectId);
     int ObjectDepth(zengine::GameObjectId) const;
+    std::vector<zengine::GameObjectId> ObjectRows() const;
+    bool HasChildren(zengine::GameObjectId) const;
+    std::set<zengine::GameObjectId> collapsedObjects_;
     std::map<zengine::GameObjectId,zengine::scenes::ObjectData> prefabLinks_;
     std::map<zengine::GameObjectId,std::string> prefabSources_;
     std::set<zengine::GameObjectId> prefabGenerated_;

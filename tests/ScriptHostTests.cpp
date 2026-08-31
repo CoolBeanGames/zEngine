@@ -94,7 +94,39 @@ int main()
         Check(Value(signalHost,listener,"moves")=="1" && Value(signalHost,listener,"rotates")=="1" && Value(signalHost,listener,"scales")=="1","Native signals without update body or duplicate float notification");
         signalHost.Stop(signals); Check(signalHost.Play(signals),"Signal restart");
         Check(Value(signalHost,listener,"custom")=="7" && Value(signalHost,listener,"moves")=="0","Connections leaked across Play"); signalHost.Stop(signals);
-        std::cout<<"PASS: Play/Stop, native movement, exported values, instances, priorities, Draw gating, failure isolation, metadata, signals\n";
+        ObjectStore hierarchy;ScriptHost hierarchyHost;
+        auto& root=hierarchy.Create("Root");auto& child=hierarchy.Create("Child");auto& target=hierarchy.Create("Target");
+        child.SetParent(root.Id());root.GetTransform().SetPosition({5,0,0});
+        auto& parenting=child.AddBehavior<ScriptBehavior>("Parenting.zsh");
+        Check(hierarchyHost.Prepare(parenting,R"(class Parenting : gameObject {
+            gameObject saved; export bool missing=false;
+            func start(){ saved=parent; parent.transform.position.x+=2; parent=find("Target"); missing=find("Missing")==null; }
+            func update(float dt){ parent=null; saved.transform.rotation.y+=10; transform.position.x+=1; }
+        })","Parenting"),"Parenting script compile");
+        Check(hierarchyHost.Play(hierarchy),"Parenting Play failed");
+        Check(!parenting.Faulted() && child.Parent()==target.Id() && root.GetTransform().Position().x==7 && Value(hierarchyHost,parenting,"missing")=="true","Parent lookup, transform proxy, or reparent failed");
+        hierarchyHost.Tick(hierarchy,0.1f);
+        Check(child.Parent()==0 && root.GetTransform().Rotation().y==10 && child.GetTransform().Position().x==1,"Unparent or persistent object reference failed");
+        hierarchyHost.Stop(hierarchy);
+        Check(child.Parent()==root.Id() && root.GetTransform().Position().x==5 && root.GetTransform().Rotation().y==0 && child.GetTransform().Position().x==0,"Stop failed to restore complete hierarchy");
+        for(const auto& body:{"parent=find(\"Child\");","find(\"Root\").parent=find(\"Child\");","parent=gameObject();"}){
+            Check(hierarchyHost.Prepare(parenting,std::string("class Parenting : gameObject {func update(float dt){transform.position.x=99;")+body+"}}","Parenting"),"Invalid parenting fixture compile");
+            Check(hierarchyHost.Play(hierarchy),"Invalid parenting fixture Play");hierarchyHost.Tick(hierarchy,0.1f);
+            Check(parenting.Faulted() && child.Parent()==root.Id() && root.Parent()==0 && child.GetTransform().Position().x==0,"Invalid parenting must fault without partial native edits");hierarchyHost.Stop(hierarchy);
+        }
+        auto& duplicate=hierarchy.Create("Target");
+        Check(hierarchyHost.Prepare(parenting,"class Parenting : gameObject {func update(float dt){parent=find(\"Target\");}}","Parenting"),"Ambiguous lookup fixture");
+        Check(hierarchyHost.Play(hierarchy),"Ambiguous lookup Play");hierarchyHost.Tick(hierarchy,0.1f);
+        Check(parenting.Faulted() && hierarchyHost.Error(parenting).find("Ambiguous")!=std::string::npos,"Duplicate names silently picked a parent");hierarchyHost.Stop(hierarchy);
+        duplicate.SetName("Unique");
+        auto& observer=root.AddBehavior<ScriptBehavior>("Observer.zsh");parenting.SetPriority(1);observer.SetPriority(0);
+        Check(hierarchyHost.Prepare(parenting,"class Parenting : gameObject {func update(float dt){parent=find(\"Target\");parent.transform.position.x+=4;}}","Parenting"),"Ordered parenting fixture");
+        Check(hierarchyHost.Prepare(observer,"class Observer : gameObject {func update(float dt){find(\"Child\").parent.transform.position.x*=2;}}","Observer"),"Cross-VM hierarchy observer fixture");
+        Check(hierarchyHost.Play(hierarchy),"Cross-VM parenting Play");hierarchyHost.Tick(hierarchy,0.1f);
+        Check(!parenting.Faulted() && !observer.Faulted() && target.GetTransform().Position().x==8,"Later behavior did not observe earlier reparent/transform changes");
+        hierarchyHost.Tick(hierarchy,0.1f);Check(target.GetTransform().Position().x==24,"Scene proxy synchronization clobbered another behavior's edits");
+        hierarchyHost.Stop(hierarchy);Check(child.Parent()==root.Id() && target.GetTransform().Position().x==0,"Cross-VM Play state was not restored");
+        std::cout<<"PASS: Play/Stop, native movement, exported values, instances, priorities, Draw gating, failure isolation, metadata, signals, parenting and object lookup\n";
         return 0;
     }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }

@@ -53,10 +53,17 @@ namespace
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
-              draw(program->HasCode(name,"draw")), input(inputFrame)
-        { runtime.SetInput(input,false); for (const auto& [field,value]:overrides) runtime.Set(object,field,value); }
+              draw(program->HasCode(name,"draw")), input(inputFrame),scene(objects)
+        {
+            runtime.SetInput(input,false);for(const auto& [field,value]:overrides)runtime.Set(object,field,value);
+            proxies.emplace(owner,object);
+            runtime.SetObjectLookup([this](std::string_view name){
+                GameObjectId id=0;for(std::size_t i=0;i<scene.Size();++i)if(scene.At(i).Name()==name){if(id)throw std::runtime_error("Ambiguous object name; give scene objects unique names for find().");id=scene.At(i).Id();}
+                return Proxy(id);
+            });
+        }
         bool HasStart() const noexcept override { return true; }
         // Synchronize native transform signals even for a listener with no update body.
         bool HasUpdate() const noexcept override { return true; }
@@ -68,33 +75,53 @@ namespace
         Runtime runtime;
         ObjectRef object;
     private:
+        ObjectRef Proxy(GameObjectId id) {
+            if(!id)return {};
+            if(auto it=proxies.find(id);it!=proxies.end())return it->second;
+            if(!scene.Find(id))throw std::runtime_error("Scene object no longer exists.");
+            const auto ref=runtime.Create("gameObject");proxies.emplace(id,ref);Synchronize(id,ref);return ref;
+        }
+        GameObjectId NativeId(ObjectRef ref) const {
+            if(!ref.id)return 0;
+            for(const auto& [id,proxy]:proxies)if(proxy==ref)return id;
+            throw std::runtime_error("A parent must be a scene object: use parent or find(name), not gameObject().");
+        }
+        void Synchronize(GameObjectId id,ObjectRef proxy) {
+            const auto* native=scene.Find(id);if(!native)throw std::runtime_error("Scene object no longer exists.");
+            runtime.Set(proxy,"parent",Proxy(native->Parent()),false);
+            const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));const auto& transform=native->GetTransform();
+            runtime.Set(ref,"position",ToScript(transform.Position()),false);runtime.Set(ref,"rotation",ToScript(transform.Rotation()),false);runtime.Set(ref,"scale",ToScript(transform.Scale()),false);
+        }
         template<class F> void Invoke(GameObject& owner, F callback)
         {
-            // Resolve on each call: scripts may replace their transform reference.
-            auto ref=std::get<ObjectRef>(runtime.Get(object,"transform"));
-            auto& native=owner.GetTransform();
-            const auto position = ToScript(native.Position()), rotation = ToScript(native.Rotation()), scale = ToScript(native.Scale());
-            runtime.Set(ref,"position",position,false);
-            runtime.Set(ref,"rotation",rotation,false);
-            runtime.Set(ref,"scale",scale,false);
-            if (synchronized) {
-                if (position != ToScript(previous.Position())) runtime.Emit({ref,"was_moved"},{position});
-                if (rotation != ToScript(previous.Rotation())) runtime.Emit({ref,"was_rotated"},{rotation});
-                if (scale != ToScript(previous.Scale())) runtime.Emit({ref,"was_scaled"},{scale});
+            (void)owner;
+            // Break old proxy links before synchronizing a potentially reparented native graph.
+            for(const auto& [id,proxy]:proxies)runtime.Set(proxy,"parent",ObjectRef{},false);
+            for(const auto& [id,proxy]:proxies)Synchronize(id,proxy);
+            for(const auto& [id,previous]:previousTransforms) {
+                const auto ref=std::get<ObjectRef>(runtime.Get(proxies.at(id),"transform"));const auto& native=scene.Find(id)->GetTransform();
+                const auto position=ToScript(native.Position()),rotation=ToScript(native.Rotation()),scale=ToScript(native.Scale());
+                if(position!=ToScript(previous.Position()))runtime.Emit({ref,"was_moved"},{position});
+                if(rotation!=ToScript(previous.Rotation()))runtime.Emit({ref,"was_rotated"},{rotation});
+                if(scale!=ToScript(previous.Scale()))runtime.Emit({ref,"was_scaled"},{scale});
             }
             callback();
-            ref=std::get<ObjectRef>(runtime.Get(object,"transform"));
-            Transform next;
-            next.SetPosition(ToNative(std::get<Vector3>(runtime.Get(ref,"position"))));
-            next.SetRotation(ToNative(std::get<Vector3>(runtime.Get(ref,"rotation"))));
-            next.SetScale(ToNative(std::get<Vector3>(runtime.Get(ref,"scale"))));
-            native=next; // Commit all three only after validation/callback success.
-            previous=next; synchronized=true;
+            std::map<GameObjectId,GameObjectId> parents;std::map<GameObjectId,Transform> transforms;
+            for(const auto& [id,proxy]:proxies) {
+                const auto parent=NativeId(std::get<ObjectRef>(runtime.Get(proxy,"parent")));
+                if(parent!=scene.Find(id)->Parent())parents[id]=parent;
+                const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));Transform next;
+                next.SetPosition(ToNative(std::get<Vector3>(runtime.Get(ref,"position"))));next.SetRotation(ToNative(std::get<Vector3>(runtime.Get(ref,"rotation"))));next.SetScale(ToNative(std::get<Vector3>(runtime.Get(ref,"scale"))));transforms[id]=next;
+            }
+            scene.SetParents(parents); // Validate complete graph before committing any transform.
+            for(const auto& [id,transform]:transforms)scene.Find(id)->GetTransform()=transform;
+            previousTransforms=std::move(transforms);
         }
         bool draw;
         const InputFrame& input;
-        Transform previous;
-        bool synchronized=false;
+        ObjectStore& scene;
+        std::map<GameObjectId,ObjectRef> proxies;
+        std::map<GameObjectId,Transform> previousTransforms;
     };
 }
 bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::string className)
@@ -187,11 +214,13 @@ bool ScriptHost::Play(ObjectStore& objects)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,input_)); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,input_,objects,script->Owner().Id())); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();
+    parents_.clear();
     for (std::size_t i=0;i<objects.Size();++i) transforms_.emplace(objects.At(i).Id(),objects.At(i).GetTransform());
+    for (std::size_t i=0;i<objects.Size();++i) parents_.emplace(objects.At(i).Id(),objects.At(i).Parent());
     playing_=true;
     for (auto& [behavior,instance]:ready) behavior->BindInstance(std::move(instance));
     return true;
@@ -206,6 +235,6 @@ void ScriptHost::Stop(ObjectStore& objects)
             if (auto* script=dynamic_cast<ScriptBehavior*>(&object.BehaviorAt(j))) script->BindInstance(nullptr);
         if (auto it=transforms_.find(object.Id()); it!=transforms_.end()) object.GetTransform()=it->second;
     }
-    transforms_.clear(); playing_=false;
+    objects.SetParents(parents_);parents_.clear();transforms_.clear(); playing_=false;
 }
 }

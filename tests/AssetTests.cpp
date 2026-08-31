@@ -613,16 +613,17 @@ void BuildTests() {
     const auto inputSource=zengine::input::Load(assets);zengine::input::Save(assets,map,&inputSource);
     std::filesystem::create_directory(assets/L"Scripts");
     const auto script=zengine::scripts::Create(assets/L"Scripts","Spinner");const auto original=zengine::scripts::Load(script);
-    zengine::scripts::Save(assets,script,"class Spinner : gameObject { export float speed=60; func start(){transform.position.x+=2;} func update(float dt){transform.rotation.y+=speed*dt; if(Input.is_action_just_pressed(\"move\")){transform.position.y+=3;}} }",&original);
+    zengine::scripts::Save(assets,script,"class Spinner : gameObject { export float speed=60; func start(){parent=find(\"Root\");transform.position.x+=2;} func update(float dt){transform.rotation.y+=speed*dt; if(Input.is_action_just_pressed(\"move\")){transform.position.y+=3;}} }",&original);
     std::vector<std::string> warnings;const auto model=FbxImporter::Import(CreateSource(test.path/L"source"),assets/L"Models",warnings);
     zengine::scenes::Document scene;zengine::scenes::ObjectData object;object.id=1;object.name="Exported Actor";
     zengine::scenes::BehaviorData mesh;const auto modelRef=std::filesystem::relative(model,assets).generic_u8string();mesh.asset.assign(modelRef.begin(),modelRef.end());object.behaviors.push_back(mesh);
     zengine::scenes::BehaviorData behavior;behavior.kind=zengine::scenes::BehaviorData::Kind::Script;behavior.asset="Scripts/Spinner.zsh";behavior.variables["speed"]=120.0;object.behaviors.push_back(behavior);scene.objects.push_back(object);
+    zengine::scenes::ObjectData parent;parent.id=2;parent.name="Root";parent.transform.SetPosition({1,0,0});scene.objects.push_back(parent);
     const auto first=assets/L"First.zscene";zengine::scenes::Save(assets,first,zengine::scenes::Encode(scene));zengine::projects::TrackScene(project,first);
     scene.objects[0].name="Second Actor";scene.objects[0].behaviors[1].variables["speed"]=30.0;
     const auto second=assets/L"Second.zscene";zengine::scenes::Save(assets,second,zengine::scenes::Encode(scene));zengine::projects::TrackScene(project,second);zengine::projects::Save(project);
     {zengine::game::Session session(project,"Assets/First.zscene");session.Start();zengine::input::Hardware hardware;hardware.keys[VK_SPACE]=true;session.Tick(1.0f/60,hardware);session.Tick(1.0f/60,hardware);
-        Require(session.Objects().At(0).GetTransform().Position().y==3,"Standalone runtime input edge failed");}
+        Require(session.Objects().At(0).GetTransform().Position().y==3 && session.Objects().At(0).Parent()==2,"Standalone runtime input edge or parenting failed");}
     unsigned progress=0;const auto executable=zengine::game::Export(project,first,{},output,zengine::game::ExecutableDirectory(),[&](unsigned value,const std::string&){Require(value>=progress,"Build progress regressed");progress=value;});
     Require(progress==100 && std::filesystem::exists(executable) && !std::filesystem::exists(executable.parent_path()/L"zEngine.exe"),"Export did not produce an editor-independent executable");
     Require(std::filesystem::exists(executable.parent_path()/L"Data"/L"Assets"/std::filesystem::relative(model,assets)),"Packaged model missing");
@@ -646,6 +647,7 @@ void BuildTests() {
     const auto report=test.path/L"player-report.txt";run(L"--report \""+report.wstring()+L"\"",0);
     std::ifstream in(report);std::string text{std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>()};
     Require(text.find("meshes 1")!=text.npos && text.find("position 2 0 0 rotation 0 6 0")!=text.npos,"Packaged game did not render model and execute exported script values");
+    Require(text.find("parent 2")!=text.npos,"Standalone executable did not apply scripted parenting");
     run(L"--scene Assets/Second.zscene --report \""+report.wstring()+L"\"",0);std::ifstream secondReport(report);text.assign(std::istreambuf_iterator<char>(secondReport),{});
     Require(text.find("Second Actor")!=text.npos && text.find("rotation 0 1.5 0")!=text.npos,"Packaged scenes lost independent variables");
     run(L"--scene Assets/Missing.zscene",1);
@@ -681,6 +683,43 @@ void FolderTests(bool capture) {
     }
     CoUninitialize();std::cout<<"PASS: folder creation, scoped listing, navigation, nested script/scene/prefab/model assets, protected Input Map, path containment\n";
 }
+void HierarchyTests(bool capture) {
+    TestDirectory test;Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));const auto window=editor.Create(SW_HIDE,test.path/L"Project");editor.InitializeRenderer();
+        const auto root=editor.SelectedGameObject()->Id();
+        auto& child=editor.CreateEmptyGameObject();const auto childId=child.Id();child.SetName("Child");child.GetTransform().SetPosition({2,0,0});editor.AssignCube(childId);
+        auto& parent=editor.CreateEmptyGameObject();const auto parentId=parent.Id();parent.SetName("Parent");parent.GetTransform().SetPosition({3,0,0});
+        const auto drag=[&](int from,int to){SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(80,143+27*from));SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(80,143+27*to));SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(80,143+27*to));};
+        drag(1,2);Require(editor.GameObjects().Find(childId)->Parent()==parentId,"Scene tree drag failed to parent");
+        Require(editor.GameObjects().HierarchyOrder()==std::vector<zengine::GameObjectId>{root,parentId,childId},"Tree hierarchy ordering incorrect");
+        auto frame=editor.BuildSceneFrame();Require(frame.meshes.size()==2 && frame.meshes[1].parentMatrix && frame.meshes[1].parentMatrix->_41==3 && child.GetTransform().Position().x==2,"Parent transform missing from rendered child or local transform changed");
+        editor.SetObjectParent(parentId,root);
+        bool rejected=false;try{editor.SetObjectParent(root,childId);}catch(...){rejected=true;}Require(rejected,"Editor accepted parenting cycle");
+        // Collapsing the root hides descendants; clicking a now-empty row must not select one.
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(20,143));
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(80,170));SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(80,170));
+        Require(editor.SelectedGameObject()->Id()==parentId,"Collapsed descendants still receive row clicks");
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(20,143));
+        SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(80,197));SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(80,197));
+        Require(editor.SelectedGameObject()->Id()==childId,"Expanded child row selected wrong object");
+        SendMessageW(window,WM_COMMAND,EditorShell::UnparentCommand,0);Require(child.Parent()==0,"Unparent context command failed");
+        editor.SetObjectParent(childId,parentId);Require(editor.SaveScene(editor.AssetsDirectory()/L"Hierarchy.zscene"),"Save hierarchy failed");const auto path=editor.ScenePath();
+        Require(editor.OpenScene(path) && editor.GameObjects().Find(childId)->Parent()==parentId && editor.GameObjects().Find(parentId)->Parent()==root,"Forward parent references failed scene reload");
+        const auto prefab=editor.CreatePrefab(parentId);const auto instance=editor.InstantiatePrefab(prefab);
+        editor.SetObjectParent(instance,root);Require(editor.SaveScene(),"Save parented prefab instance failed");
+        const auto inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
+        SetDlgItemTextW(inspector,InspectorPanel::FirstTransformField+6,L"4");
+        Require(editor.GameObjects().Find(instance)->GetTransform().Scale().x==4,"Prefab override fixture failed");
+        editor.RevertPrefabTransform(instance);Require(editor.GameObjects().Find(instance)->Parent()==root && editor.GameObjects().Find(instance)->GetTransform().Scale().x==1,"Reverting prefab transforms lost parent or retained override");
+        Require(editor.SaveScene() && editor.OpenScene(path) && editor.GameObjects().Find(instance)->Parent()==root,"Prefab instance parent lost on reload");
+        auto generated=zengine::GameObjectId{};for(std::size_t i=0;i<editor.GameObjects().Size();++i)if(editor.GameObjects().At(i).Parent()==instance)generated=editor.GameObjects().At(i).Id();
+        Require(generated!=0,"Prefab children missing");rejected=false;try{editor.SetObjectParent(root,generated);}catch(...){rejected=true;}Require(rejected,"Generated prefab child accepted as authoring parent");
+        Require(editor.Play(),"Hierarchy Play failed");rejected=false;try{editor.SetObjectParent(instance,0);}catch(...){rejected=true;}Require(rejected,"Authoring reparent allowed during Play");editor.Stop();
+        if(capture){editor.Render();CaptureWindow(window,L"hierarchy-qa.bmp");}
+    }
+    CoUninitialize();std::cout<<"PASS: tree parenting, unparenting, collapse/expand, local transforms, save/reload, nested prefabs and Play edit guards\n";
+}
 void GizmoTests(bool capture);
 void PrefabTests();
 void ProjectStartupTests(const std::string& mode,bool capture);
@@ -690,6 +729,7 @@ int main(int argc, char** argv)
     {
         if (argc > 1 && std::string(argv[1]) == "--gpu") GpuTests();
         else if(argc>1 && std::string(argv[1])=="--folders")FolderTests(argc>2);
+        else if(argc>1 && std::string(argv[1])=="--hierarchy")HierarchyTests(argc>2);
         else if(argc>1 && std::string(argv[1])=="--build")BuildTests();
         else if(argc>1 && std::string(argv[1])=="--editor-build")EditorBuildTests();
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();

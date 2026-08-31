@@ -35,6 +35,7 @@ namespace zengine
         };
         std::map<const ScriptBehavior*, Record> records_;
         std::map<GameObjectId, Transform> transforms_;
+        std::map<GameObjectId,GameObjectId> parents_;
         BehaviorLifecycle lifecycle_;
         bool playing_ = false;
         script::InputFrame input_;

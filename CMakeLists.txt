@@ -75,6 +75,7 @@ add_executable(zEngine WIN32
     src/EditorChrome.cpp
     src/EditorFolders.cpp
     src/EditorBuild.cpp
+    src/EditorHierarchy.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
@@ -169,6 +170,7 @@ if(BUILD_TESTING)
     target_sources(zEngineAssetTests PRIVATE src/EditorChrome.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorFolders.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorBuild.cpp)
+    target_sources(zEngineAssetTests PRIVATE src/EditorHierarchy.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineInputTools)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos zEnginePrefabs)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
@@ -187,6 +189,8 @@ if(BUILD_TESTING)
     add_test(NAME TransformGizmos COMMAND zEngineAssetTests --gizmos)
     add_test(NAME PrefabWorkflow COMMAND zEngineAssetTests --prefabs)
     add_test(NAME AssetFolders COMMAND zEngineAssetTests --folders)
+    add_test(NAME GameObjectHierarchy COMMAND zEngineAssetTests --hierarchy)
+    set_tests_properties(GameObjectHierarchy PROPERTIES TIMEOUT 45)
     add_test(NAME StandaloneGameBuild COMMAND zEngineAssetTests --build)
     add_test(NAME StandaloneEditorBuild COMMAND zEngineAssetTests --editor-build)
     set_tests_properties(StandaloneEditorBuild PROPERTIES TIMEOUT 60)

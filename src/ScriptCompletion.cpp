@@ -34,6 +34,7 @@ Index::Index() {
     for(const auto type:{L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"gameObject",L"GameObject",L"Transform"})types_[type];
     types_[L"GameObject"].base=L"gameObject";
     add(L"gameObject",L"transform",L"Transform");
+    add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);
     for(const auto name:{L"position",L"rotation",L"scale"})add(L"Transform",name,L"Vector3");
     for(const auto name:{L"was_moved",L"was_rotated",L"was_scaled"})add(L"Transform",name,L"signal");
     for(const auto name:{L"x",L"y",L"z"})add(L"Vector3",name,L"float");

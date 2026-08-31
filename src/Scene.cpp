@@ -161,7 +161,6 @@ Instance Instantiate(const Document& scene)
     {
         auto& object=instance.objects.Restore(data.id,data.name); object.SetTags(data.tags); object.GetTransform()=data.transform;
         Require(data.prefab.empty(),"Resolve prefab references before instantiating scene data.");
-        object.SetParent(data.parent);
         for (const auto& b:data.behaviors)
         {
             Behavior* behavior=nullptr;
@@ -170,6 +169,7 @@ Instance Instantiate(const Document& scene)
             behavior->SetEnabled(b.enabled); behavior->SetPriority(b.priority);
         }
     }
+    std::map<GameObjectId,GameObjectId> parents;for(const auto& data:scene.objects)parents[data.id]=data.parent;instance.objects.SetParents(parents);
     return instance;
 }
 }

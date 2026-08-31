@@ -604,6 +604,8 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     program.classes.emplace("Transform", std::move(transform));
     Class gameObject; gameObject.name = "gameObject";
     gameObject.fields.push_back({Token{Token::Identifier, "transform"}, "Transform"});
+    gameObject.fields.push_back({Token{Token::Identifier, "parent"}, "gameObject"});
+    Function find;find.params={"string"};find.result="gameObject";gameObject.methods.emplace("find",std::move(find));
     program.classes.emplace("gameObject", std::move(gameObject));
     std::map<std::string, const ClassAst*> byName;
     for (const auto& ast : asts) {
@@ -688,7 +690,7 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
         }
         p->stats.declaredClasses = asts.size();
         for (const auto& [name, c] : p->classes) {
-            bool active = c.fields.size() > (p->Assignable("gameObject", name) ? 1u : 0u);
+            bool active = c.fields.size() > (p->Assignable("gameObject", name) ? p->classes.at("gameObject").fields.size() : 0u);
             auto count = [&](const Function& f) { if (!f.code.empty()) { ++p->stats.emittedFunctions; p->stats.instructions += f.code.size(); } };
             count(c.initializer);
             for (const auto& [methodName, f] : c.methods) { (void)methodName; count(f); }
@@ -722,6 +724,7 @@ struct Runtime::Impl {
     ObjectRef inputService;
     InputFrame inputFrame;
     std::map<std::string,ObjectRef> inputActions;
+    std::function<ObjectRef(std::string_view)> objectLookup;
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
     [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
@@ -791,6 +794,10 @@ struct Runtime::Impl {
         if (!field) Error(t, "Unknown field '" + name + "'");
         if(o.type->name=="InputAction")Error(t,"Input state is read-only");
         value = Coerce(std::move(value), field->type, t);
+        if(name=="parent" && program->Assignable("gameObject",o.type->name)) {
+            auto parent=std::get<ObjectRef>(value);unsigned parentDepth=0;
+            while(parent.id){if(parent==ref || ++parentDepth>64)Error(t,"Parenting would create a cycle or exceed 64 levels");parent=std::get<ObjectRef>(Get(parent,"parent",t));}
+        }
         const bool changed = o.fields[index] != value;
         o.fields[index] = value;
         if (notify && changed && program->Assignable("Transform", o.type->name)) {
@@ -932,6 +939,10 @@ struct Runtime::Impl {
     }
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
+        if(name=="find" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("find")) {
+            Tick(t);if(args.size()!=1 || !std::holds_alternative<std::string>(args[0]))Error(t,"find takes one scene object name");
+            return Coerce(objectLookup?Value{objectLookup(std::get<std::string>(args[0]))}:Value{ObjectRef{}},"gameObject",t);
+        }
         if(object.type->name=="InputService") {
             if(args.size()!=1 || !std::holds_alternative<std::string>(args[0]))Error(t,"Input calls take one action name");
             const auto& action=std::get<std::string>(args[0]);const auto found=inputFrame.find(action);
@@ -1095,12 +1106,13 @@ Runtime::Runtime(std::shared_ptr<const Program> program, RuntimeLimits limits) {
     impl_ = std::make_unique<Impl>(program->impl_, limits);
 }
 Runtime::~Runtime() = default;
-ObjectRef Runtime::Create(std::string_view className) { impl_->Reset(); return impl_->Create(Canonical(std::string(className)), {}); }
+ObjectRef Runtime::Create(std::string_view className) { if(!impl_->depth)impl_->Reset(); return impl_->Create(Canonical(std::string(className)), {}); }
 Value Runtime::Call(ObjectRef object, std::string_view method, const std::vector<Value>& arguments) {
     impl_->Reset(); return impl_->Invoke(object, std::string(method), arguments, {});
 }
 Value Runtime::Get(ObjectRef object, std::string_view field) const { return impl_->Get(object, std::string(field)); }
-void Runtime::Set(ObjectRef object, std::string_view field, Value value, bool notify) { impl_->Reset(); impl_->Set(object, std::string(field), std::move(value), {}, notify); }
+void Runtime::Set(ObjectRef object, std::string_view field, Value value, bool notify) { if(!impl_->depth)impl_->Reset(); impl_->Set(object, std::string(field), std::move(value), {}, notify); }
+void Runtime::SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->objectLookup=std::move(lookup);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}

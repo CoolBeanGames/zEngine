@@ -7,12 +7,13 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <map>
 
 namespace zengine
 {
     struct Vec3 { float x = 0, y = 0, z = 0; };
 
-    // World-space for now. Euler angles in degrees; parenting comes with scene management.
+    // Local to the parent. Euler angles are in degrees.
     class Transform
     {
     public:
@@ -78,7 +79,7 @@ namespace zengine
         GameObject& operator=(const GameObject&) = delete;
         GameObjectId Id() const noexcept { return id_; }
         GameObjectId Parent() const noexcept { return parent_; }
-        void SetParent(GameObjectId parent) { parent_=parent; }
+        void SetParent(GameObjectId parent);
         const std::string& Name() const noexcept { return name_; }
         void SetName(std::string name);
         const std::vector<std::string>& Tags() const noexcept { return tags_; }
@@ -113,7 +114,8 @@ namespace zengine
         }
     private:
         friend class ObjectStore;
-        GameObject(GameObjectId id, std::string name);
+        GameObject(ObjectStore& store,GameObjectId id, std::string name);
+        ObjectStore* store_;
         GameObjectId id_;
         GameObjectId parent_=0;
         std::string name_;
@@ -126,6 +128,14 @@ namespace zengine
     class ObjectStore final
     {
     public:
+        ObjectStore()=default;
+        ObjectStore(ObjectStore&&) noexcept;
+        ObjectStore& operator=(ObjectStore&&) noexcept;
+        ObjectStore(const ObjectStore&)=delete;
+        ObjectStore& operator=(const ObjectStore&)=delete;
+        // Validate the entire proposed graph before committing any parent changes.
+        void SetParents(const std::map<GameObjectId,GameObjectId>&);
+        std::vector<GameObjectId> HierarchyOrder() const;
         GameObject& Create(std::string name = "GameObject");
         GameObject& Restore(GameObjectId id, std::string name);
         GameObject* Find(GameObjectId id) noexcept;

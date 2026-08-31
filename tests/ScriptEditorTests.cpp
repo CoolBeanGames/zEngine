@@ -49,6 +49,8 @@ int main(int argc, char**)
             const auto complete=[&](const std::wstring& text){return index.Complete(text,text.size());};
             const auto has=[](const auto& result,const wchar_t* name){return std::any_of(result.items.begin(),result.items.end(),[&](const auto& item){return item.name==name;});};
             Check(has(complete(L"class A : gameObject { func upd"),L"update"),"Lifecycle completion missing");
+            Check(has(complete(L"class A : gameObject { func f(){ parent."),L"transform"),"Parent member completion missing");
+            Check(has(complete(L"class A : gameObject { func f(){ find(\"Root\")."),L"parent"),"Object lookup return completion missing");
             Check(has(complete(L"class A { func f() { Other obj; obj."),L"speed"),"Typed member completion missing");
             Check(has(complete(L"class A { func f() { Other obj; obj."),L"ping"),"Inherited signal missing");
             Check(!has(complete(L"class A { func f() { Vector3 v; v."),L"speed"),"Unrelated member leaked into list");

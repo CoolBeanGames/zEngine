@@ -333,8 +333,22 @@ void ArraysTypesAndLocals() {
     auto tiny=limited.Create("A");Error([&]{limited.Call(tiny,"f");},"limit exceeded");
 }
 }
+void Parenting() {
+    auto p=Compile("class A : gameObject {func lookup():gameObject{return find(\"Root\");} func loop(){while(true){find(\"Root\");}}}");
+    Runtime r(p);auto a=r.Create("A"),b=r.Create("gameObject");
+    Check(std::get<ObjectRef>(r.Get(a,"parent")).id==0,"Parent must default to null");
+    Check(std::get<ObjectRef>(r.Call(a,"lookup")).id==0,"Unbound host lookup must return null");
+    r.Set(a,"parent",b);Check(std::get<ObjectRef>(r.Get(a,"parent"))==b,"Parent write failed");
+    Error([&]{r.Set(b,"parent",a);},"cycle");Error([&]{r.Set(a,"parent",a);},"cycle");
+    r.Set(a,"parent",ObjectRef{});r.SetObjectLookup([&](std::string_view name){return name=="Root"?b:ObjectRef{};});
+    Check(std::get<ObjectRef>(r.Call(a,"lookup"))==b,"Host lookup not bridged");
+    RuntimeLimits limits;limits.instructionsPerCall=100;Runtime limited(p,limits);const auto ref=limited.Create("A");
+    limited.SetObjectLookup([&](std::string_view){auto proxy=limited.Create("gameObject");limited.Set(proxy,"parent",ObjectRef{},false);return proxy;});
+    Error([&]{limited.Call(ref,"loop");},"Instruction budget");
+}
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
+        {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},
         {"empty code and comments", EmptyAndComments}, {"movement and Vector3", Movement}, {"lifecycle and inheritance", LifecycleAndInheritance},

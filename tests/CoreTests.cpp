@@ -62,6 +62,22 @@ int main()
         Check(constantActor.GetBehavior<zengine::MeshRenderer>() == &mesh && !mesh.Enabled(), "Const lookup/visibility failed");
         mesh.SetAsset({});
         Check(actor.GetTransform().Position().x == 2 && mesh.Asset().empty(), "Mesh changes must preserve transform");
+        auto& child=scene.Create("Child");auto& sibling=scene.Create("Sibling");auto& grandchild=scene.Create("Grandchild");
+        child.SetParent(actor.Id());grandchild.SetParent(child.Id());
+        Check(scene.HierarchyOrder()==std::vector<zengine::GameObjectId>{actor.Id(),child.Id(),grandchild.Id(),sibling.Id()},"Hierarchy must be stable depth-first order");
+        const auto rejects=[&](auto action){bool failed=false;try{action();}catch(const std::invalid_argument&){failed=true;}Check(failed,"Invalid parenting accepted");};
+        rejects([&]{actor.SetParent(grandchild.Id());});rejects([&]{child.SetParent(child.Id());});rejects([&]{child.SetParent(99999);});
+        rejects([&]{scene.SetParents({{sibling.Id(),actor.Id()},{actor.Id(),grandchild.Id()}});});
+        Check(sibling.Parent()==0 && actor.Parent()==0 && child.Parent()==actor.Id(),"Failed graph edit must be atomic");
+        scene.SetParents({{child.Id(),0},{actor.Id(),child.Id()}});
+        Check(actor.Parent()==child.Id() && child.Parent()==0,"Atomic parent swap failed");
+        zengine::ObjectStore moved=std::move(scene);actor.SetParent(0);grandchild.SetParent(actor.Id());
+        Check(moved.Find(actor.Id())==&actor && grandchild.Parent()==actor.Id(),"Moved store lost parent ownership");
+        zengine::ObjectStore assigned;assigned=std::move(moved);grandchild.SetParent(0);
+        Check(assigned.Find(grandchild.Id())->Parent()==0,"Move assignment lost parent ownership");
+        zengine::ObjectStore deep;auto previous=deep.Create().Id();
+        for(int i=0;i<64;++i){auto& next=deep.Create();next.SetParent(previous);previous=next.Id();}
+        auto& tooDeep=deep.Create();rejects([&]{tooDeep.SetParent(previous);});
         std::cout << "PASS: platform-independent GameObject defaults, stable IDs, tags, transforms, behavior ownership\n";
         return 0;
     }

@@ -54,7 +54,31 @@ An empty object contains only its transform and metadata: it has no mesh and no 
 
 Scene navigation: drag **RMB** to orbit, **Ctrl+RMB** to pan, **Shift+RMB** to free-look (hold **WASD**, **Q/E** down/up to fly), and use the **wheel** to zoom. Navigation never modifies scene objects. Escape, focus loss, or releasing RMB ends navigation. The camera is editor session state, not scene data.
 
-GameObjects, attachments, priorities, mesh assignments, and authored Inspector variables persist when you save the current **scene asset**. Prefab hierarchies support parenting; general tree reparenting, scene undo/redo, and clicking meshes to select objects are still deferred.
+GameObjects, parents, attachments, priorities, mesh assignments, and authored Inspector variables persist when you save the current **scene asset**. Scene undo/redo and clicking meshes to select objects are still deferred.
+
+### Nested GameObjects
+
+Drag a Scene Browser object onto another row to make it a child. Drag onto empty tree space or right-click and choose **Move to Scene Root** to remove its parent. The arrows beside parents collapse/expand their children. Reparenting keeps **local** position/rotation/scale, so the world position may change. Parent movement, rotation, and scale affect every descendant's rendered model and editing handles.
+
+Scripts can read and reassign the inherited `parent` field, including through another object reference:
+
+```cpp
+class FollowParent : gameObject {
+    func start() {
+        parent = find("Platform"); // Exact, unique scene object name; missing returns null.
+    }
+    func update(float delta) {
+        if (parent != null) {
+            parent.transform.rotation.y += 30 * delta;
+        }
+        // parent = null; // Detach to scene root, keeping local transform values.
+    }
+}
+```
+
+`this.parent` and `someObject.parent` work too. `find` and parent references expose scene objects and their native transforms, not another object's attached behavior methods. Duplicate matching names report an error instead of choosing arbitrarily. Parenting to yourself, a descendant, a non-scene `gameObject()` instance, or beyond 64 parent levels is rejected. Stop restores all authored parents and transforms. Editor structural edits are disabled during Play, but script reassignment works in both Play and standalone games.
+
+Prefab instance roots can be parented normally; generated children must be edited in their source prefab. Prefab editing keeps exactly one root. Right-click an instance and choose **Revert Prefab Transform Overrides** to restore all inherited transform values without changing its parent.
 
 ### Viewport transform tools
 

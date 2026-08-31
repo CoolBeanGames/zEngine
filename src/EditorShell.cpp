@@ -286,7 +286,7 @@ void EditorShell::Render()
             });
         stepDraw_=false;
         if (GetTickCount64()-lastInspectorRefresh_>=100)
-        { inspectorPanel_->RefreshLiveValues(); ReportScriptErrors(); lastInspectorRefresh_=GetTickCount64(); }
+        { inspectorPanel_->RefreshLiveValues(); ReportScriptErrors(); InvalidateRect(window_,&sceneBrowser_,FALSE); lastInspectorRefresh_=GetTickCount64(); }
     }
     renderer_->Render(BuildSceneFrame());
 }
@@ -542,14 +542,17 @@ void EditorShell::Paint()
     const RECT objectList = ObjectListRectangle();
     const int treeClip = SaveDC(bufferContext);
     IntersectClipRect(bufferContext, objectList.left, objectList.top, objectList.right, objectList.bottom);
-    for (int index = firstObject_; index < static_cast<int>(objects_.Size()); ++index)
+    const auto objectRows=ObjectRows();
+    for (int index = firstObject_; index < static_cast<int>(objectRows.size()); ++index)
     {
         RECT row{objectList.left, objectList.top + (index - firstObject_) * 27,
                  objectList.right, objectList.top + (index - firstObject_ + 1) * 27};
         if (row.top >= objectList.bottom) break;
-        const auto& object = objects_.At(index);
+        const auto& object = *objects_.Find(objectRows[index]);
         if (object.Id() == selectedObject_) FillRectangle(bufferContext, row, SelectionColor);
         row.left += 12+ObjectDepth(object.Id())*12;
+        if(HasChildren(object.Id())) {RECT arrow=row;arrow.right=arrow.left+12;DrawTextLabel(bufferContext,collapsedObjects_.contains(object.Id())?L"\u25b8":L"\u25be",arrow,TextColor);}
+        row.left+=14;
         const std::wstring icon = prefabSources_.contains(object.Id())?L"[P] ":object.GetBehavior<zengine::MeshRenderer>() ? L"\u25a0  " : L"\u25c7  ";
         DrawTextLabel(bufferContext, icon + WideText(object.Name()), row, TextColor,
                       DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
@@ -683,9 +686,6 @@ zengine::GameObject& EditorShell::CreateEmptyGameObject()
     if (!editingPrefab_.empty() && objects_.Size()>1) object.SetParent(objects_.At(0).Id());
     MarkSceneDirty();
     SelectGameObject(object.Id());
-    const auto list = ObjectListRectangle();
-    const int rows = std::max(1, static_cast<int>(list.bottom - list.top) / 27);
-    firstObject_ = std::max(0, static_cast<int>(objects_.Size()) - rows);
     status_ = L"Created empty GameObject - edit its transform in the Inspector";
     InvalidateRect(window_, nullptr, FALSE);
     return object;
@@ -695,6 +695,12 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
     EndGizmoDrag(true);
     auto* object = objects_.Find(id);
     if (!object) return;
+    for(auto parent=object->Parent();parent;parent=objects_.Find(parent)->Parent())collapsedObjects_.erase(parent);
+    const auto rows=ObjectRows();const auto found=std::find(rows.begin(),rows.end(),id);
+    const auto list=ObjectListRectangle();const int visible=std::max(1,static_cast<int>((list.bottom-list.top)/27));
+    const int index=static_cast<int>(found-rows.begin());
+    firstObject_=std::clamp(firstObject_,0,std::max(0,static_cast<int>(rows.size())-visible));
+    if(index<firstObject_)firstObject_=index;else if(index>=firstObject_+visible)firstObject_=index-visible+1;
     if (inspectorPanel_) inspectorPanel_->Bind(object,CanEdit(id),CanEdit(id,true));
     selectedObject_ = id;
     if (prefabSources_.contains(id)) status_=L"Prefab instance: inherited fields are read-only; double-click its asset to edit the source";
@@ -1000,6 +1006,7 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     }
     const auto expanded=zengine::prefabs::ResolveScene(assetsDirectory_,authored);
     auto next=zengine::scenes::Instantiate(expanded.scene); // Build first; bad data cannot destroy the current scene.
+    collapsedObjects_.clear();
     inspectorPanel_->Bind(nullptr);
     ++sceneGeneration_;
     std::erase_if(assetJobs_,[](const AssetJob& job) { return job.loadMesh; });
@@ -1120,7 +1127,7 @@ zengine::GameObjectId EditorShell::ScriptDropTarget(POINT point) const
     if (PtInRect(&list,point))
     {
         const auto index = firstObject_ + (point.y-list.top)/27;
-        if (index >= 0 && index < static_cast<LONG>(objects_.Size())) return objects_.At(index).Id();
+        const auto rows=ObjectRows();if(index>=0 && index<static_cast<LONG>(rows.size()))return rows[index];
     }
     if (PtInRect(&inspector_,point)) return selectedObject_;
     return 0; // No ambiguous picking: attach to an explicit tree row or selected Inspector.
@@ -1309,6 +1316,8 @@ LRESULT EditorShell::HandleMessage(
         if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
     case WM_COMMAND:
+        if(LOWORD(wParam)==UnparentCommand){if(selectedObject_)SetObjectParent(selectedObject_,0);return 0;}
+        if(LOWORD(wParam)==RevertPrefabTransformCommand){if(selectedObject_)RevertPrefabTransform(selectedObject_);return 0;}
         if(LOWORD(wParam)==BuildProjectCommand){ChooseBuildFolder();return 0;}
         if(LOWORD(wParam)==NewFolderCommand){NewAssetFolderDialog();return 0;}
         if(LOWORD(wParam)==UpFolderCommand){if(AssetFolder()!=assetsDirectory_)OpenAssetFolder(AssetFolder().parent_path());return 0;}
@@ -1326,6 +1335,13 @@ LRESULT EditorShell::HandleMessage(
     {
         POINT screen{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)}, point=screen;
         ScreenToClient(window_, &point);
+        if(PtInRect(&sceneBrowser_,point)) {
+            if(const auto id=ScriptDropTarget(point))SelectGameObject(id);
+            HMENU menu=CreatePopupMenu();const UINT flags=MF_STRING|((Playing()||!selectedObject_||!CanEdit(selectedObject_,true))?MF_GRAYED:0);
+            AppendMenuW(menu,flags,UnparentCommand,L"Move to Scene Root");
+            AppendMenuW(menu,flags|(!prefabLinks_.contains(selectedObject_)?MF_GRAYED:0),RevertPrefabTransformCommand,L"Revert Prefab Transform Overrides");
+            const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,screen.x,screen.y,0,window_,nullptr);DestroyMenu(menu);if(command)SendMessageW(window_,WM_COMMAND,command,0);return 0;
+        }
         if (!PtInRect(&mediaLibrary_, point)) break;
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
@@ -1430,9 +1446,12 @@ LRESULT EditorShell::HandleMessage(
         if (PtInRect(&list, point))
         {
             const auto index = firstObject_ + (point.y - list.top) / 27;
-            if (index >= 0 && index < static_cast<LONG>(objects_.Size()))
+            const auto rows=ObjectRows();
+            if (index >= 0 && index < static_cast<LONG>(rows.size()))
             {
-                SelectGameObject(objects_.At(index).Id());
+                const auto id=rows[index];const int arrow=list.left+12+ObjectDepth(id)*12;
+                if(HasChildren(id) && point.x>=arrow && point.x<arrow+12){if(!collapsedObjects_.erase(id))collapsedObjects_.insert(id);firstObject_=std::min(firstObject_,std::max(0,static_cast<int>(ObjectRows().size())-1));InvalidateRect(window_,&sceneBrowser_,FALSE);return 0;}
+                SelectGameObject(id);
                 draggedObject_=selectedObject_; objectDragStart_=point; objectDragMoved_=false; SetCapture(window_);
             }
             return 0;
@@ -1450,7 +1469,7 @@ LRESULT EditorShell::HandleMessage(
         {
             const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
             objectDragMoved_=objectDragMoved_ || std::abs(point.x-objectDragStart_.x)>=GetSystemMetrics(SM_CXDRAG) || std::abs(point.y-objectDragStart_.y)>=GetSystemMetrics(SM_CYDRAG);
-            if (objectDragMoved_) SetCursor(LoadCursorW(nullptr,PtInRect(&mediaLibrary_,point)?IDC_HAND:IDC_NO));
+            if (objectDragMoved_) SetCursor(LoadCursorW(nullptr,(PtInRect(&mediaLibrary_,point)||PtInRect(&sceneBrowser_,point))?IDC_HAND:IDC_NO));
             return 0;
         }
         if (draggedAsset_ >= 0)
@@ -1481,6 +1500,7 @@ LRESULT EditorShell::HandleMessage(
             const auto object=draggedObject_; const bool moved=objectDragMoved_; draggedObject_=0; ReleaseCapture();
             const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
             if (moved && PtInRect(&mediaLibrary_,point)) CreatePrefab(object);
+            else if(moved && PtInRect(&sceneBrowser_,point))SetObjectParent(object,ScriptDropTarget(point));
             return 0;
         }
         FinishAssetDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
@@ -1495,7 +1515,7 @@ LRESULT EditorShell::HandleMessage(
             const auto list = ObjectListRectangle();
             const int rows = std::max(1, static_cast<int>(list.bottom - list.top) / 27);
             firstObject_ = std::clamp(firstObject_ - GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 3,
-                0, std::max(0, static_cast<int>(objects_.Size()) - rows));
+                0, std::max(0, static_cast<int>(ObjectRows().size()) - rows));
             InvalidateRect(window_, &sceneBrowser_, FALSE);
             return 0;
         }

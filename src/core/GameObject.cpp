@@ -59,7 +59,25 @@ void zengine::Behavior::Draw()
     catch (...) { error_ = "Unknown behavior draw failure."; }
 }
 
-zengine::GameObject::GameObject(GameObjectId id, std::string name) : id_(id) { SetName(std::move(name)); }
+zengine::GameObject::GameObject(ObjectStore& store,GameObjectId id, std::string name) : store_(&store),id_(id) { SetName(std::move(name)); }
+void zengine::GameObject::SetParent(GameObjectId parent){store_->SetParents({{id_,parent}});}
+zengine::ObjectStore::ObjectStore(ObjectStore&& other) noexcept {*this=std::move(other);}
+zengine::ObjectStore& zengine::ObjectStore::operator=(ObjectStore&& other) noexcept {
+    if(this!=&other){objects_=std::move(other.objects_);nextId_=other.nextId_;other.nextId_=1;for(auto& object:objects_)object->store_=this;}return *this;
+}
+void zengine::ObjectStore::SetParents(const std::map<GameObjectId,GameObjectId>& changes) {
+    if(changes.empty())return;
+    std::map<GameObjectId,GameObjectId> parents;for(const auto& object:objects_)parents[object->Id()]=object->Parent();
+    for(const auto& [id,parent]:changes){if(!parents.contains(id) || (parent && !parents.contains(parent)))throw std::invalid_argument("Parent and child must belong to this scene.");parents[id]=parent;}
+    for(const auto& [id,parent]:parents){auto current=parent;unsigned depth=0;while(current){if(current==id || ++depth>64)throw std::invalid_argument("Parenting would create a cycle or exceed 64 levels.");current=parents.at(current);}}
+    for(auto& object:objects_)if(auto it=changes.find(object->Id());it!=changes.end())object->parent_=it->second;
+}
+std::vector<zengine::GameObjectId> zengine::ObjectStore::HierarchyOrder() const {
+    std::map<GameObjectId,std::vector<GameObjectId>> children;for(const auto& object:objects_)children[object->Parent()].push_back(object->Id());
+    std::vector<GameObjectId> result;result.reserve(objects_.size());
+    const auto visit=[&](auto&& self,GameObjectId parent)->void{const auto it=children.find(parent);if(it==children.end())return;for(auto id:it->second){result.push_back(id);self(self,id);}};
+    visit(visit,0);return result;
+}
 void zengine::GameObject::SetName(std::string name)
 {
     name = Trim(std::move(name));
@@ -88,7 +106,7 @@ zengine::GameObject& zengine::ObjectStore::Create(std::string name)
 zengine::GameObject& zengine::ObjectStore::Restore(GameObjectId id, std::string name)
 {
     if (!id || id==std::numeric_limits<GameObjectId>::max() || Find(id)) throw std::invalid_argument("Invalid or duplicate GameObject ID.");
-    auto object = std::unique_ptr<GameObject>(new GameObject(id, std::move(name)));
+    auto object = std::unique_ptr<GameObject>(new GameObject(*this,id, std::move(name)));
     auto& result = *object;
     objects_.push_back(std::move(object));
     nextId_=std::max(nextId_,id+1);
