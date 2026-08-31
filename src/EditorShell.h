@@ -155,6 +155,13 @@ private:
     std::optional<gizmo::Drag> gizmoDrag_;
     zengine::GameObjectId gizmoObject_=0;
     bool gizmoWasDirty_=false;
+    SceneCamera sceneCamera_;
+    enum class CameraDrag { None,Orbit,Pan,Fly };
+    CameraDrag cameraDrag_=CameraDrag::None;
+    POINT cameraPoint_{};
+    void CameraMotion(POINT);
+    void CameraTick(float delta);
+    void EndCameraDrag();
     int hoveredAxis_=-1;
     void RequireProject() const;
     void RequireScene() const;

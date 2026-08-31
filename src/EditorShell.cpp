@@ -10,6 +10,7 @@
 #include "SceneAssets.h"
 #include "PrefabAssets.h"
 #include "RenderTransform.h"
+#include "TransformOverrides.h"
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include <commdlg.h>
@@ -249,6 +250,7 @@ void EditorShell::Render()
     const auto now=std::chrono::steady_clock::now();
     const double elapsed=std::min(0.1,std::chrono::duration<double>(now-lastTick_).count());
     lastTick_=now;
+    CameraTick(static_cast<float>(elapsed));
     PollAssetWork();
     for (auto it = meshCache_.begin(); it != meshCache_.end();)
         if (it->second.expired()) it = meshCache_.erase(it); else ++it;
@@ -385,6 +387,7 @@ void EditorShell::ReportScriptErrors()
 ViewportFrame EditorShell::BuildSceneFrame() const
 {
     ViewportFrame frame;
+    frame.camera=sceneCamera_;
     frame.showEditorGuides = true;
     frame.tool=transformTool_; frame.highlightedAxis=hoveredAxis_;
     for (std::size_t i = 0; i < objects_.Size(); ++i)
@@ -989,13 +992,18 @@ bool EditorShell::OpenScene(const std::filesystem::path& path)
 void EditorShell::ApplyScene(const std::filesystem::path& file,std::string source,const zengine::scenes::Document& scene)
 {
     EndGizmoDrag(true);
-    const auto expanded=zengine::prefabs::ResolveScene(assetsDirectory_,scene);
+    auto authored=scene;
+    for(auto& object:authored.objects)if(!object.prefab.empty() && object.transformOverride && !object.transformMask){
+        const auto sourcePrefab=zengine::prefabs::Load(assetsDirectory_,std::filesystem::path(std::u8string(object.prefab.begin(),object.prefab.end())));
+        object.transformMask=TransformDifference(object.transform,sourcePrefab.objects.front().transform);object.transformOverride=object.transformMask!=0;
+    }
+    const auto expanded=zengine::prefabs::ResolveScene(assetsDirectory_,authored);
     auto next=zengine::scenes::Instantiate(expanded.scene); // Build first; bad data cannot destroy the current scene.
     inspectorPanel_->Bind(nullptr);
     ++sceneGeneration_;
     std::erase_if(assetJobs_,[](const AssetJob& job) { return job.loadMesh; });
     meshBindings_.clear(); meshRevisions_.clear();
-    prefabLinks_.clear(); for (const auto& object:scene.objects) if (!object.prefab.empty()) prefabLinks_[object.id]=object;
+    prefabLinks_.clear(); for (const auto& object:authored.objects) if (!object.prefab.empty()) {prefabLinks_[object.id]=object;prefabLinks_[object.id].transform=next.objects.Find(object.id)->GetTransform();}
     prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects);
     scenePath_=file; sceneSource_=std::move(source); firstObject_=0; selectedObject_=0;

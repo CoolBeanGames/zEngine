@@ -144,9 +144,9 @@ namespace zengine::scripts
                 while (p < source.size() && (std::iswalnum(source[p]) || source[p] == L'_')) ++p;
                 const auto word = source.substr(start, p-start);
                 if (word == L"class" || word == L"func" || word == L"return" || word == L"if" || word == L"else" ||
-                    word == L"while" || word == L"true" || word == L"false" || word == L"null" || word == L"this" || word == L"export" || word == L"label" || word == L"signal" || word == L"Input")
+                    word == L"while" || word == L"true" || word == L"false" || word == L"null" || word == L"this" || word == L"export" || word == L"label" || word == L"signal" || word == L"Input" || word == L"is")
                     out.spans.push_back({start,p-start,TokenKind::Keyword});
-                else if (word == L"int" || word == L"float" || word == L"bool" || word == L"string" || word == L"void" || word == L"gameObject" || word == L"GameObject" || word == L"Transform" || word == L"Vector3")
+                else if (word == L"int" || word == L"float" || word == L"bool" || word == L"string" || word == L"void" || word == L"gameObject" || word == L"GameObject" || word == L"Transform" || word == L"Vector3" || word == L"array")
                     out.spans.push_back({start,p-start,TokenKind::Type});
                 continue;
             }

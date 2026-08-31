@@ -75,12 +75,14 @@ void PrefabTests()
         SetDlgItemTextW(inspector,InspectorPanel::FirstTransformField,L"9"); Check(editor.SaveScene(),"Save placement override");
         Check(editor.OpenPrefab(prefab) && editor.EditingPrefab()==prefab,"Open prefab failed");
         SetDlgItemTextW(inspector,InspectorPanel::NameField,L"Shared Cube");
+        SetDlgItemTextW(inspector,InspectorPanel::FirstTransformField+6,L"3");
         const auto script=editor.CreateScriptAsset();
         Put(script,"class NewBehavior : gameObject { export float speed=3; func update(float delta) { transform.position.x+=speed*delta; } }");
         Check(editor.AttachScript(rootId,script),"Attach prefab script"); Check(editor.SavePrefab(),"Save prefab data");
         Check(editor.ClosePrefab() && editor.GameObjects().Size()==2,"Return to scene failed");
         Check(editor.GameObjects().At(0).Name()=="Shared Cube" && editor.GameObjects().At(1).Name()=="Shared Cube","Prefab save did not update all current instances");
         Check(editor.GameObjects().Find(instance2)->GetTransform().Position().x==9,"Prefab update overwrote instance placement");
+        Check(editor.GameObjects().At(0).GetTransform().Scale().x==3 && editor.GameObjects().Find(instance2)->GetTransform().Scale().x==3,"Moved instance did not inherit prefab scale");
         Check(editor.Play(),"Linked prefab scripts cannot play"); editor.Step(); editor.Stop();
         Check(editor.SaveScene(),"Save updated scene"); Check(editor.NewScene(),"Create another scene"); secondScene=editor.ScenePath();
         auto& plain=editor.CreateEmptyGameObject(); plain.SetName("Outer prefab"); const auto outerId=plain.Id(); nestedPrefab=editor.CreatePrefab(outerId);

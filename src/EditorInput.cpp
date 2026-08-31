@@ -11,7 +11,7 @@ void EditorShell::OpenInputMap() {
 void EditorShell::TickInput() {
     // Never consume gameplay keys while typing in an Inspector/script/tool window.
     const auto focus=GetFocus();
-    const bool active=GetForegroundWindow()==window_ && (focus==window_ || focus==viewportWindow_);
+    const bool active=cameraDrag_==CameraDrag::None && GetForegroundWindow()==window_ && (focus==window_ || focus==viewportWindow_);
     const auto& states=inputSystem_.Tick(zengine::input::PollWindows(active));
     zengine::script::InputFrame frame;
     for(const auto& [name,s]:states)frame.emplace(name,zengine::script::InputState{s.x,s.y,s.pressed,s.justPressed,s.justReleased});

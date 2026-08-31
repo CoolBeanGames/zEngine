@@ -445,7 +445,7 @@ void Renderer::Render(const ViewportFrame& frame)
         return;
     }
 
-    const ViewportCamera camera(static_cast<float>(width_),static_cast<float>(height_));
+    const ViewportCamera camera(static_cast<float>(width_),static_cast<float>(height_),frame.camera);
     const XMMATRIX view=camera.view,projection=camera.projection;
 
     const auto setConstants = [&](const XMMATRIX& matrix, bool unlit) {

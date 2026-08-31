@@ -1,4 +1,5 @@
 #include "ScriptEditor.h"
+#include "ScriptTyping.h"
 #include "EditorStyle.h"
 #include <richedit.h>
 #include <richole.h>
@@ -288,5 +289,17 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
     }
     if (message == WM_CHAR && (w == 19 || w == 18 || w == 1)) return 0;
     if (message == WM_CHAR && w == VK_TAB) { SendMessageW(window, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"    ")); return 0; }
+    if (message == WM_CHAR && (w == VK_RETURN || w == ')' || w == '}')) {
+        CHARRANGE range{}; SendMessageW(window,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&range));
+        if (const auto edit=scriptTyping::OnCharacter(self->Text(),range.cpMin,range.cpMax,static_cast<wchar_t>(w))) {
+            range={static_cast<LONG>(edit->start),static_cast<LONG>(edit->end)};
+            SendMessageW(window,EM_STOPGROUPTYPING,0,0);
+            SendMessageW(window,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&range));
+            SendMessageW(window,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(edit->text.c_str()));
+            range.cpMin=range.cpMax=static_cast<LONG>(edit->start+edit->caret);
+            SendMessageW(window,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&range));
+            SendMessageW(window,EM_SCROLLCARET,0,0);return 0;
+        }
+    }
     return DefSubclassProc(window,message,w,l);
 }

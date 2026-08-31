@@ -230,7 +230,6 @@ void InspectorDiagnostics() {
         {"class A { label(123); }", "string literal"},
         {"class A { label(); }", "string literal"},
         {"class A { label(\"Title\" + \"Text\"); }", "Expected ')'"},
-        {"class A { label(\"Title\") export int count; }", "Expected ';'"},
         {"class A { func f() { export int local; } }", "class scope"},
         {"class A { func f() { label(\"Local\"); } }", "class scope"},
         {"class A { int label; }", "Expected identifier"},
@@ -292,9 +291,51 @@ void Examples() {
         Compile(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()));
     }
 }
+void ArraysTypesAndLocals() {
+    auto p=Compile(R"(class Base {} class Child : Base {}
+        class A : gameObject {
+            label("Values")
+            export int count=7;
+            array items=[1,2.0,true,"text",Vector3(1,2,3),Child(),[9]];
+            func run():bool {
+                int count=3; float speed=2; bool ok=true; string text="local";
+                Vector3 v=Vector3(4,5,6); Child child=Child(); array local=[];
+                local.append(v); local.append(child); local.append(text);
+                array alias=local; alias[2]="changed";
+                items[0]+=4; items.append(local); items.erase(1);
+                return count==3 && this.count==7 && speed is float && ok is bool && text is string &&
+                    items[0] is int && !(items[0] is float) && items[1] is bool && items[3] is Vector3 &&
+                    items[4] is Child && items[4] is Base && items[5] is array && items[5][0]==9 &&
+                    local[2]=="changed" && items.size()==7 && null is null;
+            }
+            func fresh():int { int count=0; count+=1; return count; }
+            func bounds() { items[-1]=2; }
+            func bad() { int n=items[1]; }
+            func arithmetic() { items[1]+1; }
+            func empty():int { array a; return a.size(); }
+        })");
+    Runtime r(p);auto a=r.Create("A"),b=r.Create("A");
+    Check(std::get<bool>(r.Call(a,"run")),"Array operations, is checks, or local initializers failed");
+    Check(Int(r.Call(a,"fresh"))==1 && Int(r.Call(a,"fresh"))==1 && Int(r.Get(a,"count"))==7,"Locals leaked between calls or shadowed class field incorrectly");
+    Check(Int(r.Call(a,"empty"))==0,"Uninitialized array should be empty");
+    Check(std::get<bool>(r.Call(b,"run")),"Array defaults shared across instances");
+    Error([&]{r.Call(a,"bounds");},"in-range integer");
+    Error([&]{r.Call(a,"bad");},"Cannot assign");
+    Error([&]{r.Call(a,"arithmetic");},"arithmetic operands");
+    Runtime foreign(p);auto c=foreign.Create("A");
+    Error([&]{r.Set(a,"items",foreign.Get(c,"items"));},"another runtime");
+    Error([&]{Compile("class A { func f() { export int a; } }");},"class scope");
+    Error([&]{Compile("class A { func f() { label(\"Bad\") } }");},"class scope");
+    Error([&]{Compile("class A { func f() { int local=1; } func g():int { return local; } }");},"Unknown field");
+    Error([&]{Compile("class A { func f():bool { return 1 is Missing; } }");},"Unknown type");
+    RuntimeLimits limits;limits.arrayElements=1;
+    Runtime limited(Compile("class A { array a=[]; func f() { a.append(1); a.append(2); } }"),limits);
+    auto tiny=limited.Create("A");Error([&]{limited.Call(tiny,"f");},"limit exceeded");
+}
 }
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
+        {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},
         {"empty code and comments", EmptyAndComments}, {"movement and Vector3", Movement}, {"lifecycle and inheritance", LifecycleAndInheritance},
         {"values and control flow", ValuesAndControlFlow}, {"references and initializers", ReferencesAndInitializers},

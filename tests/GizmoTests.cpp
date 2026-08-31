@@ -133,6 +133,22 @@ void GizmoTests(bool capture)
         SendMessageW(viewport,WM_KEYDOWN,'R',0); Check(editor.TransformTool()==gizmo::Mode::Scale,"Scale shortcut failed");
         editor.SetTransformTool(gizmo::Mode::Move); Check(editor.Play(),"Play failed");
         send(WM_LBUTTONDOWN,start); Check(GetCapture()!=viewport,"Authoring gizmos should be disabled during Play"); editor.Stop();
+        const auto initial=editor.BuildSceneFrame().camera;
+        send(WM_RBUTTONDOWN,{100,100},MK_RBUTTON);send(WM_MOUSEMOVE,{140,120},MK_RBUTTON);send(WM_RBUTTONUP,{140,120});
+        const auto orbit=editor.BuildSceneFrame().camera;
+        Check(orbit.yaw!=initial.yaw && orbit.pitch!=initial.pitch && GetCapture()!=viewport,"RMB orbit failed");
+        send(WM_RBUTTONDOWN,{100,100},MK_RBUTTON|MK_CONTROL);send(WM_MOUSEMOVE,{150,120},MK_RBUTTON|MK_CONTROL);send(WM_RBUTTONUP,{150,120});
+        const auto pan=editor.BuildSceneFrame().camera;
+        Check(pan.target.x!=orbit.target.x && pan.yaw==orbit.yaw,"Ctrl RMB pan failed");
+        SendMessageW(viewport,WM_MOUSEWHEEL,MAKEWPARAM(0,WHEEL_DELTA),0);
+        Check(editor.BuildSceneFrame().camera.distance<pan.distance,"Wheel zoom failed");
+        const auto beforeFly=editor.BuildSceneFrame().camera;
+        const ViewportCamera beforeView(static_cast<float>(area.right),static_cast<float>(area.bottom),beforeFly);
+        send(WM_RBUTTONDOWN,{100,100},MK_RBUTTON|MK_SHIFT);send(WM_MOUSEMOVE,{150,120},MK_RBUTTON|MK_SHIFT);
+        const ViewportCamera afterView(static_cast<float>(area.right),static_cast<float>(area.bottom),editor.BuildSceneFrame().camera);
+        const auto eyeA=DirectX::XMMatrixInverse(nullptr,beforeView.view).r[3],eyeB=DirectX::XMMatrixInverse(nullptr,afterView.view).r[3];
+        Check(DirectX::XMVectorGetX(DirectX::XMVector3Length(DirectX::XMVectorSubtract(eyeA,eyeB)))<.001f,"Fly look changed camera position");
+        SendMessageW(viewport,WM_KEYDOWN,VK_ESCAPE,0);Check(GetCapture()!=viewport && !editor.SceneDirty(),"Camera navigation changed scene data or retained capture");
     }
     CoUninitialize(); std::cout<<"PASS: all transform axes, rotation angles, aspect ratios, zero/negative scales, native dragging, cancellation, shortcuts, save and Play guards\n";
 }

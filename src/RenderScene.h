@@ -22,4 +22,5 @@ struct ViewportFrame
     gizmo::Mode tool = gizmo::Mode::Move;
     int highlightedAxis = -1;
     std::optional<DirectX::XMFLOAT4X4> selectionParent;
+    SceneCamera camera;
 };

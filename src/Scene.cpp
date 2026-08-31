@@ -81,14 +81,14 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
 std::string Encode(const Document& scene)
 {
     std::ostringstream out; out.imbue(std::locale::classic()); out<<std::setprecision(17);
-    out<<"ZENGINE_SCENE 2\nobjects "<<scene.objects.size()<<'\n';
+    out<<"ZENGINE_SCENE 3\nobjects "<<scene.objects.size()<<'\n';
     for (const auto& object:scene.objects)
     {
         out<<"object "<<object.id<<' '<<std::quoted(object.name)<<"\ntags "<<object.tags.size();
         for (const auto& tag:object.tags) out<<' '<<std::quoted(tag);
         out<<"\ntransform";
         for (const auto v:{object.transform.Position(),object.transform.Rotation(),object.transform.Scale()}) out<<' '<<v.x<<' '<<v.y<<' '<<v.z;
-        out<<"\nparent "<<object.parent<<"\nprefab "<<std::quoted(object.prefab)<<' '<<(object.transformOverride?1:0);
+        out<<"\nparent "<<object.parent<<"\nprefab "<<std::quoted(object.prefab)<<' '<<(object.transformMask?object.transformMask:object.transformOverride?511:0);
         out<<"\nbehaviors "<<object.behaviors.size()<<'\n';
         for (const auto& b:object.behaviors)
         {
@@ -106,7 +106,7 @@ Document Decode(std::string_view text)
 {
     Require(text.size()<=MaxSceneBytes,"Scene exceeds the 8 MiB limit.");
     std::istringstream in{std::string(text)}; in.imbue(std::locale::classic());
-    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,2); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
+    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,3); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
     Document scene; const auto count=Count(in,10000); std::set<GameObjectId> ids;
     for (std::size_t i=0;i<count;++i)
     {
@@ -119,7 +119,9 @@ Document Decode(std::string_view text)
         if (version>=2)
         {
             Token(in,"parent"); Require(static_cast<bool>(in>>object.parent),"Invalid parent ID.");
-            Token(in,"prefab"); object.prefab=Text(in); object.transformOverride=Boolean(in);
+            Token(in,"prefab"); object.prefab=Text(in);
+            if(version>=3){object.transformMask=static_cast<unsigned>(Count(in,511));object.transformOverride=object.transformMask!=0;}
+            else object.transformOverride=Boolean(in);
             if (!object.prefab.empty()) { Asset(object.prefab,false); Require(object.prefab.ends_with(".zprefab"),"Expected prefab reference."); }
             else Require(!object.transformOverride,"Only prefab instances can override inherited transforms.");
         }

@@ -439,7 +439,9 @@ void ScriptIntegrationEditorTests(bool capture)
         // Mesh title/priority, script title/priority, Movement label, then variables.
         Require(field(3) && field(5) && field(6) && field(7),"Dynamic priority/variable controls missing");
         SetWindowTextW(field(3),L"1.5"); SetWindowTextW(field(5),L"6");
-        SetWindowTextW(field(6),L"2, 0, 0");
+        SetWindowTextW(field(6),L"2");SetWindowTextW(field(7),L"0");SetWindowTextW(field(8),L"0");
+        RECT vx{},vy{},vz{};GetWindowRect(field(6),&vx);GetWindowRect(field(7),&vy);GetWindowRect(field(8),&vz);
+        Require(vx.top==vy.top && vy.top==vz.top && vx.right<vy.left && vy.right<vz.left,"Vector3 fields are not three distinct boxes");
         SetWindowTextW(field(5),L"nan"); SendMessageW(field(5),WM_KEYDOWN,VK_RETURN,0);
         wchar_t text[64]{}; GetWindowTextW(field(5),text,64);
         Require(std::wstring(text)==L"6","Invalid exported input did not revert");

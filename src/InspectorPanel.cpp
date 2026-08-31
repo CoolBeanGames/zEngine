@@ -166,8 +166,17 @@ void InspectorPanel::RefreshBehaviors()
             const auto error=scriptHost_->Error(*script);
             if (!error.empty()) add(&behavior,{},L"Error: "+Wide(error),false,false,false);
             for (const auto& field:scriptHost_->Fields(*script))
+            {
+                if(field.type=="Vector3" && !field.name.empty()) {
+                    for(int axis=0;axis<3;++axis) {
+                        add(&behavior,field.name,Wide(field.name),false,true,field.editable);
+                        behaviorFields_.back().axis=axis;
+                    }
+                    continue;
+                }
                 add(&behavior,field.name,field.name.empty()?Wide(field.label):Wide(field.name+" ("+field.type+")"),false,!field.name.empty(),field.editable,
                     field.name.empty()?BehaviorField::Style::ScriptLabel:BehaviorField::Style::Normal);
+            }
         }
     }
     for (std::size_t i=0;i<behaviorFields_.size();++i) if (auto control=behaviorFields_[i].field.window)
@@ -192,6 +201,7 @@ int InspectorPanel::BehaviorHeight() const
 }
 int InspectorPanel::RowHeight(const BehaviorField& entry) const
 {
+    if(entry.axis>=0)return entry.axis==2?72:0;
     return entry.style==BehaviorField::Style::BehaviorHeader ? behaviorHeaderHeight_ : entry.field.window?52:24;
 }
 std::wstring InspectorPanel::BehaviorValue(std::size_t index)
@@ -199,7 +209,13 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
     const auto& entry=behaviorFields_.at(index);
     if (entry.priority) { std::wostringstream out; out<<std::setprecision(9)<<entry.behavior->Priority(); return out.str(); }
     if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
-        for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name) return Wide(field.value);
+        for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name) {
+            if(entry.axis<0)return Wide(field.value);
+            auto values=Wide(field.value);std::replace(values.begin(),values.end(),L',',L' ');
+            std::wistringstream input(values);double v=0;
+            for(int axis=0;axis<=entry.axis;++axis)input>>v;
+            std::wostringstream out;out<<std::setprecision(9)<<v;return out.str();
+        }
     return {};
 }
 void InspectorPanel::ChangeBehaviorField(std::size_t index)
@@ -218,8 +234,20 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
             if (*end || errno==ERANGE || !std::isfinite(value)) throw std::invalid_argument("Invalid priority");
             entry.behavior->SetPriority(value);
         }
-        else if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
-            scriptHost_->SetField(*script,entry.name,Utf8(text));
+        else if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_) {
+            if(entry.axis<0)scriptHost_->SetField(*script,entry.name,Utf8(text));
+            else {
+                wchar_t* end=nullptr;errno=0;const double value=std::wcstod(text.c_str(),&end);
+                if(end==text.c_str())throw std::invalid_argument("Invalid vector component");
+                while(*end && std::iswspace(*end))++end;
+                if(*end || errno==ERANGE || !std::isfinite(value))throw std::invalid_argument("Invalid vector component");
+                std::wstring combined;
+                for(int axis=0;axis<3;++axis) {
+                    if(axis)combined+=L", ";combined+=axis==entry.axis?text:BehaviorValue(index-entry.axis+axis);
+                }
+                scriptHost_->SetField(*script,entry.name,Utf8(combined));
+            }
+        }
         entry.field.valid=true;
         if (changed_) changed_();
     }
@@ -377,7 +405,10 @@ void InspectorPanel::Layout()
     int y = (width >= 250 ? 321 : 370) - scroll_;
     for (auto& entry:behaviorFields_)
     {
-        if (entry.field.window) MoveWindow(entry.field.window,12,y+21,std::max(30,width-24),24,TRUE);
+        if (entry.field.window) {
+            if(entry.axis>=0) {const int cell=std::max(30,(width-36)/3);MoveWindow(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24,TRUE);}
+            else MoveWindow(entry.field.window,12,y+21,std::max(30,width-24),24,TRUE);
+        }
         y+=RowHeight(entry);
     }
     y+=5;
@@ -422,7 +453,11 @@ void InspectorPanel::Paint()
         SelectObject(dc,entry.style==BehaviorField::Style::BehaviorHeader ? behaviorFont_ :
             entry.style==BehaviorField::Style::ScriptLabel ? labelFont_ : font_);
         RECT row{12,rowY-scroll_,width-12,rowY-scroll_+(entry.style==BehaviorField::Style::BehaviorHeader?RowHeight(entry):20)};
-        DrawTextW(dc,entry.label.c_str(),-1,&row,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
+        if(entry.axis<=0)DrawTextW(dc,entry.label.c_str(),-1,&row,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
+        if(entry.axis>=0) {
+            const int cell=std::max(30,(width-36)/3);
+            label(entry.axis==0?L"X":entry.axis==1?L"Y":L"Z",12+entry.axis*(cell+6),rowY+20,cell);
+        }
         rowY+=RowHeight(entry);
     }
     SelectObject(dc,font_);

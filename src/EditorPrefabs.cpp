@@ -2,6 +2,7 @@
 #include "PrefabAssets.h"
 #include "SceneAssets.h"
 #include "InspectorPanel.h"
+#include "TransformOverrides.h"
 #include <algorithm>
 
 namespace
@@ -22,7 +23,11 @@ void EditorShell::RequireEditable(zengine::GameObjectId id,bool transformOnly) c
 }
 void EditorShell::RecordTransformOverride(zengine::GameObjectId id)
 {
-    if (auto it=prefabLinks_.find(id);it!=prefabLinks_.end()) it->second.transformOverride=true;
+    if (auto it=prefabLinks_.find(id);it!=prefabLinks_.end()) if(const auto* object=objects_.Find(id)) {
+        it->second.transformMask|=TransformDifference(it->second.transform,object->GetTransform());
+        it->second.transformOverride=it->second.transformMask!=0;
+        it->second.transform=object->GetTransform();
+    }
 }
 int EditorShell::ObjectDepth(zengine::GameObjectId id) const
 {
@@ -40,7 +45,7 @@ zengine::scenes::Document EditorShell::CaptureDocument() const
             const auto transform=object.transform;
             object=link->second;
             object.name="Prefab instance"; object.behaviors.clear(); object.tags.clear();
-            object.transform=object.transformOverride?transform:zengine::Transform{};
+            object.transform=OverrideTransform(zengine::Transform{},transform,object.transformMask);
         }
     return document;
 }

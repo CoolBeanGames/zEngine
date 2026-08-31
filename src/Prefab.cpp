@@ -1,4 +1,5 @@
 #include "Prefab.h"
+#include "TransformOverrides.h"
 #include <algorithm>
 #include <limits>
 
@@ -63,7 +64,7 @@ Expansion Expand(const scenes::Document& document,const Loader& load)
         {
             auto child=asset.objects[i]; child.id=ids.at(child.id);
             child.parent=i?ids.at(child.parent):object.parent;
-            if (!i && object.transformOverride) child.transform=object.transform;
+            if (!i && (object.transformOverride || object.transformMask)) child.transform=OverrideTransform(child.transform,object.transform,object.transformMask?object.transformMask:511);
             append(std::move(child),generated || i!=0,source,depth+1);
         }
         active.erase(key);

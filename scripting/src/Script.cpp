@@ -23,7 +23,7 @@ bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
 bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
-    return s == "signal" || s == "Input" || words.contains(s);
+    return s == "signal" || s == "Input" || s == "array" || s == "is" || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
     if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
@@ -78,7 +78,7 @@ std::vector<Token> Lex(std::string_view s, const std::string& source) {
             t.text += take();
             const std::string pair = t.text + peek();
             if (pair == "==" || pair == "!=" || pair == "<=" || pair == ">=" || pair == "&&" || pair == "||" || pair == "+=" || pair == "-=" || pair == "*=" || pair == "/=") t.text += take();
-            else if (std::string_view("{}();:,.=+-*/!<>").find(t.text[0]) == std::string_view::npos) Fail(source, t, "Unexpected character");
+            else if (std::string_view("[]{}();:,.=+-*/!<>").find(t.text[0]) == std::string_view::npos) Fail(source, t, "Unexpected character");
         }
         tokens.push_back(std::move(t));
         if (tokens.size() > 100000) Fail(source, tokens.back(), "Token limit exceeded");
@@ -87,7 +87,7 @@ std::vector<Token> Lex(std::string_view s, const std::string& source) {
     return tokens;
 }
 struct Expr {
-    enum Kind { Literal, Name, Member, Call, Unary, Binary } kind = Literal;
+    enum Kind { Literal, Name, Member, Call, Unary, Binary, Array, Index, IsType } kind = Literal;
     Token token;
     Value value;
     std::size_t height = 1;
@@ -125,7 +125,7 @@ class Parser {
         if (op == "||") return 1;
         if (op == "&&") return 2;
         if (op == "==" || op == "!=") return 3;
-        if (op == "<" || op == ">" || op == "<=" || op == ">=") return 4;
+        if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "is") return 4;
         if (op == "+" || op == "-") return 5;
         if (op == "*" || op == "/") return 6;
         return 0;
@@ -140,6 +140,11 @@ class Parser {
         auto e = std::make_unique<Expr>(); e->token = Current();
         if (Match("-") || Match("!")) { e->kind = Expr::Unary; e->children.push_back(Expression(7)); }
         else if (Match("(")) { e = Expression(); Expect(")"); }
+        else if (Match("[")) {
+            e->kind = Expr::Array;
+            if (!Is("]")) do { e->children.push_back(Expression()); } while (Match(","));
+            Expect("]");
+        }
         else if (Current().kind == Token::Number) {
             ++pos;
             try {
@@ -157,10 +162,14 @@ class Parser {
         else Fail(source, Current(), "Expected expression");
         CheckHeight(*e);
         std::size_t chain = 0;
-        while (Is(".") || Is("(")) {
+        while (Is(".") || Is("(") || Is("[")) {
             if (++chain > 128) Fail(source, Current(), "Member/call chain limit exceeded");
             auto next = std::make_unique<Expr>();
             if (Match(".")) { next->kind = Expr::Member; next->token = Identifier(); next->children.push_back(std::move(e)); }
+            else if (Is("[")) {
+                next->kind = Expr::Index; next->token = Expect("[");
+                next->children.push_back(std::move(e)); next->children.push_back(Expression()); Expect("]");
+            }
             else {
                 next->kind = Expr::Call; next->token = Expect("("); next->children.push_back(std::move(e));
                 if (!Is(")")) do { next->children.push_back(Expression()); } while (Match(","));
@@ -169,10 +178,12 @@ class Parser {
             CheckHeight(*next); e = std::move(next);
         }
         std::size_t operators = 0;
-        while (Current().kind == Token::Symbol && Precedence(Current().text) >= min) {
+        while ((Current().kind == Token::Symbol || Is("is")) && Precedence(Current().text) >= min) {
             if (++operators > 128) Fail(source, Current(), "Expression length limit exceeded");
             auto next = std::make_unique<Expr>(); next->kind = Expr::Binary; next->token = Current(); ++pos;
-            next->children.push_back(std::move(e)); next->children.push_back(Expression(Precedence(next->token.text) + 1));
+            next->children.push_back(std::move(e));
+            if (next->token.text == "is") { next->kind = Expr::IsType; next->value = Identifier(true).text; }
+            else next->children.push_back(Expression(Precedence(next->token.text) + 1));
             CheckHeight(*next); e = std::move(next);
         }
         return e;
@@ -199,7 +210,7 @@ class Parser {
         if (Match("return")) {
             s.kind = Stmt::Return;
             if (!Is(";")) s.expressions.push_back(Expression());
-        } else if (Current().kind == Token::Identifier && tokens[pos + 1].kind == Token::Identifier) {
+        } else if (Current().kind == Token::Identifier && tokens[pos + 1].kind == Token::Identifier && tokens[pos + 1].text != "is") {
             s.kind = Stmt::Variable; s.type = Identifier(true).text; s.token = Identifier();
             if (Match("=")) s.expressions.push_back(Expression());
         } else {
@@ -225,7 +236,7 @@ public:
                     if (Current().kind != Token::String) Fail(source, Current(), "Label requires a string literal");
                     InspectorEntry entry; entry.kind = InspectorEntry::Kind::Label; entry.text = Current().text; ++pos;
                     entry.declaringClass = c.name.text; entry.source = source; entry.line = declaration.line; entry.column = declaration.column;
-                    Expect(")"); Expect(";"); c.inspector.push_back(std::move(entry));
+                    Expect(")"); Match(";"); c.inspector.push_back(std::move(entry));
                 } else if (Match("signal")) {
                     c.signals.push_back(Identifier()); Expect(";");
                 } else if (Match("func")) {
@@ -257,7 +268,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, MakeVector, SetComponent, Self, Input, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, IsType, MakeVector, SetComponent, Self, Input, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -289,7 +300,7 @@ struct Program::Impl {
     std::string source;
     std::map<std::string, Class> classes;
     ProgramStats stats;
-    bool IsType(const std::string& t) const { return t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || classes.contains(t); }
+    bool IsType(const std::string& t) const { return t == "array" || t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || classes.contains(t); }
     bool Assignable(const std::string& target, const std::string& from) const {
         if (target == from || (target == "float" && from == "int")) return true;
         if (!classes.contains(target)) return false;
@@ -336,7 +347,7 @@ class BytecodeCompiler {
         return std::numeric_limits<std::size_t>::max();
     }
     void Compatible(const std::string& target, const std::string& from, const Token& t) const {
-        Require(program.Assignable(target, from), t, "Cannot assign '" + from + "' to '" + target + "'");
+        Require(from != "void" && (target == "any" || from == "any" || program.Assignable(target, from)), t, "Cannot assign '" + from + "' to '" + target + "'");
     }
     std::size_t Declare(const Token& t, const std::string& type) {
         Require(program.IsType(type), t, "Unknown or invalid variable type '" + type + "'");
@@ -359,6 +370,21 @@ class BytecodeCompiler {
     std::string Expression(const Expr& e) {
         Guard guard(*this, e.token);
         const auto& t = e.token;
+        if (e.kind == Expr::Array) {
+            for (const auto& item : e.children) Require(Expression(*item) != "void", t, "Array elements cannot be void");
+            Emit(Op::MakeArray, t, e.children.size()); return "array";
+        }
+        if (e.kind == Expr::Index) {
+            Compatible("array", Expression(*e.children[0]), t);
+            Compatible("int", Expression(*e.children[1]), t);
+            Emit(Op::ArrayGet, t); return "any";
+        }
+        if (e.kind == Expr::IsType) {
+            Require(Expression(*e.children[0]) != "void", t, "Cannot test a void value");
+            const auto type = std::get<std::string>(e.value);
+            Require(program.IsType(type) || type == "null", t, "Unknown type '" + type + "'");
+            Emit(Op::IsType, t, 0, type); return "bool";
+        }
         if (e.kind == Expr::Literal) {
             Emit(Op::Constant, t, 0, {}, e.value);
             if (std::holds_alternative<std::int64_t>(e.value)) return "int";
@@ -394,6 +420,18 @@ class BytecodeCompiler {
             if (callee.kind == Expr::Name) { Emit(Op::Self, t); receiver = owner.name; }
             else if (callee.kind == Expr::Member) receiver = Expression(*callee.children[0]);
             else Fail(program.source, t, "Expected a method or class name");
+            if (receiver == "array" || receiver == "any") {
+                const auto& method = callee.token.text;
+                Require(method == "append" || method == "erase" || method == "size", t, "Unknown array method");
+                Require(e.children.size() == (method == "size" ? 1 : 2), t, "Wrong array argument count");
+                if (method != "size") {
+                    const auto type = Expression(*e.children[1]);
+                    Require(type != "void", t, "Array value cannot be void");
+                    if (method == "erase") Compatible("int", type, t);
+                }
+                Emit(Op::ArrayCall, t, e.children.size() - 1, method);
+                return method == "size" ? "int" : "void";
+            }
             if (receiver == "signal") {
                 const auto& method = callee.token.text;
                 Require(method == "connect" || method == "disconnect" || method == "is_connected" || method == "emit", t, "Unknown signal method");
@@ -416,7 +454,7 @@ class BytecodeCompiler {
         }
         if (e.kind == Expr::Unary) {
             auto type = Expression(*e.children[0]);
-            Require(t.text == "!" ? type == "bool" : (Numeric(type) || type == "Vector3"), t, "Invalid unary operand");
+            Require(type == "any" || (t.text == "!" ? type == "bool" : (Numeric(type) || type == "Vector3")), t, "Invalid unary operand");
             Emit(t.text == "!" ? Op::Not : Op::Negate, t); return type;
         }
         auto left = Expression(*e.children[0]);
@@ -435,15 +473,16 @@ class BytecodeCompiler {
         auto right = Expression(*e.children[1]);
         static const std::map<std::string, Op> operators = {{"+", Op::Add}, {"-", Op::Subtract}, {"*", Op::Multiply}, {"/", Op::Divide}, {"==", Op::Equal}, {"!=", Op::NotEqual}, {"<", Op::Less}, {"<=", Op::LessEqual}, {">", Op::Greater}, {">=", Op::GreaterEqual}};
         if (t.text == "==" || t.text == "!=") {
-            Require(left != "void" && right != "void" && (program.Assignable(left, right) || program.Assignable(right, left)), t, "Incompatible equality operands");
+            Require(left != "void" && right != "void" && (left == "any" || right == "any" || program.Assignable(left, right) || program.Assignable(right, left)), t, "Incompatible equality operands");
             Emit(operators.at(t.text), t); return "bool";
         }
             if (t.text == "<" || t.text == "<=" || t.text == ">" || t.text == ">=") {
-            Require(Numeric(left) && Numeric(right), t, "Comparison operands must be numeric"); Emit(operators.at(t.text), t); return "bool";
+            Require((Numeric(left) || left == "any") && (Numeric(right) || right == "any"), t, "Comparison operands must be numeric"); Emit(operators.at(t.text), t); return "bool";
         }
         auto result = ArithmeticType(t.text, left, right, t); Emit(operators.at(t.text), t); return result;
     }
     std::string ArithmeticType(const std::string& op, const std::string& left, const std::string& right, const Token& t) const {
+        if (left != "void" && right != "void" && (left == "any" || right == "any")) return "any";
         if (op == "+" && left == "string" && right == "string") return "string";
         if ((op == "+" || op == "-") && left == "Vector3" && right == "Vector3") return "Vector3";
         if ((op == "*" || op == "/") && left == "Vector3" && Numeric(right)) return "Vector3";
@@ -479,12 +518,23 @@ class BytecodeCompiler {
         }
         if (s.kind == Stmt::Variable) {
             Require(program.IsType(s.type), t, "Unknown or invalid variable type '" + s.type + "'");
-            if (s.expressions.empty()) Emit(Op::Constant, t, 0, {}, DefaultValue(s.type));
+            if (s.expressions.empty()) {
+                if (s.type == "array") Emit(Op::MakeArray, t);
+                else Emit(Op::Constant, t, 0, {}, DefaultValue(s.type));
+            }
             else Compatible(s.type, Expression(*s.expressions[0]), t);
             Emit(Op::StoreLocal, t, Declare(t, s.type)); return false;
         }
         if (s.kind == Stmt::Assignment) {
             const auto& target = *s.expressions[0];
+            if (target.kind == Expr::Index) {
+                Compatible("array", Expression(*target.children[0]), t);
+                Compatible("int", Expression(*target.children[1]), t);
+                if (s.operation != "=") { Emit(Op::DuplicatePair, t); Emit(Op::ArrayGet, t); }
+                Require(Expression(*s.expressions[1]) != "void", t, "Array value cannot be void");
+                if (s.operation != "=") Emit(s.operation == "+=" ? Op::Add : s.operation == "-=" ? Op::Subtract : s.operation == "*=" ? Op::Multiply : Op::Divide, t);
+                Emit(Op::ArraySet, t); return false;
+            }
             const Expr* destination = &target;
             bool component = false;
             if (target.kind == Expr::Member) {
@@ -665,6 +715,8 @@ struct Runtime::Impl {
     RuntimeLimits limits;
     std::uint64_t identity;
     std::vector<std::unique_ptr<Object>> objects;
+    std::vector<std::vector<Value>> arrays;
+    std::size_t arrayElements = 0;
     std::size_t remaining = 0, depth = 0;
     std::size_t connectionCount = 0;
     ObjectRef inputService;
@@ -692,11 +744,28 @@ struct Runtime::Impl {
         if (!ref) Error(t, "Expected object reference");
         Resolve(*ref, t); return *ref;
     }
+    std::size_t ArrayId(const Value& value, const Token& t) const {
+        auto ref = std::get_if<ArrayRef>(&value);
+        if (!ref || ref->runtime != identity || !ref->id || ref->id > arrays.size()) Error(t, "Invalid array or array belongs to another runtime");
+        return ref->id - 1;
+    }
+    std::size_t Index(const Value& value, std::size_t size, const Token& t) const {
+        auto index = std::get_if<std::int64_t>(&value);
+        if (!index || *index < 0 || static_cast<std::uint64_t>(*index) >= size) Error(t, "Array index must be an in-range integer");
+        return static_cast<std::size_t>(*index);
+    }
+    ArrayRef MakeArray(std::vector<Value> values, const Token& t) {
+        if (arrays.size() >= limits.arrays || values.size() > limits.arrayElements - arrayElements) Error(t, "Array allocation limit exceeded");
+        for (const auto& value : values) Coerce(value, Type(value, t), t);
+        arrayElements += values.size(); arrays.push_back(std::move(values));
+        return {identity, arrays.size()};
+    }
     std::string Type(const Value& value, const Token& t) const {
         switch (value.index()) {
         case 0: return "void"; case 1: return "int"; case 2: return "float";
         case 3: return "bool"; case 4: return "string"; case 6: return "Vector3";
         case 7: return "signal"; case 8: return "callable";
+        case 9: ArrayId(value, t); return "array";
         default: { auto ref = std::get<ObjectRef>(value); if (ref.id == 0 && ref.runtime == 0) return "null"; return Resolve(ref, t).type->name; }
         }
     }
@@ -781,7 +850,7 @@ struct Runtime::Impl {
         Frame frame(*this, t); Tick(t);
         if (objects.size() >= limits.objects) Error(t, "Object limit exceeded");
         auto object = std::make_unique<Object>(); object->type = &found->second;
-        for (const auto& field : object->type->fields) object->fields.push_back(DefaultValue(field.type));
+        for (const auto& field : object->type->fields) object->fields.push_back(field.type == "array" ? Value{MakeArray({},t)} : DefaultValue(field.type));
         ObjectRef ref{identity, objects.size() + 1}; objects.push_back(std::move(object));
         std::vector<const Class*> bases;
         const Class* c = &found->second;
@@ -795,6 +864,13 @@ struct Runtime::Impl {
     }
     static double Number(const Value& v) { if (auto i = std::get_if<std::int64_t>(&v)) return static_cast<double>(*i); return std::get<double>(v); }
     Value Arithmetic(Op op, Value left, Value right, const Token& t) const {
+        const auto aType = Type(left,t), bType = Type(right,t);
+        const bool valid = (Numeric(aType) && Numeric(bType)) ||
+            (op == Op::Add && aType == "string" && bType == "string") ||
+            ((op == Op::Add || op == Op::Subtract) && aType == "Vector3" && bType == "Vector3") ||
+            ((op == Op::Multiply || op == Op::Divide) && aType == "Vector3" && Numeric(bType)) ||
+            (op == Op::Multiply && Numeric(aType) && bType == "Vector3");
+        if (!valid) Error(t, "Incompatible arithmetic operands");
         if (std::holds_alternative<Vector3>(left) || std::holds_alternative<Vector3>(right)) {
             Vector3 result;
             if (auto a = std::get_if<Vector3>(&left)) {
@@ -841,7 +917,7 @@ struct Runtime::Impl {
         if (!std::isfinite(result)) Error(t, "Non-finite arithmetic result");
         return result;
     }
-    Value Compare(Op op, const Value& a, const Value& b) const {
+    Value Compare(Op op, const Value& a, const Value& b, const Token& t) const {
         auto numeric = [](const Value& v) { return std::holds_alternative<std::int64_t>(v) || std::holds_alternative<double>(v); };
         if (op == Op::Equal || op == Op::NotEqual) {
             bool equal = a.index() == b.index() ? a == b : (numeric(a) && numeric(b) && Number(a) == Number(b));
@@ -850,6 +926,7 @@ struct Runtime::Impl {
         auto compare = [op](auto left, auto right) {
             switch (op) { case Op::Less: return left < right; case Op::LessEqual: return left <= right; case Op::Greater: return left > right; default: return left >= right; }
         };
+        if (!numeric(a) || !numeric(b)) Error(t, "Comparison operands must be numeric");
         if (std::holds_alternative<std::int64_t>(a) && std::holds_alternative<std::int64_t>(b)) return compare(std::get<std::int64_t>(a), std::get<std::int64_t>(b));
         return compare(Number(a), Number(b));
     }
@@ -892,6 +969,36 @@ struct Runtime::Impl {
                 if (auto s = std::get_if<std::string>(&ins.value); s && s->size() > limits.stringBytes) Error(t, "String size limit exceeded");
                 stack.push_back(ins.value); break;
                         case Op::Duplicate: stack.push_back(stack.back()); break;
+            case Op::DuplicatePair: { auto a = stack[stack.size()-2], b = stack.back(); stack.push_back(a); stack.push_back(b); break; }
+            case Op::MakeArray: {
+                std::vector<Value> values(ins.a);
+                for (std::size_t i = ins.a; i > 0; --i) values[i-1] = pop();
+                stack.push_back(MakeArray(std::move(values),t)); break;
+            }
+            case Op::ArrayGet: {
+                auto index = pop(); const auto& items = arrays[ArrayId(pop(),t)];
+                stack.push_back(items[Index(index,items.size(),t)]); break;
+            }
+            case Op::ArraySet: {
+                auto value = pop(), index = pop(); auto& items = arrays[ArrayId(pop(),t)];
+                items[Index(index,items.size(),t)] = Coerce(value,Type(value,t),t); break;
+            }
+            case Op::ArrayCall: {
+                Value argument; if (ins.a) argument = pop(); auto& items = arrays[ArrayId(pop(),t)];
+                if (ins.name == "size") stack.push_back(static_cast<std::int64_t>(items.size()));
+                else {
+                    if (ins.name == "append") {
+                        if (arrayElements >= limits.arrayElements) Error(t,"Array element limit exceeded");
+                        items.push_back(Coerce(argument,Type(argument,t),t)); ++arrayElements;
+                    } else { items.erase(items.begin()+Index(argument,items.size(),t)); --arrayElements; }
+                    stack.push_back({});
+                }
+                break;
+            }
+            case Op::IsType: {
+                const auto actual = Type(pop(),t);
+                stack.push_back(actual == ins.name || (actual != "null" && program->classes.contains(ins.name) && program->Assignable(ins.name,actual))); break;
+            }
             case Op::MakeVector: {
                 Vector3 v; if (ins.a == 3) { v.z = Number(pop()); v.y = Number(pop()); v.x = Number(pop()); }
                 stack.push_back(Coerce(v, "Vector3", t)); break;
@@ -932,16 +1039,17 @@ struct Runtime::Impl {
                     if (*i == std::numeric_limits<std::int64_t>::min()) Error(t, "Integer overflow");
                     stack.push_back(-*i);
                 } else if (auto v = std::get_if<Vector3>(&value)) stack.push_back(Vector3{-v->x, -v->y, -v->z});
-                else stack.push_back(-std::get<double>(value));
+                else if (auto number = std::get_if<double>(&value)) stack.push_back(-*number);
+                else Error(t,"Invalid unary operand");
                 break;
             }
-            case Op::Not: stack.push_back(!std::get<bool>(pop())); break;
+            case Op::Not: stack.push_back(!std::get<bool>(Coerce(pop(),"bool",t))); break;
             case Op::Jump: pc = ins.a; break;
-            case Op::JumpFalse: if (!std::get<bool>(pop())) pc = ins.a; break;
+            case Op::JumpFalse: if (!std::get<bool>(Coerce(pop(),"bool",t))) pc = ins.a; break;
             case Op::Add: case Op::Subtract: case Op::Multiply: case Op::Divide: {
                 auto right = pop(), left = pop(); stack.push_back(Arithmetic(ins.op, std::move(left), std::move(right), t)); break;
             }
-            default: { auto right = pop(), left = pop(); stack.push_back(Compare(ins.op, left, right)); break; }
+            default: { auto right = pop(), left = pop(); stack.push_back(Compare(ins.op, left, right,t)); break; }
             }
         }
         Error(f.token, "Function ended without returning");

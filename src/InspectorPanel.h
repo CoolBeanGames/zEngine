@@ -54,6 +54,7 @@ private:
         std::wstring label;
         Field field;
         bool priority = false;
+        int axis = -1; // Three consecutive fields share one Vector3 row.
         Style style = Style::Normal;
     };
     std::wstring BehaviorValue(std::size_t index);

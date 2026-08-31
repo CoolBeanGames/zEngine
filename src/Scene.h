@@ -24,6 +24,7 @@ namespace zengine::scenes
         GameObjectId parent=0;
         std::string prefab;
         bool transformOverride=false;
+        unsigned transformMask=0; // XYZ position, XYZ rotation, XYZ scale. Legacy bool-only references override all.
     };
     struct Document { std::vector<ObjectData> objects; };
     // Scene data/codec have no filesystem, renderer, or window dependencies.

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(zEngine VERSION 0.1.0 LANGUAGES C CXX)
+set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT zEngine)
 include(CTest)
 add_subdirectory(scripting)
 add_library(zEngineInput STATIC src/input/InputMap.cpp)
@@ -65,6 +66,7 @@ add_executable(zEngine WIN32
 )
 
 target_compile_features(zEngine PRIVATE cxx_std_20)
+set_target_properties(zEngine PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:zEngine>" VS_DEBUGGER_COMMAND "$<TARGET_FILE:zEngine>")
 target_compile_definitions(zEngine PRIVATE
     UNICODE
     _UNICODE

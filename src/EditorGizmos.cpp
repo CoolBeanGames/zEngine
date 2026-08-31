@@ -3,6 +3,29 @@
 #include "RenderTransform.h"
 #include <windowsx.h>
 
+void EditorShell::EndCameraDrag(){cameraDrag_=CameraDrag::None;if(GetCapture()==viewportWindow_)ReleaseCapture();}
+void EditorShell::CameraMotion(POINT p)
+{
+    using namespace DirectX;
+    ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_),sceneCamera_);
+    const auto inverse=XMMatrixInverse(nullptr,camera.view);
+    if(sceneCamera_.distance<=0)sceneCamera_.distance=XMVectorGetX(XMVector3Length(inverse.r[3]-XMLoadFloat3(&sceneCamera_.target)));
+    const float dx=static_cast<float>(p.x-cameraPoint_.x),dy=static_cast<float>(p.y-cameraPoint_.y);cameraPoint_=p;
+    if(cameraDrag_==CameraDrag::Pan){auto target=XMLoadFloat3(&sceneCamera_.target)+(-inverse.r[0]*dx+inverse.r[1]*dy)*sceneCamera_.distance*0.0025f;XMStoreFloat3(&sceneCamera_.target,target);}
+    else {
+        sceneCamera_.yaw=std::remainder(sceneCamera_.yaw-dx*0.006f,XM_2PI);sceneCamera_.pitch=std::clamp(sceneCamera_.pitch+dy*0.006f,-1.55f,1.55f);
+        if(cameraDrag_==CameraDrag::Fly){const auto offset=XMVectorSet(std::sin(sceneCamera_.yaw)*std::cos(sceneCamera_.pitch),std::sin(sceneCamera_.pitch),-std::cos(sceneCamera_.yaw)*std::cos(sceneCamera_.pitch),0);XMStoreFloat3(&sceneCamera_.target,inverse.r[3]-offset*sceneCamera_.distance);}
+    }
+}
+void EditorShell::CameraTick(float delta)
+{
+    if(cameraDrag_!=CameraDrag::Fly || GetFocus()!=viewportWindow_)return;
+    using namespace DirectX;ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_),sceneCamera_);const auto inverse=XMMatrixInverse(nullptr,camera.view);
+    auto key=[](int k){return (GetAsyncKeyState(k)&0x8000)?1.0f:0.0f;};
+    auto direction=inverse.r[2]*(key('W')-key('S'))+inverse.r[0]*(key('D')-key('A'))+XMVectorSet(0,key('E')-key('Q'),0,0);
+    if(XMVectorGetX(XMVector3LengthSq(direction))>0)XMStoreFloat3(&sceneCamera_.target,XMLoadFloat3(&sceneCamera_.target)+XMVector3Normalize(direction)*std::clamp(sceneCamera_.distance,1.0f,100.0f)*delta);
+}
+
 RECT EditorShell::ToolRectangle(int index) const
 {
     return {345+index*68,4,411+index*68,28};
@@ -53,11 +76,19 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
     const gizmo::Point point{static_cast<float>(GET_X_LPARAM(l)),static_cast<float>(GET_Y_LPARAM(l))};
     switch (message)
     {
+    case WM_RBUTTONDOWN:
+        EndGizmoDrag(true);SetFocus(window);cameraPoint_={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+        cameraDrag_=(w&MK_CONTROL)?CameraDrag::Pan:(w&MK_SHIFT)?CameraDrag::Fly:CameraDrag::Orbit;
+        SetCapture(window);CameraMotion(cameraPoint_);return 0;
+    case WM_RBUTTONUP:EndCameraDrag();return 0;
+    case WM_MOUSEWHEEL:
+        EndGizmoDrag(true);{const auto mode=cameraDrag_;cameraDrag_=CameraDrag::Pan;CameraMotion(cameraPoint_);cameraDrag_=mode;sceneCamera_.distance=std::clamp(sceneCamera_.distance*std::exp(-static_cast<float>(GET_WHEEL_DELTA_WPARAM(w))/WHEEL_DELTA*0.15f),0.05f,10000.0f);}return 0;
     case WM_LBUTTONDOWN:
     {
+        if(cameraDrag_!=CameraDrag::None)return 0;
         SetFocus(window);
         const auto* object=SelectedGameObject(); if (!object || Playing() || !CanEdit(object->Id(),true)) return 0;
-        ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_));
+        ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_),sceneCamera_);
         const auto parent=ParentMatrix(objects_,*object);
         if (std::abs(DirectX::XMVectorGetX(DirectX::XMMatrixDeterminant(parent)))<=1e-10f) return 0;
         camera.view=parent*camera.view;
@@ -72,13 +103,14 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
         return 0;
     }
     case WM_MOUSEMOVE:
+        if(cameraDrag_!=CameraDrag::None){CameraMotion({GET_X_LPARAM(l),GET_Y_LPARAM(l)});return 0;}
         if (gizmoDrag_) UpdateGizmoDrag(point);
         else
         {
             hoveredAxis_=-1;
             if (const auto* object=SelectedGameObject(); object && !Playing() && CanEdit(object->Id(),true))
             {
-                ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_));
+                ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_),sceneCamera_);
                 camera.view=ParentMatrix(objects_,*object)*camera.view;
                 const auto shape=gizmo::Build(camera,object->GetTransform(),transformTool_);
                 if (const auto hit=gizmo::Pick(camera,shape,point)) hoveredAxis_=hit->axis;
@@ -91,11 +123,12 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
     case WM_CAPTURECHANGED:
     case WM_CANCELMODE:
     case WM_KILLFOCUS:
-        EndGizmoDrag(true); return 0;
+        EndGizmoDrag(true); EndCameraDrag(); return 0;
     case WM_MOUSELEAVE:
         if (!gizmoDrag_) hoveredAxis_=-1; return 0;
     case WM_KEYDOWN:
-        if (w==VK_ESCAPE) { EndGizmoDrag(true); return 0; }
+        if (w==VK_ESCAPE) { EndGizmoDrag(true); EndCameraDrag(); return 0; }
+        if(cameraDrag_!=CameraDrag::None)return 0;
         if (w=='W' || w=='E' || w=='R') { SetTransformTool(w=='W'?gizmo::Mode::Move:w=='E'?gizmo::Mode::Rotate:gizmo::Mode::Scale); return 0; }
         break;
     case WM_ERASEBKGND: return 1;

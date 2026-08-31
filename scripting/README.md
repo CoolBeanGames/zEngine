@@ -56,7 +56,7 @@ class Mover : gameObject
 }
 ```
 
-- Types: signed 64-bit `int`, 64-bit `float`, `bool`, UTF-8 byte `string`, value-type `Vector3`, and class reference types. `void` is only a return type. Integer to float widening is implicit; narrowing is rejected.
+- Types: signed 64-bit `int`, 64-bit `float`, `bool`, UTF-8 byte `string`, value-type `Vector3`, heterogeneous `array`, and class reference types. `void` is only a return type. Integer to float widening is implicit; narrowing is rejected.
 - Fields, locals, and parameters use `type name`; initializers use `= value`. Statements end with `;`; bodies use braces. Uninitialized scalar/vector fields and locals are zero/false/empty, and class references are `null`.
 - Classes introduce type names and support single inheritance. All members are public. Overrides must preserve the full signature and dispatch through the actual object type, including through base references. No overloads, constructors with parameters, access modifiers, or `super` yet.
 - Construct objects with `ClassName()`. Construct vectors with `Vector3()` or `Vector3(x, y, z)`. Vectors copy by value; class variables share object references. `this` names the current instance.
@@ -64,7 +64,27 @@ class Mover : gameObject
 - Arithmetic, comparisons, short-circuit `&&`/`||`, unary `!`, `if`/`else`, `while`, lexical local scopes, and `return` are supported. Conditions require `bool`. Integer division truncates toward zero.
 - `func name(params) : return_type` declares a result; omitting the suffix means `void`. Non-void functions must return on every path; an empty non-void function is an error.
 - `//` line comments and `/* ... */` non-nested block comments are ignored outside string literals. Unterminated block comments are diagnosed. Strings support escaped quotes, backslashes, newline, carriage-return, and tab escapes.
-- Top-level free functions, imports, arrays, exceptions, hot reload, filesystem/network access, and native function registration are not implemented. Put behavior functions inside a class.
+- Top-level free functions, imports, exceptions, hot reload, filesystem/network access, and native function registration are not implemented. Put behavior functions inside a class.
+
+### Arrays, type tests, and locals
+
+```cpp
+array values = [1, "hello", Vector3(1, 2, 3)];
+func inspect() {
+    int index = 0; // Local to this call; not an Inspector field.
+    if (values[index] is int) {
+        int number = values[index];
+        values[index] = number + 1;
+    }
+    values.append(true);
+    values.erase(1); // Remove by zero-based index.
+    int count = values.size();
+}
+```
+
+`value is Type` returns bool and checks the actual stored type: `1 is int` is true and `1.0 is int` is false. Class tests also accept inherited base types. `null is null` is true; null is not an instance of a class. Arrays can nest, mix types, and share references when assigned or passed to functions. Bounds, integer indices, and assignments into typed variables are checked at runtime. Array identity, not recursive contents, defines equality. An uninitialized array starts empty. Array storage is owned by the VM and bounded by `RuntimeLimits` (10,000 arrays / 100,000 total elements by default); Play/Stop releases it. Exported arrays are currently read-only in the Inspector and are initialized from source, not serialized as authored overrides.
+
+All variable types support `type name = value` both at class scope and inside functions. Function locals are recreated per call, scoped to their brace block, may shadow class fields (`this.name` still accesses the field), and cannot be accessed from another function. `export` and `label` inside a function are errors.
 
 ## Inspector declarations
 
@@ -83,7 +103,7 @@ class Movement : gameObject
 }
 ```
 
-Labels require a string literal and a trailing semicolon. Normal string escapes are supported. Labels do not implicitly export fields, create variables, or generate bytecode. Repeated/empty labels are retained. Exporting changes only Inspector visibility, not script access, field type, initialization, storage, or execution. All current field types can be exported, including object references; rendering suitable controls is the host editor's responsibility.
+Labels require a string literal; their trailing semicolon is optional (`label("Movement")`). Normal string escapes are supported. Labels do not implicitly export fields, create variables, or generate bytecode. Repeated/empty labels are retained. Exporting changes only Inspector visibility, not script access, field type, initialization, storage, or execution. All current field types can be exported, including object references; rendering suitable controls is the host editor's responsibility.
 
 `Program::InspectorLayout(className)` returns an immutable ordered list of `InspectorEntry` records: `Kind::Label` carries `text`; `Kind::Field` carries the exported field `name` and canonical `type`. Each record includes `declaringClass`, `source`, and one-based `line`/`column` (field-name location for fields, keyword location for labels). Labels have empty name/type, and fields have empty text. Hidden fields and built-in transform fields are omitted. Inherited entries appear first, followed by the derived class's entries in source order. The reference remains valid while its Program lives. Unknown class names throw ScriptError; valid classes without annotations return an empty list.
 

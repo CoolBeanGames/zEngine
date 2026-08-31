@@ -1,5 +1,6 @@
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
+#include "ScriptTyping.h"
 #include "core/ScriptBehavior.h"
 #include <windows.h>
 #include <richedit.h>
@@ -40,6 +41,18 @@ int main(int argc, char**)
     try
     {
         using namespace zengine::scripts;
+        {
+            const std::wstring source=L"class A {\r    func update(float delta";
+            auto edit=scriptTyping::OnCharacter(source,source.size(),source.size(),L')');
+            Check(edit && edit->text==L")\r    {\r        \r    }" && edit->caret==16,"Function block completion/indent incorrect");
+            Check(!scriptTyping::OnCharacter(L"foo(",4,4,L')'),"Function call completed as declaration");
+            Check(!scriptTyping::OnCharacter(L"// func foo(",12,12,L')'),"Comment completed as declaration");
+            Check(!scriptTyping::OnCharacter(L"func foo( {}",9,9,L')'),"Duplicate function body");
+            edit=scriptTyping::OnCharacter(L"{ /* } */ {",11,11,L'\r');
+            Check(edit && edit->text==L"\r        ","Comment affected indentation");
+            edit=scriptTyping::OnCharacter(L"{}",1,1,L'\r');
+            Check(edit && edit->text==L"\r    \r","Empty brace pair indentation failed");
+        }
         const auto first = Create(root), second = Create(root);
         Check(first != second && first.extension() == ".zsh", "Unique .zsh creation failed");
         const auto original = Load(first);
@@ -72,6 +85,12 @@ int main(int argc, char**)
             ScriptEditor editor(nullptr,root,first);
             HWND control=GetDlgItem(editor.Window(),ScriptEditor::SourceControl);
             Check(control!=nullptr,"Source editor control missing");
+            SetWindowTextW(control,L"class A {\r    func update(float delta");
+            SendMessageW(control,EM_SETSEL,-1,-1);SendMessageW(control,WM_CHAR,')',0);
+            wchar_t typed[200]{};GetWindowTextW(control,typed,200);
+            Check(std::wstring(typed).find(L"{\r\n        \r\n    }")!=std::wstring::npos,"Native function typing did not create body");
+            SendMessageW(control,EM_UNDO,0,0);GetWindowTextW(control,typed,200);
+            Check(std::wstring(typed).find(L"delta)")==std::wstring::npos,"Auto-inserted body was not one undo operation");
             SetWindowTextW(control,L"class Edited : gameObject\r\n{\r\n    int value = 3;\r\n}\r\n");
             SendMessageW(editor.Window(),WM_TIMER,1,0);
             // Timer-based syntax formatting must preserve selection and undo history.

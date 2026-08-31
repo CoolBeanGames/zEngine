@@ -26,6 +26,7 @@ namespace
         else if (const auto* v=std::get_if<bool>(&value)) text<<(*v?"true":"false");
         else if (const auto* v=std::get_if<std::string>(&value)) return *v;
         else if (const auto* v=std::get_if<Vector3>(&value)) text<<v->x<<", "<<v->y<<", "<<v->z;
+        else if (std::holds_alternative<ArrayRef>(value)) return "(array - read only)";
         else return "(object reference - read only)";
         return text.str();
     }

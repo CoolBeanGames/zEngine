@@ -32,7 +32,12 @@ struct CallableRef {
     std::string name;
     bool operator==(const CallableRef&) const = default;
 };
-using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef>;
+struct ArrayRef {
+    std::uint64_t runtime = 0;
+    std::size_t id = 0;
+    bool operator==(const ArrayRef&) const = default;
+};
+using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef, ArrayRef>;
 struct Diagnostic {
     std::string source;
     std::size_t line = 1;
@@ -96,6 +101,8 @@ struct RuntimeLimits {
     std::size_t objects = 10000;
     std::size_t stringBytes = 1024 * 1024;
     std::size_t signalConnections = 4096;
+    std::size_t arrays = 10000;
+    std::size_t arrayElements = 100000;
 };
 struct InputState { double x=0,y=0; bool pressed=false,justPressed=false,justReleased=false; };
 using InputFrame = std::map<std::string,InputState>;
