@@ -582,6 +582,8 @@ void SceneEditorTests(bool capture)
     std::cout<<"PASS: new/save/open scene assets, double-click, Inspector persistence, current-scene Play, save/discard/cancel, restart, stale async loads\n";
 }
 
+void ProjectTests(bool capture);
+void ProjectStartupTests(const std::string& mode,bool capture);
 int main(int argc, char** argv)
 {
     try
@@ -592,6 +594,8 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scripts") ScriptIntegrationEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scenes") SceneEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--projects") ProjectTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && (std::string(argv[1]) == "--project-recovery" || std::string(argv[1]) == "--project-dialog" || std::string(argv[1]) == "--project-missing")) ProjectStartupTests(argv[1],argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc == 1) ImportTests();
         else throw std::runtime_error("Unknown test mode");
         return 0;

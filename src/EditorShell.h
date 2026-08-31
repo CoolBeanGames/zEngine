@@ -16,6 +16,7 @@
 #include "core/GameObject.h"
 #include "ScriptHost.h"
 #include "Scene.h"
+#include "Project.h"
 #include <optional>
 #include <chrono>
 
@@ -34,6 +35,12 @@ public:
 
     [[nodiscard]] HWND Create(int showCommand, const std::filesystem::path& projectDirectory = {});
     void InitializeRenderer();
+    void InitializeStartup(const std::filesystem::path& sessionFile = {});
+    bool CreateProject(const std::wstring& name, const std::filesystem::path& location);
+    bool OpenProject(const std::filesystem::path& file);
+    const zengine::projects::Project* CurrentProject() const noexcept { return project_ ? &*project_ : nullptr; }
+    const std::filesystem::path& AssetsDirectory() const noexcept { return assetsDirectory_; }
+    bool HasOpenScene() const noexcept { return sceneOpen_; }
     void Render();
     bool Play();
     void Stop();
@@ -41,6 +48,7 @@ public:
     void Step();
     bool Playing() const noexcept { return scriptHost_.Playing(); }
     static constexpr int NewSceneCommand=3100, SaveSceneCommand=3101, SaveSceneAsCommand=3102, OpenSceneCommand=3103;
+    static constexpr int NewProjectCommand=3104, OpenProjectCommand=3105;
     bool NewScene();
     bool OpenScene(const std::filesystem::path& path);
     bool SaveScene(const std::filesystem::path& path = {});
@@ -106,6 +114,17 @@ private:
     std::wstring SceneName() const;
     RECT CreateSceneRectangle() const;
     bool PendingModels(bool assignmentsOnly=false) const;
+    void RequireProject() const;
+    void RequireScene() const;
+    bool ConfirmProjectClose();
+    void ActivateProject(zengine::projects::Project project);
+    void NewProjectDialog();
+    void ChooseProject();
+    void PromptForScene();
+    void RememberProjectScene();
+    std::optional<zengine::projects::Project> project_;
+    std::filesystem::path recentSessionFile_;
+    bool sceneOpen_ = false;
 
     struct AssetJob
     {
@@ -138,7 +157,7 @@ private:
     std::string sceneSource_, sceneBaseline_;
     bool sceneDirty_ = false;
     std::optional<zengine::scenes::Document> playScene_;
-    std::wstring status_ = L"Ready - drop an FBX into the Media Library";
+    std::wstring status_ = L"Create or open a project from the File menu";
     zengine::ObjectStore objects_;
     zengine::ScriptHost scriptHost_;
     bool paused_ = false, stepDraw_ = false;

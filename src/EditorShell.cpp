@@ -174,8 +174,6 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     }
 
     CreateViewport();
-    auto& cube = objects_.Create("Color Cube");
-    cube.AddBehavior<zengine::MeshRenderer>(zengine::MeshRenderer::CubeAsset);
     inspectorPanel_ = std::make_unique<InspectorPanel>();
     inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
     inspectorPanel_->SetScriptHost(&scriptHost_);
@@ -193,13 +191,16 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
         }
         catch (const std::exception& error) { status_ = L"Mesh operation failed: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
     });
-    SelectGameObject(cube.Id());
-    std::array<wchar_t, 32768> executable{};
-    const DWORD pathLength = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
-    if (!pathLength || pathLength == executable.size()) throw std::runtime_error("Cannot locate the project directory.");
-    assetsDirectory_ = (projectDirectory.empty()
-        ? std::filesystem::path(executable.data()).parent_path() / "Project"
-        : std::filesystem::absolute(projectDirectory)) / "Assets";
+    // Explicit directories support embedding/legacy projects; normal startup uses the recent-project config.
+    if (!projectDirectory.empty())
+    {
+        project_=zengine::projects::InitializeDirectory(projectDirectory);
+        assetsDirectory_=zengine::projects::Assets(*project_);
+        sceneOpen_=true;
+        auto& cube=objects_.Create("Color Cube");
+        cube.AddBehavior<zengine::MeshRenderer>(zengine::MeshRenderer::CubeAsset);
+        SelectGameObject(cube.Id());
+    }
     RefreshAssets();
     DragAcceptFiles(window_, TRUE);
     sceneBaseline_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_));
@@ -308,6 +309,7 @@ bool EditorShell::PrepareScripts()
 }
 bool EditorShell::Play()
 {
+    if (!sceneOpen_) { status_=L"Create or open a scene before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     if (Playing()) return true;
     if (PendingModels()) { status_=L"Wait for this scene's models to finish loading before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     for (const auto& editor:scriptEditors_) if (editor->Dirty())
@@ -484,7 +486,7 @@ void EditorShell::Paint()
         menuX += (menu == L"Window") ? 70 : 55;
     }
     RECT projectName{optionsBar_.right - 240, optionsBar_.top, optionsBar_.right - 12, optionsBar_.bottom};
-    DrawTextLabel(bufferContext, L"Untitled Project", projectName, MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextLabel(bufferContext, project_?WideText(project_->config.name):L"No project open", projectName, MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     RECT optionLine{0, optionsBar_.bottom - 1, optionsBar_.right, optionsBar_.bottom};
     FillRectangle(bufferContext, optionLine, BorderColor);
 
@@ -644,6 +646,7 @@ RECT EditorShell::ObjectListRectangle() const
 }
 zengine::GameObject& EditorShell::CreateEmptyGameObject()
 {
+    RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before creating objects.");
     std::string name = "GameObject";
     for (unsigned suffix = 1;; ++suffix)
@@ -692,7 +695,7 @@ void EditorShell::RefreshAssets()
     draggedAsset_ = -1;
     if (GetCapture() == window_ && dragTarget_ == DragTarget::None) ReleaseCapture();
     assets_.clear();
-    if (std::filesystem::exists(assetsDirectory_))
+    if (project_ && std::filesystem::exists(assetsDirectory_))
     {
         for (const auto& entry : std::filesystem::directory_iterator(assetsDirectory_))
         {
@@ -717,6 +720,7 @@ void EditorShell::RefreshAssets()
 void EditorShell::ReceiveFiles(HDROP drop)
 {
     struct DropOwner { HDROP handle; ~DropOwner() { DragFinish(handle); } } owner{drop};
+    RequireProject();
     POINT location{};
     if (!DragQueryPoint(drop, &location) || !PtInRect(&mediaLibrary_, location))
     {
@@ -860,16 +864,17 @@ RECT EditorShell::CreateSceneRectangle() const
 }
 std::wstring EditorShell::SceneName() const
 {
+    if (!sceneOpen_) return L"No scene open";
     return scenePath_.empty()?L"Untitled Scene":scenePath_.stem().wstring();
 }
 void EditorShell::UpdateSceneTitle()
 {
-    SetWindowTextW(window_,(L"zEngine Editor - "+SceneName()+(sceneDirty_?L" *":L"")).c_str());
+    SetWindowTextW(window_,(L"zEngine Editor - "+(project_?WideText(project_->config.name):L"No project")+L" - "+SceneName()+(sceneDirty_?L" *":L"")).c_str());
     InvalidateRect(window_,&sceneBrowser_,FALSE);
 }
 void EditorShell::MarkSceneDirty()
 {
-    if (!Playing()) { sceneDirty_=true; UpdateSceneTitle(); }
+    if (sceneOpen_ && !Playing()) { sceneDirty_=true; UpdateSceneTitle(); }
 }
 bool EditorShell::PendingModels(bool assignmentsOnly) const
 {
@@ -878,6 +883,7 @@ bool EditorShell::PendingModels(bool assignmentsOnly) const
 }
 bool EditorShell::ConfirmSceneClose()
 {
+    if (!sceneOpen_) return true;
     if (Playing()) throw std::runtime_error("Stop Play before switching scenes.");
     SetFocus(window_);
     // Compare actual authored data so canceling/reverting an edit doesn't cause a spurious prompt.
@@ -890,6 +896,7 @@ bool EditorShell::ConfirmSceneClose()
 }
 bool EditorShell::SaveScene(const std::filesystem::path& path)
 {
+    RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before saving a scene.");
     if (PendingModels(true)) throw std::runtime_error("Wait for pending model assignments before saving the scene.");
     SetFocus(window_);
@@ -899,10 +906,11 @@ bool EditorShell::SaveScene(const std::filesystem::path& path)
     // A different target is create-only. Save As asks explicitly before replacing an existing asset.
     zengine::scenes::Save(assetsDirectory_,file,data,file==scenePath_?&sceneSource_:nullptr);
     scenePath_=file; sceneSource_=data; sceneBaseline_=data; sceneDirty_=false;
-    RefreshAssets(); UpdateSceneTitle(); status_=L"Saved scene: "+SceneName(); InvalidateRect(window_,nullptr,FALSE); return true;
+    RefreshAssets(); UpdateSceneTitle(); status_=L"Saved scene: "+SceneName(); RememberProjectScene(); InvalidateRect(window_,nullptr,FALSE); return true;
 }
 bool EditorShell::SaveSceneAs()
 {
+    RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before saving a scene.");
     if (PendingModels(true)) throw std::runtime_error("Wait for pending model assignments before saving the scene.");
     SetFocus(window_); std::filesystem::create_directories(assetsDirectory_);
@@ -920,10 +928,11 @@ bool EditorShell::SaveSceneAs()
     if (std::filesystem::exists(file)) expected=zengine::scenes::Load(file);
     zengine::scenes::Save(assetsDirectory_,file,data,expected?&*expected:nullptr);
     scenePath_=file; sceneSource_=data; sceneBaseline_=data; sceneDirty_=false;
-    RefreshAssets(); UpdateSceneTitle(); status_=L"Saved scene: "+SceneName(); InvalidateRect(window_,nullptr,FALSE); return true;
+    RefreshAssets(); UpdateSceneTitle(); status_=L"Saved scene: "+SceneName(); RememberProjectScene(); InvalidateRect(window_,nullptr,FALSE); return true;
 }
 bool EditorShell::NewScene()
 {
+    RequireProject();
     if (!ConfirmSceneClose()) return false;
     const auto file=zengine::scenes::Create(assetsDirectory_);
     const auto source=zengine::scenes::Load(file);
@@ -931,6 +940,7 @@ bool EditorShell::NewScene()
 }
 bool EditorShell::OpenScene(const std::filesystem::path& path)
 {
+    RequireProject();
     if (Playing()) throw std::runtime_error("Stop Play before opening another scene.");
     // Read and validate before prompting or changing the active scene.
     const auto file=zengine::scenes::Resolve(assetsDirectory_,path);
@@ -950,6 +960,7 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     meshBindings_.clear(); meshRevisions_.clear();
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects);
     scenePath_=file; sceneSource_=std::move(source); firstObject_=0; selectedObject_=0;
+    sceneOpen_=true;
     status_=L"Opened scene: "+SceneName();
     PrepareScripts();
     for (std::size_t i=0;i<objects_.Size();++i)
@@ -969,10 +980,11 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     }
     if (objects_.Size()) SelectGameObject(objects_.At(0).Id());
     sceneBaseline_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_)); sceneDirty_=false;
-    RefreshAssets(); UpdateSceneTitle(); InvalidateRect(window_,nullptr,FALSE);
+    RefreshAssets(); RememberProjectScene(); UpdateSceneTitle(); InvalidateRect(window_,nullptr,FALSE);
 }
 void EditorShell::ChooseScene()
 {
+    RequireProject();
     if (Playing()) throw std::runtime_error("Stop Play before opening another scene.");
     std::array<wchar_t,32768> file{}; const auto initial=assetsDirectory_.wstring();
     OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=window_; dialog.lpstrFile=file.data(); dialog.nMaxFile=static_cast<DWORD>(file.size());
@@ -988,6 +1000,7 @@ bool EditorShell::TranslateShortcut(const MSG& message)
 }
 std::filesystem::path EditorShell::CreateScriptAsset()
 {
+    RequireProject();
     const auto path = zengine::scripts::Create(assetsDirectory_);
     RefreshAssets();
     selectedAsset_ = static_cast<int>(std::find(assets_.begin(),assets_.end(),path)-assets_.begin());
@@ -1000,6 +1013,7 @@ std::filesystem::path EditorShell::CreateScriptAsset()
 }
 void EditorShell::OpenScript(const std::filesystem::path& path)
 {
+    RequireProject();
     const auto resolved = zengine::scripts::Resolve(assetsDirectory_, path);
     for (const auto& editor : scriptEditors_)
         if (_wcsicmp(editor->Path().c_str(), resolved.c_str()) == 0) { editor->Show(); return; }
@@ -1044,6 +1058,7 @@ zengine::GameObjectId EditorShell::ScriptDropTarget(POINT point) const
 }
 void EditorShell::ChooseScript()
 {
+    RequireScene();
     std::filesystem::create_directories(assetsDirectory_);
     std::array<wchar_t,32768> filename{};
     const auto initial = assetsDirectory_.wstring();
@@ -1104,6 +1119,7 @@ std::filesystem::path EditorShell::ResolveModel(const std::filesystem::path& pat
 }
 void EditorShell::QueueModel(const std::filesystem::path& path, zengine::GameObjectId id)
 {
+    RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before changing model assignments.");
     if (id && !objects_.Find(id)) throw std::runtime_error("Unknown target GameObject.");
     const auto file = ResolveModel(path);
@@ -1211,6 +1227,8 @@ LRESULT EditorShell::HandleMessage(
         if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
     case WM_COMMAND:
+        if (LOWORD(wParam)==NewProjectCommand) { NewProjectDialog(); return 0; }
+        if (LOWORD(wParam)==OpenProjectCommand) { ChooseProject(); return 0; }
         if (LOWORD(wParam)==NewSceneCommand) { NewScene(); return 0; }
         if (LOWORD(wParam)==SaveSceneCommand) { SaveScene(); return 0; }
         if (LOWORD(wParam)==SaveSceneAsCommand) { SaveSceneAs(); return 0; }
@@ -1281,9 +1299,13 @@ LRESULT EditorShell::HandleMessage(
         const RECT fileMenu{44,optionsBar_.top,99,optionsBar_.bottom};
         if (PtInRect(&fileMenu,point))
         {
-            HMENU menu=CreatePopupMenu(); const UINT flags=MF_STRING|(Playing()?MF_GRAYED:0);
+            HMENU menu=CreatePopupMenu(); const UINT projectFlags=MF_STRING|(Playing()?MF_GRAYED:0);
+            AppendMenuW(menu,projectFlags,NewProjectCommand,L"New Project..."); AppendMenuW(menu,projectFlags,OpenProjectCommand,L"Open Project...");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+            const UINT flags=MF_STRING|((Playing() || !project_)?MF_GRAYED:0);
             AppendMenuW(menu,flags,NewSceneCommand,L"New Scene"); AppendMenuW(menu,flags,OpenSceneCommand,L"Open Scene...");
-            AppendMenuW(menu,flags,SaveSceneCommand,L"Save Scene\tCtrl+S"); AppendMenuW(menu,flags,SaveSceneAsCommand,L"Save Scene As...\tCtrl+Shift+S");
+            const UINT saveFlags=flags|(!sceneOpen_?MF_GRAYED:0);
+            AppendMenuW(menu,saveFlags,SaveSceneCommand,L"Save Scene\tCtrl+S"); AppendMenuW(menu,saveFlags,SaveSceneAsCommand,L"Save Scene As...\tCtrl+Shift+S");
             POINT at{44,optionsBar_.bottom}; ClientToScreen(window_,&at);
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,at.x,at.y,0,window_,nullptr); DestroyMenu(menu);
             if (command) SendMessageW(window_,WM_COMMAND,command,0); return 0;

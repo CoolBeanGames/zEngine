@@ -31,13 +31,20 @@ target_link_libraries(zEngineScenes PUBLIC zEngineCore zEngineScriptHost)
 add_library(zEngineSceneAssets STATIC src/SceneAssets.cpp)
 target_link_libraries(zEngineSceneAssets PUBLIC zEngineScenes)
 target_compile_definitions(zEngineSceneAssets PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+add_library(zEngineProjects STATIC src/Project.cpp)
+target_compile_features(zEngineProjects PUBLIC cxx_std_20)
+target_include_directories(zEngineProjects PUBLIC src)
+target_compile_definitions(zEngineProjects PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(zEngineProjects PRIVATE shell32 ole32)
 
 add_executable(zEngine WIN32
     src/Main.cpp
     src/EditorShell.cpp
+    src/EditorProjects.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
+    src/ProjectDialog.cpp
     src/Renderer.cpp
     src/Renderer.h
 )
@@ -64,6 +71,7 @@ target_link_libraries(zEngine PRIVATE
     zEngineScriptTools
     zEngineScriptHost
     zEngineSceneAssets
+    zEngineProjects
 )
 
 if(MSVC)
@@ -102,11 +110,11 @@ if(BUILD_TESTING)
     add_executable(zEngineCoreTests tests/CoreTests.cpp)
     target_link_libraries(zEngineCoreTests PRIVATE zEngineCore)
     add_test(NAME GameObjectCore COMMAND zEngineCoreTests)
-    add_executable(zEngineAssetTests tests/AssetTests.cpp src/Renderer.cpp src/EditorShell.cpp src/InspectorPanel.cpp)
+    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp src/Renderer.cpp src/EditorShell.cpp src/EditorProjects.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
     target_compile_definitions(zEngineAssetTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
         TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
-    target_link_libraries(zEngineAssetTests PRIVATE zEngineAssets zEngineCore zEngineScriptTools zEngineScriptHost zEngineSceneAssets d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 comctl32 comdlg32)
+    target_link_libraries(zEngineAssetTests PRIVATE zEngineAssets zEngineCore zEngineScriptTools zEngineScriptHost zEngineSceneAssets zEngineProjects d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 comctl32 comdlg32)
     add_dependencies(zEngineAssetTests zEngine)
     add_test(NAME FbxImport COMMAND zEngineAssetTests)
     add_test(NAME RendererAlbedo COMMAND zEngineAssetTests --gpu)
@@ -115,6 +123,12 @@ if(BUILD_TESTING)
     add_test(NAME MeshRendererBehavior COMMAND zEngineAssetTests --meshes)
     add_test(NAME ScriptEditorIntegration COMMAND zEngineAssetTests --scripts)
     add_test(NAME SceneEditorIntegration COMMAND zEngineAssetTests --scenes)
+    add_test(NAME ProjectEditorIntegration COMMAND zEngineAssetTests --projects)
+    set_tests_properties(ProjectEditorIntegration PROPERTIES TIMEOUT 60)
+    add_test(NAME ProjectSceneRecovery COMMAND zEngineAssetTests --project-recovery)
+    add_test(NAME ProjectCreationDialog COMMAND zEngineAssetTests --project-dialog)
+    add_test(NAME ProjectMissingRecovery COMMAND zEngineAssetTests --project-missing)
+    set_tests_properties(ProjectSceneRecovery ProjectCreationDialog ProjectMissingRecovery PROPERTIES TIMEOUT 30)
     set_tests_properties(SceneEditorIntegration PROPERTIES TIMEOUT 60)
     set_tests_properties(ScriptEditorIntegration PROPERTIES TIMEOUT 60)
     set_tests_properties(GameObjectCore FbxImport RendererAlbedo EditorDragDrop GameObjectInspector MeshRendererBehavior PROPERTIES TIMEOUT 60)

@@ -33,6 +33,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         EditorShell editor(instance);
         const HWND window = editor.Create(showCommand);
         editor.InitializeRenderer();
+        editor.InitializeStartup();
 
         MSG message{};
         while (message.message != WM_QUIT)
