@@ -1,4 +1,6 @@
 #include "zscript/Script.h"
+#include "zscript/Text.h"
+#include "WorldTransform.h"
 
 #include <algorithm>
 #include <atomic>
@@ -11,7 +13,7 @@
 namespace zengine::script {
 namespace {
 struct Token {
-    enum Kind { Identifier, Number, String, Symbol, End } kind = End;
+    enum Kind { Identifier, Number, String, Character, Symbol, End } kind = End;
     std::string text;
     std::size_t line = 1, column = 1;
 };
@@ -23,7 +25,7 @@ bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
 bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
-    return s == "signal" || s == "Input" || s == "array" || s == "is" || words.contains(s);
+    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "array" || s == "is" || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
     if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
@@ -56,9 +58,9 @@ std::vector<Token> Lex(std::string_view s, const std::string& source) {
                 if (!Digit(peek())) Fail(source, t, "Expected exponent digits");
                 while (Digit(peek())) t.text += take();
             }
-        } else if (peek() == '"') {
-            t.kind = Token::String; take();
-            while (p < s.size() && peek() != '"') {
+        } else if (peek() == '"' || peek() == '\'') {
+            const char quote=take();t.kind=quote=='"'?Token::String:Token::Character;
+            while (p < s.size() && peek() != quote) {
                 char c = take();
                 if (c == '\n' || c == '\r') Fail(source, t, "Newline in string literal");
                 if (c == '\\') {
@@ -66,7 +68,7 @@ std::vector<Token> Lex(std::string_view s, const std::string& source) {
                     c = take();
                     switch (c) {
                     case 'n': c = '\n'; break; case 'r': c = '\r'; break; case 't': c = '\t'; break;
-                    case '\\': case '"': break;
+                    case '\\': case '"': case '\'': break;
                     default: Fail(source, t, "Unknown string escape");
                     }
                 }
@@ -77,8 +79,8 @@ std::vector<Token> Lex(std::string_view s, const std::string& source) {
         } else {
             t.text += take();
             const std::string pair = t.text + peek();
-            if (pair == "==" || pair == "!=" || pair == "<=" || pair == ">=" || pair == "&&" || pair == "||" || pair == "+=" || pair == "-=" || pair == "*=" || pair == "/=") t.text += take();
-            else if (std::string_view("[]{}();:,.=+-*/!<>").find(t.text[0]) == std::string_view::npos) Fail(source, t, "Unexpected character");
+            if (pair == "==" || pair == "!=" || pair == "<=" || pair == ">=" || pair == "&&" || pair == "||" || pair == "+=" || pair == "-=" || pair == "*=" || pair == "/=" || pair == "&=") t.text += take();
+            else if (std::string_view("[]{}();:,.=+-*/!<>&").find(t.text[0]) == std::string_view::npos) Fail(source, t, "Unexpected character");
         }
         tokens.push_back(std::move(t));
         if (tokens.size() > 100000) Fail(source, tokens.back(), "Token limit exceeded");
@@ -113,7 +115,7 @@ class Parser {
         ~Guard() { --parser.depth; }
     };
     const Token& Current() const { return tokens[pos]; }
-    bool Is(std::string_view text) const { return Current().text == text && Current().kind != Token::String; }
+    bool Is(std::string_view text) const { return Current().text == text && Current().kind != Token::String && Current().kind != Token::Character; }
     bool Match(std::string_view text) { if (!Is(text)) return false; ++pos; return true; }
     Token Expect(std::string_view text) { Token t = Current(); if (!Match(text)) Fail(source, t, "Expected '" + std::string(text) + "'"); return t; }
     Token Identifier(bool type = false) {
@@ -126,7 +128,7 @@ class Parser {
         if (op == "&&") return 2;
         if (op == "==" || op == "!=") return 3;
         if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "is") return 4;
-        if (op == "+" || op == "-") return 5;
+        if (op == "+" || op == "-" || op == "&") return 5;
         if (op == "*" || op == "/") return 6;
         return 0;
     }
@@ -154,7 +156,10 @@ class Parser {
                     e->value = v;
                 } else e->value = static_cast<std::int64_t>(std::stoll(e->token.text));
             } catch (const std::out_of_range&) { Fail(source, e->token, "Numeric literal out of range"); }
-        } else if (Current().kind == Token::String) { e->value = Current().text; ++pos; }
+        } else if (Current().kind == Token::String || Current().kind == Token::Character) {
+            try {if(Current().kind==Token::Character)e->value=text::Character(Current().text);else {text::Offsets(Current().text);e->value=Current().text;}}
+            catch(const std::exception& error){Fail(source,Current(),error.what());}++pos;
+        }
         else if (Match("true")) e->value = true;
         else if (Match("false")) e->value = false;
         else if (Match("null")) e->value = ObjectRef{};
@@ -191,7 +196,7 @@ class Parser {
     Stmt Statement() {
         Guard guard(*this);
         Stmt s; s.token = Current();
-        if (Is("export") || Is("label")) Fail(source, Current(), "Inspector declarations are only allowed at class scope");
+        if (Is("export") || Is("label") || Is("multiline")) Fail(source, Current(), "Inspector declarations are only allowed at class scope");
         if (Match("{")) {
             while (!Is("}")) { if (Current().kind == Token::End) Fail(source, Current(), "Unterminated block"); s.children.push_back(Statement()); }
             Expect("}"); return s;
@@ -215,7 +220,7 @@ class Parser {
             if (Match("=")) s.expressions.push_back(Expression());
         } else {
             s.kind = Stmt::Expression; s.expressions.push_back(Expression());
-            if (Is("=") || Is("+=") || Is("-=") || Is("*=") || Is("/=")) {
+            if (Is("=") || Is("+=") || Is("-=") || Is("*=") || Is("/=") || Is("&=")) {
                 s.operation = Current().text; ++pos; s.kind = Stmt::Assignment; s.expressions.push_back(Expression());
             }
         }
@@ -248,14 +253,17 @@ public:
                     if (!Is("{")) Fail(source, Current(), "Expected function body");
                     f.body = Statement(); c.methods.push_back(std::move(f));
                 } else {
-                    const bool exported = Match("export");
+                    bool exported=false,multiline=false;
+                    while(Is("export") || Is("multiline")) {const bool multi=Match("multiline");if(!multi)Expect("export");auto& flag=multi?multiline:exported;if(flag)Fail(source,Current(),"Duplicate field tag");flag=true;}
                     if (exported && (Current().kind != Token::Identifier || Is("func") || Is("label") || Is("export")))
                         Fail(source, Current(), "Export must precede a typed class field");
                     FieldAst field; field.type = Identifier(true).text; field.name = Identifier();
+                    if(multiline && (!exported || field.type!="string"))Fail(source,field.name,"multiline requires an exported string field");
                     if (Match("=")) field.initializer = Expression();
                     Expect(";");
                     if (exported) {
                         InspectorEntry entry; entry.kind = InspectorEntry::Kind::Field; entry.name = field.name.text; entry.type = field.type;
+                        entry.multiline=multiline;
                         entry.declaringClass = c.name.text; entry.source = source; entry.line = field.name.line; entry.column = field.name.column;
                         c.inspector.push_back(std::move(entry));
                     }
@@ -268,7 +276,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, IsType, MakeVector, SetComponent, Self, Input, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, IsType, MakeVector, SetComponent, Self, Input, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -286,11 +294,14 @@ struct Class {
     Function initializer;
 };
 bool Numeric(const std::string& t) { return t == "int" || t == "float"; }
+bool TextType(const std::string& t) { return t=="string" || t=="char"; }
+bool GlobalField(const std::string& name) {return name=="global_position" || name=="global_rotation" || name=="global_scale";}
 Value DefaultValue(const std::string& t) {
     if (t == "int") return std::int64_t{0};
     if (t == "float") return 0.0;
     if (t == "bool") return false;
     if (t == "string") return std::string{};
+    if (t == "char") return char32_t{};
     if (t == "void") return {};
     if (t == "Vector3") return Vector3{};
     return ObjectRef{};
@@ -300,9 +311,10 @@ struct Program::Impl {
     std::string source;
     std::map<std::string, Class> classes;
     ProgramStats stats;
-    bool IsType(const std::string& t) const { return t == "array" || t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || classes.contains(t); }
+    bool IsType(const std::string& t) const { return t == "char" || t == "array" || t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || classes.contains(t); }
     bool Assignable(const std::string& target, const std::string& from) const {
         if (target == from || (target == "float" && from == "int")) return true;
+        if(target=="string" && from=="char")return true;
         if (!classes.contains(target)) return false;
         if (from == "null") return true;
         auto it = classes.find(from);
@@ -375,9 +387,9 @@ class BytecodeCompiler {
             Emit(Op::MakeArray, t, e.children.size()); return "array";
         }
         if (e.kind == Expr::Index) {
-            Compatible("array", Expression(*e.children[0]), t);
+            const auto receiver=Expression(*e.children[0]);Require(receiver=="array" || receiver=="string" || receiver=="any",t,"Indexing requires an array or string");
             Compatible("int", Expression(*e.children[1]), t);
-            Emit(Op::ArrayGet, t); return "any";
+            Emit(Op::ArrayGet, t); return receiver=="string"?"char":"any";
         }
         if (e.kind == Expr::IsType) {
             Require(Expression(*e.children[0]) != "void", t, "Cannot test a void value");
@@ -391,6 +403,7 @@ class BytecodeCompiler {
             if (std::holds_alternative<double>(e.value)) return "float";
             if (std::holds_alternative<bool>(e.value)) return "bool";
             if (std::holds_alternative<std::string>(e.value)) return "string";
+            if (std::holds_alternative<char32_t>(e.value)) return "char";
             return "null";
         }
         if (e.kind == Expr::Name) {
@@ -420,6 +433,13 @@ class BytecodeCompiler {
             if (callee.kind == Expr::Name) { Emit(Op::Self, t); receiver = owner.name; }
             else if (callee.kind == Expr::Member) receiver = Expression(*callee.children[0]);
             else Fail(program.source, t, "Expected a method or class name");
+            if(receiver=="string" || (receiver=="any" && (callee.token.text=="truncate" || callee.token.text=="substr"))) {
+                const auto& method=callee.token.text;
+                Require(method=="size" || method=="truncate" || method=="substr",t,"Unknown string method");
+                Require(e.children.size()==(method=="size"?1:method=="truncate"?2:3),t,"Wrong string argument count");
+                for(std::size_t i=1;i<e.children.size();++i)Compatible("int",Expression(*e.children[i]),t);
+                Emit(Op::TextCall,t,e.children.size()-1,method);return method=="size"?"int":"string";
+            }
             if (receiver == "array" || receiver == "any") {
                 const auto& method = callee.token.text;
                 Require(method == "append" || method == "erase" || method == "size", t, "Unknown array method");
@@ -471,19 +491,20 @@ class BytecodeCompiler {
             return "bool";
         }
         auto right = Expression(*e.children[1]);
-        static const std::map<std::string, Op> operators = {{"+", Op::Add}, {"-", Op::Subtract}, {"*", Op::Multiply}, {"/", Op::Divide}, {"==", Op::Equal}, {"!=", Op::NotEqual}, {"<", Op::Less}, {"<=", Op::LessEqual}, {">", Op::Greater}, {">=", Op::GreaterEqual}};
+        static const std::map<std::string, Op> operators = {{"&", Op::Concat},{"+", Op::Add}, {"-", Op::Subtract}, {"*", Op::Multiply}, {"/", Op::Divide}, {"==", Op::Equal}, {"!=", Op::NotEqual}, {"<", Op::Less}, {"<=", Op::LessEqual}, {">", Op::Greater}, {">=", Op::GreaterEqual}};
         if (t.text == "==" || t.text == "!=") {
             Require(left != "void" && right != "void" && (left == "any" || right == "any" || program.Assignable(left, right) || program.Assignable(right, left)), t, "Incompatible equality operands");
             Emit(operators.at(t.text), t); return "bool";
         }
             if (t.text == "<" || t.text == "<=" || t.text == ">" || t.text == ">=") {
-            Require((Numeric(left) || left == "any") && (Numeric(right) || right == "any"), t, "Comparison operands must be numeric"); Emit(operators.at(t.text), t); return "bool";
+            Require((TextType(left) && TextType(right)) || ((Numeric(left) || left == "any") && (Numeric(right) || right == "any")) || (left=="any" && TextType(right)) || (right=="any" && TextType(left)), t, "Comparison operands must both be numeric or text"); Emit(operators.at(t.text), t); return "bool";
         }
         auto result = ArithmeticType(t.text, left, right, t); Emit(operators.at(t.text), t); return result;
     }
     std::string ArithmeticType(const std::string& op, const std::string& left, const std::string& right, const Token& t) const {
         if (left != "void" && right != "void" && (left == "any" || right == "any")) return "any";
-        if (op == "+" && left == "string" && right == "string") return "string";
+        if ((op == "+" || op=="&") && TextType(left) && TextType(right)) return "string";
+        Require(op!="&",t,"Concatenation operands must be strings or characters");
         if ((op == "+" || op == "-") && left == "Vector3" && right == "Vector3") return "Vector3";
         if ((op == "*" || op == "/") && left == "Vector3" && Numeric(right)) return "Vector3";
         if (op == "*" && Numeric(left) && right == "Vector3") return "Vector3";
@@ -502,6 +523,7 @@ class BytecodeCompiler {
         auto receiver = Expression(*e.children[0]);
         Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
         Require(receiver != "InputAction",e.token,"Input state is read-only");
+        Require(!(program.Assignable("Transform",receiver) && GlobalField(e.token.text)),e.token,"Global transform is read-only");
         return {FieldType(receiver, e.token), true, 0, e.token.text};
     }
     void Load(const Slot& slot, const Token& t) {
@@ -532,7 +554,7 @@ class BytecodeCompiler {
                 Compatible("int", Expression(*target.children[1]), t);
                 if (s.operation != "=") { Emit(Op::DuplicatePair, t); Emit(Op::ArrayGet, t); }
                 Require(Expression(*s.expressions[1]) != "void", t, "Array value cannot be void");
-                if (s.operation != "=") Emit(s.operation == "+=" ? Op::Add : s.operation == "-=" ? Op::Subtract : s.operation == "*=" ? Op::Multiply : Op::Divide, t);
+                if (s.operation != "=") Emit(s.operation == "&=" ? Op::Concat : s.operation == "+=" ? Op::Add : s.operation == "-=" ? Op::Subtract : s.operation == "*=" ? Op::Multiply : Op::Divide, t);
                 Emit(Op::ArraySet, t); return false;
             }
             const Expr* destination = &target;
@@ -550,7 +572,7 @@ class BytecodeCompiler {
             if (s.operation != "=") {
                 const auto op = s.operation.substr(0, 1);
                 actual = ArithmeticType(op, expected, actual, t);
-                Emit(op == "+" ? Op::Add : op == "-" ? Op::Subtract : op == "*" ? Op::Multiply : Op::Divide, t);
+                Emit(op == "&" ? Op::Concat : op == "+" ? Op::Add : op == "-" ? Op::Subtract : op == "*" ? Op::Multiply : Op::Divide, t);
             }
             Compatible(expected, actual, t);
             if (component) Emit(Op::SetComponent, target.token, 0, target.token.text);
@@ -601,6 +623,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Class transform; transform.name = "Transform";
     transform.signals = {"was_moved", "was_rotated", "was_scaled"};
     for (const auto& name : {"position", "rotation", "scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
+    for (const auto& name : {"global_position", "global_rotation", "global_scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
     program.classes.emplace("Transform", std::move(transform));
     Class gameObject; gameObject.name = "gameObject";
     gameObject.fields.push_back({Token{Token::Identifier, "transform"}, "Transform"});
@@ -707,6 +730,7 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
 }
 struct Runtime::Impl {
     struct Object {
+        ObjectRef transformOwner;
         const Class* type = nullptr;
         std::vector<Value> fields;
         std::map<std::string, std::vector<CallableRef>> connections;
@@ -754,7 +778,7 @@ struct Runtime::Impl {
     }
     std::size_t Index(const Value& value, std::size_t size, const Token& t) const {
         auto index = std::get_if<std::int64_t>(&value);
-        if (!index || *index < 0 || static_cast<std::uint64_t>(*index) >= size) Error(t, "Array index must be an in-range integer");
+        if (!index || *index < 0 || static_cast<std::uint64_t>(*index) >= size) Error(t, "Index must be an in-range integer");
         return static_cast<std::size_t>(*index);
     }
     ArrayRef MakeArray(std::vector<Value> values, const Token& t) {
@@ -769,6 +793,7 @@ struct Runtime::Impl {
         case 3: return "bool"; case 4: return "string"; case 6: return "Vector3";
         case 7: return "signal"; case 8: return "callable";
         case 9: ArrayId(value, t); return "array";
+        case 10: return "char";
         default: { auto ref = std::get<ObjectRef>(value); if (ref.id == 0 && ref.runtime == 0) return "null"; return Resolve(ref, t).type->name; }
         }
     }
@@ -776,13 +801,32 @@ struct Runtime::Impl {
         const auto from = Type(value, t);
         if (!program->Assignable(type, from)) Error(t, "Cannot assign '" + from + "' to '" + type + "'");
         if (type == "float" && from == "int") value = static_cast<double>(std::get<std::int64_t>(value));
+        if(type=="string" && from=="char")value=text::Encode(std::get<char32_t>(value));
+        if(auto c=std::get_if<char32_t>(&value);c && !text::Scalar(*c))Error(t,"Invalid Unicode character");
         if (auto v = std::get_if<double>(&value); v && !std::isfinite(*v)) Error(t, "Non-finite float");
         if (auto v = std::get_if<Vector3>(&value); v && (!std::isfinite(v->x) || !std::isfinite(v->y) || !std::isfinite(v->z))) Error(t, "Non-finite Vector3");
-        if (auto s = std::get_if<std::string>(&value); s && s->size() > limits.stringBytes) Error(t, "String size limit exceeded");
+        if(auto s=std::get_if<std::string>(&value)){
+            if(s->size()>limits.stringBytes)Error(t,"String size limit exceeded");
+            try{std::size_t at=0;while(at<s->size())text::Next(*s,at);}catch(const std::exception& error){Error(t,error.what());}
+        }
         return value;
+    }
+    Value Global(ObjectRef transform,const std::string& name,const Token& t) const {
+        auto matrix=world::Identity(),rotation=world::Identity();unsigned ancestors=0;
+        while(transform.id){
+            const auto p=std::get<Vector3>(Get(transform,"position",t)),r=std::get<Vector3>(Get(transform,"rotation",t)),s=std::get<Vector3>(Get(transform,"scale",t));
+            matrix=world::Multiply(matrix,world::Local(p,r,s));rotation=world::Multiply(rotation,world::Rotation(r));
+            const auto owner=Resolve(transform,t).transformOwner;
+            const auto parent=owner.id?std::get<ObjectRef>(Get(owner,"parent",t)):ObjectRef{};
+            if(parent.id && ++ancestors>64)Error(t,"Global transform hierarchy exceeds 64 levels");
+            transform=parent.id?std::get<ObjectRef>(Get(parent,"transform",t)):ObjectRef{};
+        }
+        Vector3 result=name=="global_position"?Vector3{matrix[3][0],matrix[3][1],matrix[3][2]}:name=="global_rotation"?world::Euler(rotation):world::Scale(matrix);
+        return Coerce(result,"Vector3",t);
     }
     Value Get(ObjectRef ref, const std::string& name, const Token& t = {}) const {
         auto& o = Resolve(ref, t); std::size_t index = 0;
+        if(program->Assignable("Transform",o.type->name) && GlobalField(name))return Global(ref,name,t);
         if (o.type->signals.contains(name)) return SignalRef{ref, name};
         if (program->Method(o.type->name, name)) return CallableRef{ref, name};
         if (!program->FindField(o.type->name, name, &index)) Error(t, "Unknown field '" + name + "'");
@@ -793,7 +837,13 @@ struct Runtime::Impl {
         auto field = program->FindField(o.type->name, name, &index);
         if (!field) Error(t, "Unknown field '" + name + "'");
         if(o.type->name=="InputAction")Error(t,"Input state is read-only");
+        if(program->Assignable("Transform",o.type->name) && GlobalField(name))Error(t,"Global transform is read-only");
         value = Coerce(std::move(value), field->type, t);
+        if(name=="transform" && program->Assignable("gameObject",o.type->name)){
+            const auto next=std::get<ObjectRef>(value),previous=std::get<ObjectRef>(o.fields[index]);
+            if(next.id){auto& target=Resolve(next,t);if(target.transformOwner.id && target.transformOwner!=ref)Error(t,"A Transform cannot belong to two GameObjects");target.transformOwner=ref;}
+            if(previous.id && previous!=next)Resolve(previous,t).transformOwner={};
+        }
         if(name=="parent" && program->Assignable("gameObject",o.type->name)) {
             auto parent=std::get<ObjectRef>(value);unsigned parentDepth=0;
             while(parent.id){if(parent==ref || ++parentDepth>64)Error(t,"Parenting would create a cycle or exceed 64 levels");parent=std::get<ObjectRef>(Get(parent,"parent",t));}
@@ -864,13 +914,34 @@ struct Runtime::Impl {
         while (c) { bases.push_back(c); c = c->base.empty() ? nullptr : &program->classes.at(c->base); }
         try {
                         if (program->Assignable("Transform", name)) Set(ref, "scale", Vector3{1, 1, 1}, t);
-            if (program->Assignable("gameObject", name)) Set(ref, "transform", Create("Transform", t), t);
+            if (program->Assignable("gameObject", name)) {const auto transform=Create("Transform",t);Resolve(transform,t).transformOwner=ref;Set(ref,"transform",transform,t);}
             for (auto it = bases.rbegin(); it != bases.rend(); ++it) Execute(ref, (*it)->initializer, {}, t);
         } catch (...) { objects[ref.id - 1]->failed = true; throw; }
         return ref;
     }
     static double Number(const Value& v) { if (auto i = std::get_if<std::int64_t>(&v)) return static_cast<double>(*i); return std::get<double>(v); }
+    static bool IsText(const Value& value){return std::holds_alternative<std::string>(value) || std::holds_alternative<char32_t>(value);}
+    static std::string Text(const Value& value){return std::holds_alternative<char32_t>(value)?text::Encode(std::get<char32_t>(value)):std::get<std::string>(value);}
+    std::vector<std::size_t> TextOffsets(const std::string& value,const Token& t) const {
+        if(value.size()>limits.stringBytes)Error(t,"String size limit exceeded");
+        try{return text::Offsets(value);}catch(const std::exception& error){Error(t,error.what());}
+    }
+    Value TextOperation(const Value& receiver,const std::string& method,const std::vector<Value>& args,const Token& t) const {
+        const auto* value=std::get_if<std::string>(&receiver);if(!value)Error(t,"String method requires a string");
+        const auto offsets=TextOffsets(*value,t);const auto size=offsets.size()-1;
+        if(method=="size" && args.empty())return static_cast<std::int64_t>(size);
+        if((method!="truncate" && method!="substr") || args.size()!=(method=="truncate"?1:2))Error(t,"Invalid string method or arguments");
+        const auto count=[&](const Value& argument){const auto* n=std::get_if<std::int64_t>(&argument);if(!n || *n<0)Error(t,"String positions and lengths must be nonnegative integers");return static_cast<std::uint64_t>(*n);};
+        if(method=="truncate")return value->substr(0,offsets[std::min<std::uint64_t>(count(args[0]),size)]);
+        const auto start=count(args[0]);if(start>size)Error(t,"String start is out of range");const auto length=std::min<std::uint64_t>(count(args[1]),size-start);
+        return value->substr(offsets[start],offsets[start+length]-offsets[start]);
+    }
     Value Arithmetic(Op op, Value left, Value right, const Token& t) const {
+        if((op==Op::Add || op==Op::Concat) && IsText(left) && IsText(right)){
+            auto a=Text(left);const auto b=Text(right);
+            if(a.size()>limits.stringBytes || b.size()>limits.stringBytes-a.size())Error(t,"String size limit exceeded");a+=b;return a;
+        }
+        if(op==Op::Concat)Error(t,"Concatenation operands must be strings or characters");
         const auto aType = Type(left,t), bType = Type(right,t);
         const bool valid = (Numeric(aType) && Numeric(bType)) ||
             (op == Op::Add && aType == "string" && bType == "string") ||
@@ -925,6 +996,10 @@ struct Runtime::Impl {
         return result;
     }
     Value Compare(Op op, const Value& a, const Value& b, const Token& t) const {
+        if(IsText(a) && IsText(b)){
+            const auto left=Text(a),right=Text(b);
+            switch(op){case Op::Equal:return left==right;case Op::NotEqual:return left!=right;case Op::Less:return left<right;case Op::LessEqual:return left<=right;case Op::Greater:return left>right;default:return left>=right;}
+        }
         auto numeric = [](const Value& v) { return std::holds_alternative<std::int64_t>(v) || std::holds_alternative<double>(v); };
         if (op == Op::Equal || op == Op::NotEqual) {
             bool equal = a.index() == b.index() ? a == b : (numeric(a) && numeric(b) && Number(a) == Number(b));
@@ -940,12 +1015,13 @@ struct Runtime::Impl {
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
         if(name=="find" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("find")) {
-            Tick(t);if(args.size()!=1 || !std::holds_alternative<std::string>(args[0]))Error(t,"find takes one scene object name");
-            return Coerce(objectLookup?Value{objectLookup(std::get<std::string>(args[0]))}:Value{ObjectRef{}},"gameObject",t);
+            Tick(t);if(args.size()!=1)Error(t,"find takes one scene object name");
+            const auto requested=std::get<std::string>(Coerce(args[0],"string",t));
+            return Coerce(objectLookup?Value{objectLookup(requested)}:Value{ObjectRef{}},"gameObject",t);
         }
         if(object.type->name=="InputService") {
-            if(args.size()!=1 || !std::holds_alternative<std::string>(args[0]))Error(t,"Input calls take one action name");
-            const auto& action=std::get<std::string>(args[0]);const auto found=inputFrame.find(action);
+            if(args.size()!=1)Error(t,"Input calls take one action name");
+            const auto action=std::get<std::string>(Coerce(args[0],"string",t));const auto found=inputFrame.find(action);
             const InputState empty;const auto& state=found==inputFrame.end()?empty:found->second;
             if(name=="action") {
                 if(found==inputFrame.end())Error(t,"Unknown input action '"+action+"'");
@@ -987,7 +1063,9 @@ struct Runtime::Impl {
                 stack.push_back(MakeArray(std::move(values),t)); break;
             }
             case Op::ArrayGet: {
-                auto index = pop(); const auto& items = arrays[ArrayId(pop(),t)];
+                auto index = pop(),receiver=pop();
+                if(const auto* string=std::get_if<std::string>(&receiver)){const auto offsets=TextOffsets(*string,t);auto at=offsets[Index(index,offsets.size()-1,t)];stack.push_back(text::Next(*string,at));break;}
+                const auto& items = arrays[ArrayId(receiver,t)];
                 stack.push_back(items[Index(index,items.size(),t)]); break;
             }
             case Op::ArraySet: {
@@ -995,7 +1073,9 @@ struct Runtime::Impl {
                 items[Index(index,items.size(),t)] = Coerce(value,Type(value,t),t); break;
             }
             case Op::ArrayCall: {
-                Value argument; if (ins.a) argument = pop(); auto& items = arrays[ArrayId(pop(),t)];
+                Value argument; if (ins.a) argument = pop();auto receiver=pop();
+                if(std::holds_alternative<std::string>(receiver)){stack.push_back(TextOperation(receiver,ins.name,ins.a?std::vector<Value>{argument}:std::vector<Value>{},t));break;}
+                auto& items = arrays[ArrayId(receiver,t)];
                 if (ins.name == "size") stack.push_back(static_cast<std::int64_t>(items.size()));
                 else {
                     if (ins.name == "append") {
@@ -1005,6 +1085,10 @@ struct Runtime::Impl {
                     stack.push_back({});
                 }
                 break;
+            }
+            case Op::TextCall: {
+                std::vector<Value> arguments(ins.a);for(std::size_t i=ins.a;i>0;--i)arguments[i-1]=pop();
+                stack.push_back(TextOperation(pop(),ins.name,arguments,t));break;
             }
             case Op::IsType: {
                 const auto actual = Type(pop(),t);
@@ -1057,7 +1141,7 @@ struct Runtime::Impl {
             case Op::Not: stack.push_back(!std::get<bool>(Coerce(pop(),"bool",t))); break;
             case Op::Jump: pc = ins.a; break;
             case Op::JumpFalse: if (!std::get<bool>(Coerce(pop(),"bool",t))) pc = ins.a; break;
-            case Op::Add: case Op::Subtract: case Op::Multiply: case Op::Divide: {
+            case Op::Concat: case Op::Add: case Op::Subtract: case Op::Multiply: case Op::Divide: {
                 auto right = pop(), left = pop(); stack.push_back(Arithmetic(ins.op, std::move(left), std::move(right), t)); break;
             }
             default: { auto right = pop(), left = pop(); stack.push_back(Compare(ins.op, left, right,t)); break; }

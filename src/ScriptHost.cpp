@@ -1,4 +1,5 @@
 #include "ScriptHost.h"
+#include "zscript/Text.h"
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -17,7 +18,7 @@ namespace
         if (!valid(v.x) || !valid(v.y) || !valid(v.z)) throw std::runtime_error("Script transform exceeds native float range.");
         return {static_cast<float>(v.x),static_cast<float>(v.y),static_cast<float>(v.z)};
     }
-    bool Editable(const std::string& type) { return type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3"; }
+    bool Editable(const std::string& type) { return type=="char" || type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3"; }
     std::string Format(const Value& value)
     {
         std::ostringstream text; text.imbue(std::locale::classic()); text<<std::setprecision(17);
@@ -25,6 +26,7 @@ namespace
         else if (const auto* v=std::get_if<double>(&value)) text<<*v;
         else if (const auto* v=std::get_if<bool>(&value)) text<<(*v?"true":"false");
         else if (const auto* v=std::get_if<std::string>(&value)) return *v;
+        else if(const auto* v=std::get_if<char32_t>(&value))return *v?script::text::Encode(*v):"\\0";
         else if (const auto* v=std::get_if<Vector3>(&value)) text<<v->x<<", "<<v->y<<", "<<v->z;
         else if (std::holds_alternative<ArrayRef>(value)) return "(array - read only)";
         else return "(object reference - read only)";
@@ -33,6 +35,7 @@ namespace
     Value Parse(const std::string& type, const std::string& text)
     {
         if (type=="string") return text;
+        if(type=="char")return text=="\\0"?char32_t{}:script::text::Character(text);
         if (type=="bool") { if (text=="true") return true; if (text=="false") return false; throw std::invalid_argument("Use true or false."); }
         std::istringstream stream(text); stream.imbue(std::locale::classic());
         Value value;
@@ -164,7 +167,7 @@ std::vector<ScriptHost::Field> ScriptHost::Fields(ScriptBehavior& behavior)
     for (const auto& entry:r.program->InspectorLayout(r.className))
     {
         if (entry.kind==script::InspectorEntry::Kind::Label) result.push_back({{},{},entry.text,{},false});
-        else result.push_back({entry.name,entry.type,{},Format(live ? live->runtime.Get(live->object,entry.name) : r.preview->Get(r.object,entry.name)),Editable(entry.type)});
+        else result.push_back({entry.name,entry.type,{},Format(live ? live->runtime.Get(live->object,entry.name) : r.preview->Get(r.object,entry.name)),Editable(entry.type),entry.multiline});
     }
     return result;
 }

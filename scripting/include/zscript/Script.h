@@ -38,7 +38,7 @@ struct ArrayRef {
     std::size_t id = 0;
     bool operator==(const ArrayRef&) const = default;
 };
-using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef, ArrayRef>;
+using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef, ArrayRef, char32_t>;
 struct Diagnostic {
     std::string source;
     std::size_t line = 1;
@@ -67,6 +67,7 @@ struct InspectorEntry {
     std::string type; // Canonical field type; empty for labels.
     std::string text; // Label text; empty for fields.
     std::string declaringClass;
+    bool multiline = false;
     std::string source;
     std::size_t line = 1;
     std::size_t column = 1;

@@ -1,4 +1,5 @@
 #include "Scene.h"
+#include "zscript/Text.h"
 #include "core/MeshRenderer.h"
 #include <cmath>
 #include <iomanip>
@@ -40,6 +41,7 @@ namespace
         else if (const auto* v=std::get_if<double>(&value)) { Require(std::isfinite(*v),"Invalid script value."); out<<"float "<<*v; }
         else if (const auto* v=std::get_if<bool>(&value)) out<<"bool "<<(*v?1:0);
         else if (const auto* v=std::get_if<std::string>(&value)) out<<"string "<<std::quoted(*v);
+        else if(const auto* v=std::get_if<char32_t>(&value)){Require(script::text::Scalar(*v),"Invalid character.");out<<"char "<<static_cast<std::uint32_t>(*v);}
         else if (const auto* v=std::get_if<script::Vector3>(&value))
         { Require(std::isfinite(v->x)&&std::isfinite(v->y)&&std::isfinite(v->z),"Invalid script vector."); out<<"Vector3 "<<v->x<<' '<<v->y<<' '<<v->z; }
         else throw std::runtime_error("Cannot persist a runtime object reference.");
@@ -51,6 +53,7 @@ namespace
         if (type=="float") return Number(in);
         if (type=="bool") return Boolean(in);
         if (type=="string") return Text(in);
+        if(type=="char"){std::uint32_t value;Require(static_cast<bool>(in>>value) && script::text::Scalar(static_cast<char32_t>(value)),"Invalid character.");return static_cast<char32_t>(value);}
         if (type=="Vector3") { const double x=Number(in),y=Number(in),z=Number(in); return script::Vector3{x,y,z}; }
         throw std::runtime_error("Unsupported scene variable type.");
     }

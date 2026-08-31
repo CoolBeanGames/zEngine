@@ -613,11 +613,11 @@ void BuildTests() {
     const auto inputSource=zengine::input::Load(assets);zengine::input::Save(assets,map,&inputSource);
     std::filesystem::create_directory(assets/L"Scripts");
     const auto script=zengine::scripts::Create(assets/L"Scripts","Spinner");const auto original=zengine::scripts::Load(script);
-    zengine::scripts::Save(assets,script,"class Spinner : gameObject { export float speed=60; func start(){parent=find(\"Root\");transform.position.x+=2;} func update(float dt){transform.rotation.y+=speed*dt; if(Input.is_action_just_pressed(\"move\")){transform.position.y+=3;}} }",&original);
+    zengine::scripts::Save(assets,script,"class Spinner : gameObject { export float speed=60; export char suffix='?'; multiline export string note=\"a\\nb\"; func start(){parent=find(\"Root\");string word=\"ab\" & suffix;if(word[2]=='!' && note.truncate(1)==\"a\"){transform.position.x+=2;}Vector3 global=transform.global_position;if(global.x!=3){transform.position.x=999;}} func update(float dt){transform.rotation.y+=speed*dt; if(Input.is_action_just_pressed(\"move\")){transform.position.y+=3;}} }",&original);
     std::vector<std::string> warnings;const auto model=FbxImporter::Import(CreateSource(test.path/L"source"),assets/L"Models",warnings);
     zengine::scenes::Document scene;zengine::scenes::ObjectData object;object.id=1;object.name="Exported Actor";
     zengine::scenes::BehaviorData mesh;const auto modelRef=std::filesystem::relative(model,assets).generic_u8string();mesh.asset.assign(modelRef.begin(),modelRef.end());object.behaviors.push_back(mesh);
-    zengine::scenes::BehaviorData behavior;behavior.kind=zengine::scenes::BehaviorData::Kind::Script;behavior.asset="Scripts/Spinner.zsh";behavior.variables["speed"]=120.0;object.behaviors.push_back(behavior);scene.objects.push_back(object);
+    zengine::scenes::BehaviorData behavior;behavior.kind=zengine::scenes::BehaviorData::Kind::Script;behavior.asset="Scripts/Spinner.zsh";behavior.variables["speed"]=120.0;behavior.variables["suffix"]=U'!';object.behaviors.push_back(behavior);scene.objects.push_back(object);
     zengine::scenes::ObjectData parent;parent.id=2;parent.name="Root";parent.transform.SetPosition({1,0,0});scene.objects.push_back(parent);
     const auto first=assets/L"First.zscene";zengine::scenes::Save(assets,first,zengine::scenes::Encode(scene));zengine::projects::TrackScene(project,first);
     scene.objects[0].name="Second Actor";scene.objects[0].behaviors[1].variables["speed"]=30.0;
@@ -683,6 +683,31 @@ void FolderTests(bool capture) {
     }
     CoUninitialize();std::cout<<"PASS: folder creation, scoped listing, navigation, nested script/scene/prefab/model assets, protected Input Map, path containment\n";
 }
+void TextInspectorTests(bool capture) {
+    TestDirectory test;Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));const auto window=editor.Create(SW_HIDE,test.path/L"Project");editor.InitializeRenderer();
+        Require(editor.SaveScene(editor.AssetsDirectory()/L"Initial.zscene") && editor.NewScene(),"Text test scene setup");
+        const auto id=editor.CreateEmptyGameObject().Id();const auto script=editor.CreateScriptAsset();
+        const auto source=zengine::scripts::Load(script);
+        zengine::scripts::Save(editor.AssetsDirectory(),script,"class NewBehavior : gameObject {multiline export string notes=\"first\\nsecond\";export char mark='A';export string single=\"one line\";}",&source);
+        Require(editor.AttachScript(id,script),"Attach text script");
+        const auto inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr),notes=GetDlgItem(inspector,InspectorPanel::FirstBehaviorField+2),single=GetDlgItem(inspector,InspectorPanel::FirstBehaviorField+4);
+        Require(notes && (GetWindowLongPtrW(notes,GWL_STYLE)&ES_MULTILINE) && !(GetWindowLongPtrW(single,GWL_STYLE)&ES_MULTILINE),"Multiline style leaked or was omitted");
+        Require(SendMessageW(notes,EM_GETLINECOUNT,0,0)==2,"Initial LF text did not display on separate lines");
+        SetFocus(notes);SetWindowTextW(notes,L"hello\r\nworld");const auto end=GetWindowTextLengthW(notes);SendMessageW(notes,EM_SETSEL,end,end);SendMessageW(notes,WM_CHAR,VK_RETURN,0);
+        Require(SendMessageW(notes,EM_GETLINECOUNT,0,0)==3,"Enter did not insert a newline");
+        SetDlgItemTextW(inspector,InspectorPanel::FirstBehaviorField+3,L"\u00e9");Require(editor.SaveScene(),"Save multiline/character fields");
+        const auto scene=editor.ScenePath();const auto document=zengine::scenes::Decode(zengine::scenes::Load(scene));
+        const auto& variables=document.objects[0].behaviors[0].variables;
+        Require(std::get<std::string>(variables.at("notes"))=="hello\nworld\n",("Multiline value was not persisted canonically: "+std::get<std::string>(variables.at("notes"))).c_str());
+        Require(std::get<char32_t>(variables.at("mark"))==U'\u00e9',"Character inspector value not persisted");
+        Require(editor.OpenScene(scene),"Reload text scene");
+        Require(SendMessageW(GetDlgItem(inspector,InspectorPanel::FirstBehaviorField+2),EM_GETLINECOUNT,0,0)==3,"Multiline text lost on reload");
+        if(capture){editor.Render();CaptureWindow(window,L"text-inspector-qa.bmp");}
+    }
+    CoUninitialize();std::cout<<"PASS: multiline Inspector style, Enter/newlines, character values, saving and reloading\n";
+}
 void HierarchyTests(bool capture) {
     TestDirectory test;Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
     {
@@ -730,6 +755,7 @@ int main(int argc, char** argv)
         if (argc > 1 && std::string(argv[1]) == "--gpu") GpuTests();
         else if(argc>1 && std::string(argv[1])=="--folders")FolderTests(argc>2);
         else if(argc>1 && std::string(argv[1])=="--hierarchy")HierarchyTests(argc>2);
+        else if(argc>1 && std::string(argv[1])=="--text")TextInspectorTests(argc>2);
         else if(argc>1 && std::string(argv[1])=="--build")BuildTests();
         else if(argc>1 && std::string(argv[1])=="--editor-build")EditorBuildTests();
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();

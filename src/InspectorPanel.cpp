@@ -138,17 +138,17 @@ void InspectorPanel::RefreshBehaviors()
     updating_=true;
     for (auto& entry:behaviorFields_) if (entry.field.window) DestroyWindow(entry.field.window);
     behaviorFields_.clear();
-    const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable, BehaviorField::Style style=BehaviorField::Style::Normal) {
+    const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable, BehaviorField::Style style=BehaviorField::Style::Normal,bool multiline=false) {
         BehaviorField entry; entry.behavior=behavior; entry.name=std::move(name); entry.label=std::move(label); entry.priority=priority;
-        entry.style=style;
+        entry.style=style;entry.multiline=multiline;
         if (field)
         {
             const auto id=FirstBehaviorField+behaviorFields_.size();
-            entry.field.window=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|ES_AUTOHSCROLL|((editable && editData_)?0:ES_READONLY),
+            entry.field.window=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|(multiline?(ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL):ES_AUTOHSCROLL)|((editable && editData_)?0:ES_READONLY),
                 0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
             if (!entry.field.window) throw std::runtime_error("Cannot create script field.");
             SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
-            SendMessageW(entry.field.window,EM_SETLIMITTEXT,4096,0);
+            SendMessageW(entry.field.window,EM_SETLIMITTEXT,multiline?65536:4096,0);
             SetWindowSubclass(entry.field.window,EditProcedure,1,reinterpret_cast<DWORD_PTR>(this));
         }
         behaviorFields_.push_back(std::move(entry));
@@ -175,7 +175,7 @@ void InspectorPanel::RefreshBehaviors()
                     continue;
                 }
                 add(&behavior,field.name,field.name.empty()?Wide(field.label):Wide(field.name+" ("+field.type+")"),false,!field.name.empty(),field.editable,
-                    field.name.empty()?BehaviorField::Style::ScriptLabel:BehaviorField::Style::Normal);
+                    field.name.empty()?BehaviorField::Style::ScriptLabel:BehaviorField::Style::Normal,field.multiline);
             }
         }
     }
@@ -202,7 +202,7 @@ int InspectorPanel::BehaviorHeight() const
 int InspectorPanel::RowHeight(const BehaviorField& entry) const
 {
     if(entry.axis>=0)return entry.axis==2?72:0;
-    return entry.style==BehaviorField::Style::BehaviorHeader ? behaviorHeaderHeight_ : entry.field.window?52:24;
+    return entry.style==BehaviorField::Style::BehaviorHeader ? behaviorHeaderHeight_ : entry.multiline?112:entry.field.window?52:24;
 }
 std::wstring InspectorPanel::BehaviorValue(std::size_t index)
 {
@@ -210,7 +210,7 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
     if (entry.priority) { std::wostringstream out; out<<std::setprecision(9)<<entry.behavior->Priority(); return out.str(); }
     if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
         for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name) {
-            if(entry.axis<0)return Wide(field.value);
+            if(entry.axis<0){auto value=Wide(field.value);if(entry.multiline){std::wstring display;for(std::size_t i=0;i<value.size();++i){if(value[i]==L'\n' && (!i || value[i-1]!=L'\r'))display+=L'\r';display+=value[i];}return display;}return value;}
             auto values=Wide(field.value);std::replace(values.begin(),values.end(),L',',L' ');
             std::wistringstream input(values);double v=0;
             for(int axis=0;axis<=entry.axis;++axis)input>>v;
@@ -235,7 +235,7 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
             entry.behavior->SetPriority(value);
         }
         else if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_) {
-            if(entry.axis<0)scriptHost_->SetField(*script,entry.name,Utf8(text));
+            if(entry.axis<0){auto value=Utf8(text);if(entry.multiline){std::string normalized;for(std::size_t i=0;i<value.size();++i){if(value[i]=='\r' && i+1<value.size() && value[i+1]=='\n')continue;normalized+=value[i];}value=std::move(normalized);}scriptHost_->SetField(*script,entry.name,value);}
             else {
                 wchar_t* end=nullptr;errno=0;const double value=std::wcstod(text.c_str(),&end);
                 if(end==text.c_str())throw std::invalid_argument("Invalid vector component");
@@ -407,7 +407,7 @@ void InspectorPanel::Layout()
     {
         if (entry.field.window) {
             if(entry.axis>=0) {const int cell=std::max(30,(width-36)/3);MoveWindow(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24,TRUE);}
-            else MoveWindow(entry.field.window,12,y+21,std::max(30,width-24),24,TRUE);
+            else MoveWindow(entry.field.window,12,y+21,std::max(30,width-24),entry.multiline?84:24,TRUE);
         }
         y+=RowHeight(entry);
     }
@@ -568,6 +568,7 @@ LRESULT InspectorPanel::HandleEdit(HWND window, UINT message, WPARAM w, LPARAM l
     const int dynamicIndex=GetDlgCtrlID(window)-FirstBehaviorField;
     if (dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()))
     {
+        if(behaviorFields_[dynamicIndex].multiline && (message==WM_KEYDOWN || message==WM_CHAR) && w==VK_RETURN)return DefSubclassProc(window,message,w,l);
         if (message==WM_GETDLGCODE) return DLGC_WANTALLKEYS;
         if (message==WM_KEYDOWN && (w==VK_RETURN || w==VK_ESCAPE || w==VK_TAB))
         {

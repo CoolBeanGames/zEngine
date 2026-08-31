@@ -11,7 +11,7 @@ namespace zengine
     class ScriptHost final
     {
     public:
-        struct Field { std::string name, type, label, value; bool editable = false; };
+        struct Field { std::string name, type, label, value; bool editable = false; bool multiline=false; };
         bool Prepare(ScriptBehavior&, std::string source, std::string className);
         std::vector<Field> Fields(ScriptBehavior&);
         void SetField(ScriptBehavior&, const std::string& name, const std::string& text);

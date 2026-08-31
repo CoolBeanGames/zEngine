@@ -126,12 +126,12 @@ namespace zengine::scripts
                 else while (p < source.size() && source[p] != L'\r' && source[p] != L'\n') ++p;
                 out.spans.push_back({start, p-start, TokenKind::Comment}); continue;
             }
-            if (c == L'"')
+            if (c == L'"' || c==L'\'')
             {
                 bool closed = false;
                 while (p < source.size() && source[p] != L'\r' && source[p] != L'\n')
                 {
-                    if (source[p] == L'"') { ++p; closed = true; break; }
+                    if (source[p] == c) { ++p; closed = true; break; }
                     if (source[p] == L'\\' && p+1 < source.size() && source[p+1] != L'\r' && source[p+1] != L'\n') ++p;
                     ++p;
                 }
@@ -144,9 +144,9 @@ namespace zengine::scripts
                 while (p < source.size() && (std::iswalnum(source[p]) || source[p] == L'_')) ++p;
                 const auto word = source.substr(start, p-start);
                 if (word == L"class" || word == L"func" || word == L"return" || word == L"if" || word == L"else" ||
-                    word == L"while" || word == L"true" || word == L"false" || word == L"null" || word == L"this" || word == L"export" || word == L"label" || word == L"signal" || word == L"Input" || word == L"is")
+                    word == L"while" || word == L"true" || word == L"false" || word == L"null" || word == L"this" || word == L"export" || word == L"multiline" || word == L"label" || word == L"signal" || word == L"Input" || word == L"is")
                     out.spans.push_back({start,p-start,TokenKind::Keyword});
-                else if (word == L"int" || word == L"float" || word == L"bool" || word == L"string" || word == L"void" || word == L"gameObject" || word == L"GameObject" || word == L"Transform" || word == L"Vector3" || word == L"array")
+                else if (word == L"char" || word == L"int" || word == L"float" || word == L"bool" || word == L"string" || word == L"void" || word == L"gameObject" || word == L"GameObject" || word == L"Transform" || word == L"Vector3" || word == L"array")
                     out.spans.push_back({start,p-start,TokenKind::Type});
                 continue;
             }

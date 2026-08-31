@@ -126,7 +126,22 @@ int main()
         Check(!parenting.Faulted() && !observer.Faulted() && target.GetTransform().Position().x==8,"Later behavior did not observe earlier reparent/transform changes");
         hierarchyHost.Tick(hierarchy,0.1f);Check(target.GetTransform().Position().x==24,"Scene proxy synchronization clobbered another behavior's edits");
         hierarchyHost.Stop(hierarchy);Check(child.Parent()==root.Id() && target.GetTransform().Position().x==0,"Cross-VM Play state was not restored");
-        std::cout<<"PASS: Play/Stop, native movement, exported values, instances, priorities, Draw gating, failure isolation, metadata, signals, parenting and object lookup\n";
+        ObjectStore globals;ScriptHost globalsHost;auto& platform=globals.Create("Platform");auto& actor=globals.Create("Actor");
+        platform.GetTransform().SetPosition({10,0,0});platform.GetTransform().SetRotation({0,0,90});platform.GetTransform().SetScale({2,3,4});
+        actor.GetTransform().SetPosition({1,0,0});auto& reader=actor.AddBehavior<ScriptBehavior>("Reader.zsh");
+        Check(globalsHost.Prepare(reader,R"(class Reader : gameObject {
+            export Vector3 position; export Vector3 rotation; export Vector3 scale;
+            multiline export string notes="one\ntwo"; export char letter='A';
+            func start(){parent=find("Platform");parent.transform.position.x+=1;position=transform.global_position;rotation=transform.global_rotation;scale=transform.global_scale;}
+        })","Reader"),"Global reader compile");
+        globalsHost.SetField(reader,"letter","\xc3\xa9");Rejected([&]{globalsHost.SetField(reader,"letter","ab");});
+        Check(Value(globalsHost,reader,"letter")=="\xc3\xa9","Character inspector parse lost Unicode");
+        const auto exported=globalsHost.Fields(reader);Check(exported.size()==5 && exported[3].multiline,"Global fields leaked into Inspector or multiline tag missing");
+        Check(globalsHost.Play(globals) && !reader.Faulted(),"Global reader Play");
+        Check(Value(globalsHost,reader,"position").starts_with("11, 2,"),"Same-callback reparent/global transform read stale");
+        Check(Value(globalsHost,reader,"rotation")=="0, -0, 90" || Value(globalsHost,reader,"rotation")=="0, 0, 90","Global rotation mismatch");
+        Check(Value(globalsHost,reader,"scale")=="2, 3, 4","Global scale mismatch");globalsHost.Stop(globals);
+        std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, script global transforms and text metadata\n";
         return 0;
     }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }

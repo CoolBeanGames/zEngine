@@ -1,6 +1,7 @@
 #include "zscript/Script.h"
 #include <fstream>
 #include <functional>
+#include <cmath>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -222,7 +223,7 @@ void InspectorDiagnostics() {
     const std::vector<std::pair<std::string, std::string>> cases = {
         {"class A { export func f() {} }", "typed class field"},
         {"class A { export label(\"Wrong\"); }", "typed class field"},
-        {"class A { export export int count; }", "typed class field"},
+        {"class A { export export int count; }", "Duplicate field tag"},
         {"class A { export }", "typed class field"},
         {"class A { export Missing value; }", "field type"},
         {"class A { export void value; }", "field type"},
@@ -346,8 +347,53 @@ void Parenting() {
     limited.SetObjectLookup([&](std::string_view){auto proxy=limited.Create("gameObject");limited.Set(proxy,"parent",ObjectRef{},false);return proxy;});
     Error([&]{limited.Call(ref,"loop");},"Instruction budget");
 }
+void TextAndGlobalTransforms() {
+    auto p=Compile(R"(class A : gameObject {
+        multiline export string description="first\nsecond";
+        export char initial='A';
+        string word="hé🙂";
+        func run():bool {
+            char c=word[1]; string combined='a'+'b'; combined &= 'c'; combined += "d";
+            array mixed=[word,'x']; string shortened=word.truncate(2);
+            return c is char && c=='é' && word[2]=='🙂' && word.size()==3 &&
+                shortened=="hé" && word.size()==3 && word.substr(1,20)=="é🙂" &&
+                word.substr(3,2)=="" && word.truncate(0)=="" && combined=="abcd" &&
+                "hello" & '!' == "hello!" && 'a'<'b' && "abc"<"abd" && 'a'=="a" &&
+                mixed[0].size()==3 && mixed[0].truncate(1)=="h" && mixed[1] is char;
+        }
+        func badIndex(){char c=word[3];}
+        func negative(){string s=word.truncate(-1);}
+        func badStart(){string s=word.substr(4,1);}
+        func concatenate():string{return word & word;}
+        func char_input():bool{return Input.is_action_pressed('x');}
+        func char_lookup():gameObject{return find('P');}
+    })");
+    Runtime r(p);const auto a=r.Create("A"),parent=r.Create("gameObject");
+    InputState pressed;pressed.pressed=true;r.SetInput({{"x",pressed}});Check(std::get<bool>(r.Call(a,"char_input")),"Character did not coerce to native input string");
+    r.SetObjectLookup([&](std::string_view name){return name=="P"?parent:ObjectRef{};});Check(std::get<ObjectRef>(r.Call(a,"char_lookup"))==parent,"Character did not coerce to lookup name");
+    Check(std::get<bool>(r.Call(a,"run")),"Unicode chars, concatenation, comparison, indexing or truncation failed");
+    Check(p->InspectorLayout("A")[0].multiline && !p->InspectorLayout("A")[1].multiline,"Multiline metadata missing");
+    Error([&]{r.Call(a,"badIndex");},"in-range");Error([&]{r.Call(a,"negative");},"nonnegative");Error([&]{r.Call(a,"badStart");},"out of range");
+    Error([&]{Compile("class A {export multiline int count;}");},"exported string");
+    Error([&]{Compile("class A {multiline string text;}");},"exported string");
+    Error([&]{Compile("class A {func f(){multiline export string s;}}");},"class scope");
+    Error([&]{Compile("class A {char bad='ab';}");},"one Unicode character");
+    Error([&]{Compile("class A {string bad=1 & 2;}");},"Concatenation");
+    Error([&]{Compile("class A : gameObject {func f(){transform.global_position.x=1;}}");},"read-only");
+    const auto at=TransformOf(r,a),pt=TransformOf(r,parent);r.Set(a,"parent",parent);
+    r.Set(pt,"position",Vector3{10,0,0});r.Set(pt,"rotation",Vector3{0,0,90});r.Set(pt,"scale",Vector3{2,3,4});r.Set(at,"position",Vector3{1,0,0});
+    auto position=std::get<Vector3>(r.Get(at,"global_position")),rotation=std::get<Vector3>(r.Get(at,"global_rotation")),scale=std::get<Vector3>(r.Get(at,"global_scale"));
+    Check(std::abs(position.x-10)<1e-8 && std::abs(position.y-2)<1e-8 && std::abs(rotation.z-90)<1e-8 && scale==Vector3{2,3,4},"Global TRS does not compose local-to-parent transforms");
+    r.Set(a,"parent",ObjectRef{});Check(std::get<Vector3>(r.Get(at,"global_position"))==Vector3{1,0,0},"Global transform cached stale parent");
+    Error([&]{r.Set(at,"global_scale",Vector3{});},"read-only");
+    r.Set(at,"scale",Vector3{0,-2,3});Check(std::get<Vector3>(r.Get(at,"global_scale"))==Vector3{0,2,3},"Zero scale global read failed");
+    Error([&]{r.Set(a,"initial",char32_t{0xd800});},"Unicode");
+    Error([&]{r.Set(a,"description",std::string("\xc0\xaf"));},"UTF-8");
+    RuntimeLimits limits;limits.stringBytes=12;Runtime limited(p,limits);auto small=limited.Create("A");Error([&]{limited.Call(small,"concatenate");},"String size limit");
+}
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
+        {"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},

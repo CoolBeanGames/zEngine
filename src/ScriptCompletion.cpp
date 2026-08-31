@@ -31,11 +31,13 @@ std::vector<ClassRange> Classes(const std::vector<Token>& t) {
 }
 Index::Index() {
     auto add=[&](const wchar_t* type,const wchar_t* name,const wchar_t* result,bool function=false){types_[type].members[name]={name,result,function};};
-    for(const auto type:{L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"gameObject",L"GameObject",L"Transform"})types_[type];
+    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"gameObject",L"GameObject",L"Transform"})types_[type];
     types_[L"GameObject"].base=L"gameObject";
     add(L"gameObject",L"transform",L"Transform");
     add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);
     for(const auto name:{L"position",L"rotation",L"scale"})add(L"Transform",name,L"Vector3");
+    for(const auto name:{L"global_position",L"global_rotation",L"global_scale"})add(L"Transform",name,L"Vector3");
+    add(L"string",L"size",L"int",true);add(L"string",L"truncate",L"string",true);add(L"string",L"substr",L"string",true);
     for(const auto name:{L"was_moved",L"was_rotated",L"was_scaled"})add(L"Transform",name,L"signal");
     for(const auto name:{L"x",L"y",L"z"})add(L"Vector3",name,L"float");
     add(L"array",L"append",L"void",true);add(L"array",L"erase",L"void",true);add(L"array",L"size",L"int",true);
@@ -79,7 +81,7 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
     const auto analysis=zengine::scripts::Analyze(source.substr(0,caret));
     for(const auto& span:analysis.spans)if(span.start+span.length==caret && span.length &&
         (span.kind==zengine::scripts::TokenKind::Comment || span.kind==zengine::scripts::TokenKind::String)) {
-        if(span.kind==zengine::scripts::TokenKind::Comment || (span.length>1 && source[caret-1]==L'"'))return result;
+        if(span.kind==zengine::scripts::TokenKind::Comment || source[span.start]==L'\'' || (span.length>1 && source[caret-1]==L'"'))return result;
         result.start=span.start+1;result.prefix=source.substr(result.start,caret-result.start);
         for(const auto& s:index.strings_)if(s.starts_with(result.prefix) && s!=result.prefix)result.items.push_back({s,L"project value"});
         return result;
@@ -125,7 +127,7 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
         if(result.prefix.empty())return result;
         candidates=variables;
         for(const auto& [name,type]:index.types_)if(name!=L"signal" && name!=L"InputAction")candidates[name]={name,L"type"};
-        for(const auto word:{L"class",L"func",L"return",L"if",L"else",L"while",L"true",L"false",L"null",L"export",L"label",L"signal",L"is"})candidates[word]={word,L"keyword"};
+        for(const auto word:{L"class",L"func",L"return",L"if",L"else",L"while",L"true",L"false",L"null",L"export",L"multiline",L"label",L"signal",L"is"})candidates[word]={word,L"keyword"};
         auto preceding=source.substr(0,result.start);const auto last=preceding.find_last_not_of(L" \t\r\n");
         if(last!=preceding.npos && last>=3 && preceding.substr(last-3,4)==L"func") {
             candidates.clear();for(const auto name:{L"start",L"update",L"draw"})candidates[name]={name,L"lifecycle",true};

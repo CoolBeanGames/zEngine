@@ -25,8 +25,8 @@ int main()
         host.SetField(behavior,"active","false"); host.SetField(behavior,"title","hello \"world\"\nUTF-8: \xc3\xa9"); host.SetField(behavior,"direction","-3, 4.5, 0");
         auto& empty=objects.Create("Empty"); Check(empty.Id()==43,"Restored ID sequence incorrect");
         auto& missing=empty.AddBehavior<ScriptBehavior>("Missing.zsh");
-        host.RestoreValues(missing,{{"stored",std::int64_t{123}}});
-        const auto scene=scenes::Capture(objects,host); const auto encoded=scenes::Encode(scene);
+        host.RestoreValues(missing,{{"stored",std::int64_t{123}},{"character",char32_t{0x1f642}}});
+        const auto scene=scenes::Capture(objects,host);const auto encoded=scenes::Encode(scene);
         Check(encoded.find("hidden")==std::string::npos,"Hidden runtime fields were serialized");
         const auto decoded=scenes::Decode(encoded);
         auto copy=scenes::Instantiate(decoded);

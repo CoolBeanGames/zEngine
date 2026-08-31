@@ -12,6 +12,42 @@ Declare an instance signal with `signal custom_signal;`. Connect a void function
 
 ## Scene parenting
 
+### Global transform reads
+
+`transform.global_position`, `transform.global_rotation`, and `transform.global_scale` are read-only `Vector3` properties available only in scripts, not built-in Inspector controls. Reads compose the current parent chain, including changes made earlier in the same function. Position follows the exact local-to-world matrix; rotation composes parent/local rotations and returns equivalent XYZ Euler angles in degrees. Scale contains the world matrix's axis magnitudes, with an odd reflection assigned to X. Rotated non-uniform scales can introduce shear, which cannot be represented by three scale values. Zero scale is supported. These are value snapshots: changing a local variable holding a result does not change the transform.
+
+```cpp
+Vector3 position = transform.global_position;
+Vector3 rotation = parent.transform.global_rotation;
+Vector3 scale = transform.global_scale;
+```
+
+### Strings, characters, and multiline fields
+
+Strings are UTF-8 values; `char` is one Unicode scalar value, written with single quotes. Indexing is zero-based by Unicode scalar, not UTF-8 byte or UTF-16 unit (combining marks count separately). Indexed characters are read-only. Negative/out-of-range indices are errors. Single/double quotes and backslashes can be escaped; `\n`, `\r`, and `\t` work in both literal types.
+
+```cpp
+multiline export string description = "First line\nSecond line";
+export char initial = 'A';
+
+func edit_text() {
+    string title = "Hello" + ' ' + "world";
+    title &= '!';                       // Single & also concatenates text.
+    char first = title[0];
+    bool matches = first == 'H';
+    bool ordered = "apple" < "banana";
+    title = title.truncate(5);           // Returns "Hello"; assign to keep it.
+    string middle = title.substr(1, 3);  // "ell": start, character count.
+    int length = title.size();
+}
+```
+
+`+`, `&`, `+=`, and `&=` combine strings/characters, always producing a string. There is no implicit numeric-to-text conversion or bitwise meaning for `&`; `&&` remains short-circuit boolean AND. `char` can initialize/assign a string, but a string must be indexed to produce a character. Text comparisons (`== != < <= > >=`) are case-sensitive ordinal comparisons, without locale sorting or Unicode normalization. Strings are values: `truncate(maxLength)` and `substr(start,count)` return new strings, never mutate the receiver. Lengths must be nonnegative; excessive lengths clamp to the available text, but a substring start past the end is an error.
+
+Use `multiline export string` or `export multiline string` for a wrapping multiline Inspector field with Enter/newlines and a vertical scrollbar. The tag is class-only, must accompany `export`, and only applies to strings. Untagged strings stay single-line. Multiline text and exported characters persist in scenes/prefabs and standalone builds. The editor normalizes CRLF to LF when committing multiline text. Runtime strings retain the existing 1 MiB default limit; multiline Inspector entry is limited to 65,536 UTF-16 code units. An uninitialized `char` is the null character, shown as `\0` in the Inspector.
+
+### Parent references
+
 The built-in `gameObject` has a writable `parent : gameObject`, null by default. In an engine behavior, use `parent = find("Platform");`, `this.parent = null;`, or `someObject.parent = otherObject;`. `find` resolves an exact, unique scene object name; no match returns null and duplicate names are an error. Local transforms remain unchanged by reparenting. Do not construct a new `gameObject()` as a native parent: script-created objects are not scene objects. Cycles and hierarchies deeper than 64 parent links are rejected before native changes are applied. Play/Stop restores authored parenting and transforms.
 
 The standalone VM has no scene dependency: embedders supply `Runtime::SetObjectLookup` returning same-runtime object references. Without a callback `find` returns null. The engine host creates scene proxies lazily, synchronizes them at behavior callbacks, and validates native parent and transform changes together. Reentrant proxy construction shares the active script's instruction budget. Scene objects' attached scripts are independent VMs; scene proxies expose native `transform`, `parent`, and `find`, not arbitrary attached script members.

@@ -1,5 +1,11 @@
 # zEngine
 
+## Global transforms and text scripting
+
+Scripts can read `transform.global_position`, `transform.global_rotation`, and `transform.global_scale` without adding global fields to the Transform Inspector. They reflect the current parent chain; positions use the world matrix, rotation is XYZ Euler degrees, and scale is the world-axis magnitudes (lossy for sheared hierarchies).
+
+Text supports Unicode `char` literals such as `'A'`, character indexing (`name[0]`), case-sensitive comparisons, `+`/`&` concatenation, and `+=`/`&=`. Use `text.size()`, `text.truncate(maxLength)`, and `text.substr(start,count)`; truncation/substrings return new strings, so assign their results. `multiline export string description = "First line\nSecond line";` creates a wrapping, scrollable multiline Inspector field. Untagged exported strings remain single-line. Characters and multiline values are saved in scenes/prefabs and work in standalone builds. See [the scripting reference](scripting/README.md) for details and examples.
+
 ## Standalone game builds
 
 Use **File → Build Standalone Game…**, then choose an output location outside the source project. The current scene is saved and becomes the startup scene. Save scripts/Input Map edits and wait for imports first. The status bar shows build progress; errors appear there without replacing an existing build. Each export creates a fresh, uniquely named game folder.

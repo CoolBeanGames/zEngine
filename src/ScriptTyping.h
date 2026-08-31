@@ -11,14 +11,15 @@ struct Edit { std::size_t start, end; std::wstring text; std::size_t caret; };
 inline std::wstring Code(std::wstring_view source) {
     std::wstring code(source);
     enum { Normal, String, Line, Block } state = Normal;
+    wchar_t quote=L'"';
     for (std::size_t i=0;i<source.size();++i) {
         const wchar_t c=source[i], next=i+1<source.size()?source[i+1]:L'\0';
         if (state==Normal) {
-            if(c==L'"') state=String;
+            if(c==L'"' || c==L'\'') {state=String;quote=c;}
             else if(c==L'/' && (next==L'/' || next==L'*')) { state=next==L'/'?Line:Block; code[i++]=L' '; }
             else continue;
         } else if(state==String && c==L'\\' && next) { code[i++]=L' '; code[i]=L' '; continue; }
-        else if(state==String && c==L'"') state=Normal;
+        else if(state==String && c==quote) state=Normal;
         else if(state==Line && (c==L'\r'||c==L'\n')) state=Normal;
         else if(state==Block && c==L'*' && next==L'/') {code[i++]=L' ';state=Normal;}
         if(code[i]!=L'\r' && code[i]!=L'\n')code[i]=L' ';
