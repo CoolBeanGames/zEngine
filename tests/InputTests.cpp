@@ -2,13 +2,14 @@
 #include "input/InputMapEditor.h"
 #include "zscript/Script.h"
 #include "ScriptHost.h"
+#include "WindowCapture.h"
 #include <iostream>
 #include <cmath>
 #include <functional>
 using namespace zengine;
 void Check(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
 void Reject(const std::function<void()>& f){try{f();}catch(const std::exception&){return;}throw std::runtime_error("Expected rejection");}
-int main(){try{
+int main(int argc,char**){try{
     input::Action jump{"jump",input::Kind::Button,{"Space"}};
     input::Action move{"move",input::Kind::ButtonAxis2D,{"A","D","S","W"}};
     input::Action horizontal{"horizontal",input::Kind::ButtonAxis1D,{"Left","Right"}};
@@ -46,9 +47,9 @@ int main(){try{
     Check(owner.GetTransform().Position().y==2 && !behavior.Faulted(),"Input callback did not move native object");host.Stop(objects);Check(owner.GetTransform().Position().y==0,"Input callback state leaked after Stop");
     Reject([&]{vm.Call(object,"missing");});
     Check(!script::Compiler::Compile("class A {func f(){Input.action(\"jump\").axis=3;}}"),"Input state writable");
-    auto dir=std::filesystem::temp_directory_path()/(L"zEngineInputTest-"+std::to_wstring(GetCurrentProcessId()));std::filesystem::create_directories(dir);
+    auto dir=std::filesystem::temp_directory_path()/(L"zEngineInputTest-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));Check(std::filesystem::create_directory(dir),"Cannot create isolated input test directory");
     struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code e;std::filesystem::remove_all(p,e);}} cleanup{dir};
     input::Ensure(dir);auto old=input::Load(dir);input::Save(dir,map,&old);Check(input::Decode(input::Load(dir)).size()==5,"Input persistence");Reject([&]{input::Save(dir,{},&old);});input::Ensure(dir);Check(input::Decode(input::Load(dir)).size()==5,"Ensure overwrote map");
-    {InputMapEditor editor(nullptr,dir);auto window=editor.Window();Check(GetDlgItem(window,InputMapEditor::Save)!=nullptr,"Input editor controls");SendMessageW(window,WM_COMMAND,InputMapEditor::Add,0);Check(editor.Dirty(),"Add action UI");SetDlgItemTextW(window,InputMapEditor::Name,L"ui_action");SendMessageW(window,WM_COMMAND,InputMapEditor::Save,0);Check(!editor.Dirty() && input::Decode(input::Load(dir)).back().name=="ui_action","Input editor save");SendMessageW(window,WM_COMMAND,InputMapEditor::Remove,0);SendMessageW(window,WM_COMMAND,InputMapEditor::Save,0);Check(input::Decode(input::Load(dir)).size()==5,"Remove action UI");}
+    {InputMapEditor editor(nullptr,dir);auto window=editor.Window();Check(GetDlgItem(window,InputMapEditor::Save)!=nullptr,"Input editor controls");SendMessageW(window,WM_COMMAND,InputMapEditor::Add,0);Check(editor.Dirty(),"Add action UI");SetDlgItemTextW(window,InputMapEditor::Name,L"ui_action");SendMessageW(window,WM_COMMAND,InputMapEditor::Save,0);Check(!editor.Dirty() && input::Decode(input::Load(dir)).back().name=="ui_action","Input editor save");SendMessageW(window,WM_COMMAND,InputMapEditor::Remove,0);SendMessageW(window,WM_COMMAND,InputMapEditor::Save,0);Check(input::Decode(input::Load(dir)).size()==5,"Remove action UI");if(argc>1)CaptureWindow(window,L"input-map-qa.bmp");}
     std::cout<<"PASS Input Map, axes, signals, persistence and editor\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

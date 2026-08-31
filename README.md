@@ -4,6 +4,12 @@ zEngine currently contains a small Direct3D 11 renderer hosted inside a lightwei
 
 The editor provides an options bar, resizable scene browser, resizable inspector, resizable media library, central scene viewport, and status/progress bar. Drag the narrow gaps between panels to resize them. Projects, scene assets, the File menu, FBX import, multi-object mesh rendering, GameObject creation, script editing/execution, Inspector variables, and Play/Pause/Step are functional. The other top options menus and Add Folder remain placeholders.
 
+## Shared editor button style
+
+Editor-owned buttons use the Play button's flat charcoal face, dark one-pixel border, Segoe UI text, blue active accent, and consistent hover/pressed/disabled colors. This includes scene/library/transform tools, Inspector components, script windows, New Project, and the Input Map editor. Native buttons retain Tab/Space activation, focus indicators, accessibility, and checkbox toggling. Unavailable actions are visibly disabled; Add Folder remains a disabled placeholder. Tool-window backgrounds use the same dark palette. Windows-owned file pickers, popup menus, title bars, and message boxes retain their system appearance.
+
+The header-only `EditorStyle.h` is shared by custom-painted toolbar controls and native button subclasses, with no new UI framework or per-frame allocations retained. `EditorButtonStyle` tests the palette, interaction states, native commands/checkboxes, and GDI resource stability.
+
 ## Projects
 
 - **File > New Project...** asks for a project name and parent location (type a path or use Browse). It creates `<location>/<name>/<name>.zproject` and `<location>/<name>/Assets`. Existing folders are never overwritten. A follow-up prompt lets you create a scene or open one inside Assets.

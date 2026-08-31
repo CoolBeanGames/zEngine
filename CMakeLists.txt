@@ -55,6 +55,7 @@ add_executable(zEngine WIN32
     src/EditorGizmos.cpp
     src/EditorPrefabs.cpp
     src/EditorInput.cpp
+    src/EditorChrome.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
@@ -106,6 +107,13 @@ add_custom_command(TARGET zEngine POST_BUILD
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(zEngineStyleTests tests/StyleTests.cpp)
+    target_include_directories(zEngineStyleTests PRIVATE src)
+    target_compile_features(zEngineStyleTests PRIVATE cxx_std_20)
+    target_compile_definitions(zEngineStyleTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(zEngineStyleTests PRIVATE comctl32)
+    add_test(NAME EditorButtonStyle COMMAND zEngineStyleTests)
+    set_tests_properties(EditorButtonStyle PROPERTIES TIMEOUT 30)
     add_executable(zEngineInputTests tests/InputTests.cpp)
     target_link_libraries(zEngineInputTests PRIVATE zEngineInputTools zEngineScriptHost)
     target_compile_definitions(zEngineInputTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -135,6 +143,7 @@ if(BUILD_TESTING)
     add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/Renderer.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorInput.cpp)
+    target_sources(zEngineAssetTests PRIVATE src/EditorChrome.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineInputTools)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos zEnginePrefabs)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)

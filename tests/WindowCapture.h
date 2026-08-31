@@ -6,7 +6,7 @@
 #include <vector>
 
 // Opt-in visual QA only. Captures the actual window, excluding overlapping applications.
-inline void CaptureWindow(HWND window, const std::filesystem::path& path)
+inline void CaptureWindow(HWND window, const std::filesystem::path& path, UINT flags=2)
 {
     ShowWindow(window, SW_SHOWNOACTIVATE);
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME);
@@ -14,7 +14,7 @@ inline void CaptureWindow(HWND window, const std::filesystem::path& path)
     HDC dc=GetDC(window), buffer=CreateCompatibleDC(dc);
     HBITMAP bitmap=CreateCompatibleBitmap(dc,r.right-r.left,r.bottom-r.top);
     auto old=SelectObject(buffer,bitmap);
-    const bool captured=PrintWindow(window,buffer,2)!=FALSE;
+    const bool captured=PrintWindow(window,buffer,flags)!=FALSE;
     SelectObject(buffer,old);
     BITMAPINFO info{}; info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
     info.bmiHeader.biWidth=r.right-r.left; info.bmiHeader.biHeight=-(r.bottom-r.top);

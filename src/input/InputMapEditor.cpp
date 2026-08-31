@@ -1,4 +1,5 @@
 #include "InputMapEditor.h"
+#include "EditorStyle.h"
 #include <algorithm>
 #include <stdexcept>
 #include <sstream>
@@ -10,7 +11,7 @@ void Combo(HWND w,const std::vector<std::string>& items){for(const auto& s:items
 }
 InputMapEditor::InputMapEditor(HWND owner,std::filesystem::path assets):assets_(std::move(assets)) {
     loaded_=zengine::input::Load(assets_);map_=zengine::input::Decode(loaded_);
-    WNDCLASSW wc{};wc.hInstance=GetModuleHandleW(nullptr);wc.lpfnWndProc=Procedure;wc.lpszClassName=L"zEngineInputMap";wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);RegisterClassW(&wc);
+    WNDCLASSW wc{};wc.hInstance=GetModuleHandleW(nullptr);wc.lpfnWndProc=Procedure;wc.lpszClassName=L"zEngineInputMap";wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);wc.hbrBackground=editorStyle::Shared().panel;RegisterClassW(&wc);
     window_=CreateWindowExW(0,wc.lpszClassName,L"Input Map",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,800,560,owner,nullptr,wc.hInstance,this);
     if(!window_)throw std::runtime_error("Cannot open Input Map editor.");
     auto control=[&](const wchar_t* cls,const wchar_t* label,int id,DWORD style){auto w=CreateWindowExW(0,cls,label,WS_CHILD|WS_VISIBLE|style,0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),wc.hInstance,nullptr);SendMessageW(w,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),FALSE);return w;};
@@ -26,7 +27,7 @@ InputMapEditor::InputMapEditor(HWND owner,std::filesystem::path assets):assets_(
     const wchar_t* labels[]={L"Action name (case-sensitive)",L"Action type",L"Button / Negative X",L"Positive X",L"Negative Y (down)",L"Positive Y (up)",L"Controller",L"Analog source",L"Deadzone (0 <= value < 1)"};
     for(int i=0;i<9;++i)control(L"STATIC",labels[i],4200+i,0);
     status_=control(L"STATIC",L"One Input Map per project. Actions are saved explicitly. Changes apply on next Play.",4300,0);
-    Populate();Select(map_.empty()?-1:0);Layout();Title();
+    editorStyle::AttachChildren(window_);Populate();Select(map_.empty()?-1:0);Layout();Title();
 }
 InputMapEditor::~InputMapEditor(){if(IsWindow(window_))DestroyWindow(window_);}
 void InputMapEditor::Title(){SetWindowTextW(window_,(std::wstring(dirty_?L"* ":L"")+L"Input.zinput - zEngine Input Map").c_str());}
@@ -62,6 +63,7 @@ void InputMapEditor::SaveFile(){ApplyFields();zengine::input::Save(assets_,map_,
 bool InputMapEditor::ConfirmClose(){if(!dirty_)return true;const auto answer=MessageBoxW(window_,L"Save changes to the project's Input Map?",L"Unsaved Input Map",MB_YESNOCANCEL|MB_ICONQUESTION);if(answer==IDCANCEL)return false;try{if(answer==IDYES)SaveFile();else Load();return true;}catch(const std::exception& e){SetWindowTextW(status_,Wide(e.what()).c_str());return false;}}
 LRESULT CALLBACK InputMapEditor::Procedure(HWND w,UINT m,WPARAM wp,LPARAM lp){auto* self=reinterpret_cast<InputMapEditor*>(GetWindowLongPtrW(w,GWLP_USERDATA));if(m==WM_NCCREATE){self=static_cast<InputMapEditor*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);SetWindowLongPtrW(w,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(self));self->window_=w;}if(!self)return DefWindowProcW(w,m,wp,lp);
     try {
+        if(m==WM_CTLCOLORSTATIC || m==WM_CTLCOLOREDIT || m==WM_CTLCOLORLISTBOX || m==WM_CTLCOLORBTN)return editorStyle::ControlColor(m,wp);
         if(m==WM_GETMINMAXINFO){auto* info=reinterpret_cast<MINMAXINFO*>(lp);info->ptMinTrackSize={680,555};return 0;}
         if(m==WM_SIZE){self->Layout();return 0;}
         if(m==WM_CLOSE){if(self->ConfirmClose())ShowWindow(w,SW_HIDE);return 0;}

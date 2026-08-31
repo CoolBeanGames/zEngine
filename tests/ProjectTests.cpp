@@ -55,7 +55,7 @@ namespace
                         {
                             SetDlgItemTextW(dialog,ProjectDialog::NameField,L"Window Project");
                             SetDlgItemTextW(dialog,ProjectDialog::LocationField,self.location.c_str());
-                            if (self.capture) { UpdateWindow(dialog); CaptureWindow(dialog,L"new-project-qa.bmp"); }
+                            if (self.capture) { UpdateWindow(dialog); CaptureWindow(dialog,L"new-project-qa.bmp",0); }
                         }
                         SendMessageW(dialog,WM_COMMAND,response,0); return FALSE;
                     }

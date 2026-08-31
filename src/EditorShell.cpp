@@ -1,4 +1,5 @@
 #include "EditorShell.h"
+#include "EditorStyle.h"
 #include "input/InputMapEditor.h"
 
 #include "Renderer.h"
@@ -52,10 +53,10 @@ namespace
     constexpr COLORREF EditorBackground = RGB(32, 34, 38);
     constexpr COLORREF PanelBackground = RGB(40, 42, 47);
     constexpr COLORREF HeaderBackground = RGB(47, 49, 55);
-    constexpr COLORREF BorderColor = RGB(20, 21, 24);
-    constexpr COLORREF TextColor = RGB(214, 216, 221);
+    constexpr COLORREF BorderColor = editorStyle::Border;
+    constexpr COLORREF TextColor = editorStyle::Text;
     constexpr COLORREF MutedTextColor = RGB(145, 149, 158);
-    constexpr COLORREF FieldColor = RGB(52, 54, 60);
+    constexpr COLORREF FieldColor = editorStyle::Face;
     constexpr COLORREF SelectionColor = RGB(54, 83, 119);
 
     void FillRectangle(HDC deviceContext, const RECT& rectangle, const COLORREF color)
@@ -490,6 +491,7 @@ void EditorShell::Paint()
     const HGDIOBJ previousBitmap = SelectObject(bufferContext, bufferBitmap);
     SelectObject(bufferContext, uiFont_);
     FillRectangle(bufferContext, client, EditorBackground);
+    const auto button=[&](int index,std::wstring_view label,bool selected=false){editorStyle::Button(bufferContext,ChromeRectangle(index),label,ChromeEnabled(index),hoveredChrome_==index,pressedChrome_==index,selected);};
 
     // Options bar
     FillRectangle(bufferContext, optionsBar_, RGB(35, 37, 41));
@@ -511,10 +513,7 @@ void EditorShell::Paint()
     const wchar_t* toolNames[]={L"Move W",L"Rotate E",L"Scale R"};
     for (int i=0;i<3;++i)
     {
-        const auto rectangle=ToolRectangle(i);
-        FillRectangle(bufferContext,rectangle,static_cast<int>(transformTool_)==i?SelectionColor:FieldColor);
-        DrawBorder(bufferContext,rectangle,BorderColor);
-        DrawTextLabel(bufferContext,toolNames[i],rectangle,TextColor,DT_CENTER|DT_SINGLELINE|DT_VCENTER);
+        button(6+i,toolNames[i],static_cast<int>(transformTool_)==i);
     }
     DrawTextLabel(bufferContext, project_?WideText(project_->config.name):L"No project open", projectName, MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     RECT optionLine{0, optionsBar_.bottom - 1, optionsBar_.right, optionsBar_.bottom};
@@ -528,12 +527,10 @@ void EditorShell::Paint()
     DrawPanel(bufferContext, mediaLibrary_, L"Media Library");
     SelectObject(bufferContext, uiFont_);
 
-    // Live GameObject scene tree (flat until parent/child scene management is added).
+    // Live GameObject scene tree, indented for prefab hierarchies.
     const int sceneX = sceneBrowser_.left + 13;
     const RECT create = CreateObjectRectangle();
-    FillRectangle(bufferContext, create, FieldColor);
-    DrawBorder(bufferContext, create, BorderColor);
-    DrawTextLabel(bufferContext, L"+ Create Empty", create, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    button(0,L"+ Create Empty");
     int sceneY = create.bottom + 5;
     RECT sceneRoot{sceneX, sceneY, sceneBrowser_.right - 8, sceneY + 25};
     DrawTextLabel(bufferContext, L"\u25be  "+SceneName()+(sceneDirty_?L" *":L""), sceneRoot, TextColor);
@@ -555,18 +552,9 @@ void EditorShell::Paint()
     RestoreDC(bufferContext, treeClip);
 
     // Viewport header controls. Rendering occurs in the child window below this strip.
-    const int centerX = (viewportPanel_.left + viewportPanel_.right) / 2;
-    RECT playButton{centerX - 42, viewportPanel_.top + 4, centerX - 14, viewportPanel_.top + 26};
-    RECT pauseButton{centerX - 12, viewportPanel_.top + 4, centerX + 16, viewportPanel_.top + 26};
-    RECT stepButton{centerX + 18, viewportPanel_.top + 4, centerX + 46, viewportPanel_.top + 26};
-    for (const RECT button : {playButton, pauseButton, stepButton})
-    {
-        FillRectangle(bufferContext, button, FieldColor);
-        DrawBorder(bufferContext, button, BorderColor);
-    }
-    DrawTextLabel(bufferContext, Playing()?L"\u25a0":L"\u25b6", playButton, Playing()?RGB(108,166,232):TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-    DrawTextLabel(bufferContext, L"\u2016", pauseButton, paused_?RGB(108,166,232):TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-    DrawTextLabel(bufferContext, L"\u25b8|", stepButton, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    button(3,Playing()?L"\u25a0":L"\u25b6",Playing());
+    button(4,L"\u2016",paused_);
+    button(5,L"\u25b8|");
 
     // Inspector content and edit controls are hosted by the reusable InspectorPanel child.
 
@@ -580,16 +568,8 @@ void EditorShell::Paint()
     RECT folderHint{folderPane.left + 30, folderPane.top + 43, folderPane.right - 8, folderPane.top + 68};
     DrawTextLabel(bufferContext, L"Project Files", folderHint, MutedTextColor);
     RECT addFolder{mediaLibrary_.right - 116, mediaLibrary_.top + 4, mediaLibrary_.right - 10, mediaLibrary_.top + 26};
-    FillRectangle(bufferContext, addFolder, FieldColor);
-    DrawBorder(bufferContext, addFolder, BorderColor);
-    DrawTextLabel(bufferContext, L"+ Add Folder", addFolder, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-    const RECT newScript = CreateScriptRectangle();
-    FillRectangle(bufferContext, newScript, FieldColor);
-    DrawBorder(bufferContext, newScript, BorderColor);
-    DrawTextLabel(bufferContext, L"+ New Script", newScript, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-    const RECT newScene=CreateSceneRectangle();
-    FillRectangle(bufferContext,newScene,FieldColor); DrawBorder(bufferContext,newScene,BorderColor);
-    DrawTextLabel(bufferContext,L"+ New Scene",newScene,TextColor,DT_CENTER|DT_SINGLELINE|DT_VCENTER);
+    editorStyle::Button(bufferContext,addFolder,L"+ Add Folder",false);
+    button(1,L"+ New Script");button(2,L"+ New Scene");
     RECT dropArea{folderPane.right + 20, mediaTop + 20, mediaLibrary_.right - 20, mediaLibrary_.bottom - 20};
     DrawBorder(bufferContext, dropArea, RGB(72, 75, 83));
     RECT libraryHint{dropArea.left + 8, dropArea.top, dropArea.right - 8, dropArea.top + 26};
@@ -1381,6 +1361,8 @@ LRESULT EditorShell::HandleMessage(
         if (draggedObject_) { draggedObject_=0; ReleaseCapture(); }
         SetFocus(window_);
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        hoveredChrome_=ChromeHit(point);pressedChrome_=hoveredChrome_;
+        if(pressedChrome_>=0){InvalidateRect(window_,nullptr,FALSE);if(!ChromeEnabled(pressedChrome_)){pressedChrome_=-1;return 0;}}
         for (int i=0;i<3;++i) { const auto rectangle=ToolRectangle(i); if (PtInRect(&rectangle,point)) { SetTransformTool(static_cast<gizmo::Mode>(i)); return 0; } }
         const RECT fileMenu{44,optionsBar_.top,99,optionsBar_.bottom};
         if (PtInRect(&fileMenu,point))
@@ -1425,6 +1407,10 @@ LRESULT EditorShell::HandleMessage(
         return 0;
     }
     case WM_MOUSEMOVE:
+    {
+        const int hovered=ChromeHit({GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)});
+        if(hovered!=hoveredChrome_){hoveredChrome_=hovered;InvalidateRect(window_,nullptr,FALSE);}
+        TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE,window_,0};TrackMouseEvent(&tracking);
         if (draggedObject_)
         {
             const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
@@ -1450,7 +1436,11 @@ LRESULT EditorShell::HandleMessage(
             return 0;
         }
         break;
+    }
+    case WM_MOUSELEAVE: case WM_KILLFOCUS:
+        hoveredChrome_=pressedChrome_=-1;InvalidateRect(window_,nullptr,FALSE);break;
     case WM_LBUTTONUP:
+        pressedChrome_=-1;InvalidateRect(window_,nullptr,FALSE);
         if (draggedObject_)
         {
             const auto object=draggedObject_; const bool moved=objectDragMoved_; draggedObject_=0; ReleaseCapture();
@@ -1485,6 +1475,7 @@ LRESULT EditorShell::HandleMessage(
         return 0;
     }
     case WM_CAPTURECHANGED:
+        pressedChrome_=-1;InvalidateRect(window_,nullptr,FALSE);
         draggedObject_=0; objectDragMoved_=false;
         dragTarget_ = DragTarget::None;
         draggedAsset_ = -1;

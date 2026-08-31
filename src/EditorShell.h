@@ -147,6 +147,10 @@ private:
     void EndGizmoDrag(bool cancel);
     void UpdateGizmoDrag(gizmo::Point);
     RECT ToolRectangle(int index) const;
+    RECT ChromeRectangle(int index) const;
+    int ChromeHit(POINT) const;
+    bool ChromeEnabled(int index) const;
+    int hoveredChrome_=-1,pressedChrome_=-1;
     gizmo::Mode transformTool_=gizmo::Mode::Move;
     std::optional<gizmo::Drag> gizmoDrag_;
     zengine::GameObjectId gizmoObject_=0;

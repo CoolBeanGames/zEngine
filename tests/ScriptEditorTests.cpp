@@ -17,7 +17,7 @@ void Capture(HWND window)
     HDC dc=GetDC(window), buffer=CreateCompatibleDC(dc);
     HBITMAP bitmap=CreateCompatibleBitmap(dc,r.right-r.left,r.bottom-r.top);
     auto old=SelectObject(buffer,bitmap);
-    const bool captured=PrintWindow(window,buffer,2)!=FALSE;
+    const bool captured=PrintWindow(window,buffer,0)!=FALSE;
     SelectObject(buffer,old);
     BITMAPINFO info{}; info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
     info.bmiHeader.biWidth=r.right-r.left; info.bmiHeader.biHeight=-(r.bottom-r.top);

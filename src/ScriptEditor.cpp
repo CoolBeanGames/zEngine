@@ -1,4 +1,5 @@
 #include "ScriptEditor.h"
+#include "EditorStyle.h"
 #include <richedit.h>
 #include <richole.h>
 #include <tom.h>
@@ -38,7 +39,7 @@ ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, cons
     const auto instance = GetModuleHandleW(nullptr);
     WNDCLASSW type{}; type.hInstance = instance; type.lpfnWndProc = WindowProcedure;
     type.hCursor = LoadCursorW(nullptr, IDC_ARROW); type.lpszClassName = ClassName;
-    type.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+    type.hbrBackground = editorStyle::Shared().panel;
     if (!RegisterClassW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
     { FreeLibrary(richEdit_); throw std::runtime_error("Cannot register script editor window."); }
     window_ = CreateWindowExW(0, ClassName, L"Script Editor", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
@@ -58,6 +59,7 @@ ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, cons
         save_ = button(L"Save (Ctrl+S)", SaveCommand);
         reload_ = button(L"Reload (Ctrl+R)", ReloadCommand);
         jump_ = button(L"Go to first error", ErrorCommand);
+        editorStyle::AttachChildren(window_);
         if (!source_ || !errors_ || !save_ || !reload_ || !jump_) throw std::runtime_error("Cannot create script editor controls.");
         SendMessageW(source_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
         SendMessageW(errors_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
@@ -244,6 +246,8 @@ LRESULT ScriptEditor::HandleMessage(UINT message, WPARAM w, LPARAM l)
 {
     switch (message)
     {
+    case WM_CTLCOLOREDIT: case WM_CTLCOLORSTATIC: case WM_CTLCOLORBTN:
+        return editorStyle::ControlColor(message,w);
     case WM_SIZE: Layout(); return 0;
     case WM_GETMINMAXINFO: reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize = {500,360}; return 0;
     case WM_CLOSE: if (ConfirmClose()) ShowWindow(window_, SW_HIDE); return 0;

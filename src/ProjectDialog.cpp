@@ -1,4 +1,5 @@
 #include "ProjectDialog.h"
+#include "EditorStyle.h"
 #include "Project.h"
 #include <shlobj.h>
 #include <shobjidl.h>
@@ -23,6 +24,8 @@ namespace
         auto* context=reinterpret_cast<Context*>(GetWindowLongPtrW(dialog,DWLP_USER));
         try
         {
+            if(message==WM_CTLCOLORDLG || message==WM_CTLCOLORSTATIC || message==WM_CTLCOLOREDIT || message==WM_CTLCOLORBTN)
+                return editorStyle::ControlColor(message,w);
             if (message==WM_INITDIALOG)
             {
                 context=reinterpret_cast<Context*>(l); SetWindowLongPtrW(dialog,DWLP_USER,reinterpret_cast<LONG_PTR>(context));
@@ -47,6 +50,7 @@ namespace
                 control(L"STATIC",L"",ProjectDialog::ErrorLabel,14,157,540,34);
                 control(L"BUTTON",L"Create",IDOK,362,199,90,27,WS_TABSTOP|BS_DEFPUSHBUTTON);
                 control(L"BUTTON",L"Cancel",IDCANCEL,464,199,90,27,WS_TABSTOP);
+                editorStyle::AttachChildren(dialog);
                 SetFocus(name); SendMessageW(name,EM_SETSEL,0,-1); return FALSE;
             }
             if (message==WM_CLOSE) { EndDialog(dialog,IDCANCEL); return TRUE; }

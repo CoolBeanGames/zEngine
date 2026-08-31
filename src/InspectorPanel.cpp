@@ -1,4 +1,5 @@
 #include "InspectorPanel.h"
+#include "EditorStyle.h"
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include <windowsx.h>
@@ -113,6 +114,7 @@ void InspectorPanel::Create(HWND parent, HINSTANCE instance, HFONT font, std::fu
     chooseMesh_ = button(L"Choose Model...", ChooseMeshButton);
     cubeMesh_ = button(L"Use Cube", CubeMeshButton);
     clearMesh_ = button(L"Clear", ClearMeshButton);
+    editorStyle::AttachChildren(window_);
     Bind(nullptr);
     Layout();
 }
