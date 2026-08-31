@@ -26,6 +26,11 @@ target_compile_definitions(zEngineScriptTools PRIVATE ZENGINE_SCRIPT_COMPILER)
 add_library(zEngineScriptHost STATIC src/ScriptHost.cpp)
 target_link_libraries(zEngineScriptHost PUBLIC zEngineCore zEngineScripting)
 target_compile_features(zEngineScriptHost PUBLIC cxx_std_20)
+add_library(zEngineScenes STATIC src/Scene.cpp)
+target_link_libraries(zEngineScenes PUBLIC zEngineCore zEngineScriptHost)
+add_library(zEngineSceneAssets STATIC src/SceneAssets.cpp)
+target_link_libraries(zEngineSceneAssets PUBLIC zEngineScenes)
+target_compile_definitions(zEngineSceneAssets PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 add_executable(zEngine WIN32
     src/Main.cpp
@@ -58,6 +63,7 @@ target_link_libraries(zEngine PRIVATE
     comdlg32
     zEngineScriptTools
     zEngineScriptHost
+    zEngineSceneAssets
 )
 
 if(MSVC)
@@ -75,6 +81,11 @@ add_custom_command(TARGET zEngine POST_BUILD
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(zEngineSceneTests tests/SceneTests.cpp)
+    target_link_libraries(zEngineSceneTests PRIVATE zEngineSceneAssets)
+    target_compile_definitions(zEngineSceneTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    add_test(NAME SceneAssets COMMAND zEngineSceneTests)
+    set_tests_properties(SceneAssets PROPERTIES TIMEOUT 30)
     add_executable(zEngineScriptHostTests tests/ScriptHostTests.cpp)
     target_link_libraries(zEngineScriptHostTests PRIVATE zEngineScriptHost)
     add_test(NAME ScriptHostIntegration COMMAND zEngineScriptHostTests)
@@ -95,7 +106,7 @@ if(BUILD_TESTING)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
     target_compile_definitions(zEngineAssetTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
         TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
-    target_link_libraries(zEngineAssetTests PRIVATE zEngineAssets zEngineCore zEngineScriptTools zEngineScriptHost d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 comctl32 comdlg32)
+    target_link_libraries(zEngineAssetTests PRIVATE zEngineAssets zEngineCore zEngineScriptTools zEngineScriptHost zEngineSceneAssets d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 comctl32 comdlg32)
     add_dependencies(zEngineAssetTests zEngine)
     add_test(NAME FbxImport COMMAND zEngineAssetTests)
     add_test(NAME RendererAlbedo COMMAND zEngineAssetTests --gpu)
@@ -103,6 +114,8 @@ if(BUILD_TESTING)
     add_test(NAME GameObjectInspector COMMAND zEngineAssetTests --objects)
     add_test(NAME MeshRendererBehavior COMMAND zEngineAssetTests --meshes)
     add_test(NAME ScriptEditorIntegration COMMAND zEngineAssetTests --scripts)
+    add_test(NAME SceneEditorIntegration COMMAND zEngineAssetTests --scenes)
+    set_tests_properties(SceneEditorIntegration PROPERTIES TIMEOUT 60)
     set_tests_properties(ScriptEditorIntegration PROPERTIES TIMEOUT 60)
     set_tests_properties(GameObjectCore FbxImport RendererAlbedo EditorDragDrop GameObjectInspector MeshRendererBehavior PROPERTIES TIMEOUT 60)
 endif()

@@ -90,6 +90,7 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
     if (playing_) throw std::logic_error("Stop before rebuilding scripts.");
     auto& record=records_[&behavior];
     if (record.program && record.source==source && record.className==className) return record.error.empty();
+    auto previousValues=AuthoredValues(behavior);
     record.source=std::move(source); record.className=std::move(className);
     record.error.clear(); record.program.reset(); record.preview.reset();
     try
@@ -112,7 +113,7 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
         record.preview=std::move(preview); record.program=compiled.program;
         return true;
     }
-    catch (const std::exception& e) { record.error=e.what(); return false; }
+    catch (const std::exception& e) { record.overrides=std::move(previousValues); record.error=e.what(); return false; }
 }
 std::vector<ScriptHost::Field> ScriptHost::Fields(ScriptBehavior& behavior)
 {
@@ -145,6 +146,23 @@ std::string ScriptHost::Error(const ScriptBehavior& behavior) const
     if (behavior.Faulted()) return behavior.Asset()+": "+behavior.Error();
     const auto it=records_.find(&behavior);
     return it==records_.end() ? "Script has not been loaded." : it->second.error;
+}
+std::map<std::string,script::Value> ScriptHost::AuthoredValues(const ScriptBehavior& behavior) const
+{
+    const auto it=records_.find(&behavior);
+    if (it==records_.end()) return {};
+    const auto& r=it->second;
+    if (!r.program || !r.preview) return r.overrides; // Missing/broken scripts retain their saved data.
+    std::map<std::string,script::Value> values;
+    for (const auto& entry:r.program->InspectorLayout(r.className))
+        if (entry.kind==script::InspectorEntry::Kind::Field && Editable(entry.type))
+            values.emplace(entry.name,r.preview->Get(r.object,entry.name));
+    return values;
+}
+void ScriptHost::RestoreValues(ScriptBehavior& behavior, std::map<std::string,script::Value> values)
+{
+    if (playing_ || records_[&behavior].program) throw std::logic_error("Restore scene variables before compiling or playing.");
+    records_[&behavior].overrides=std::move(values);
 }
 bool ScriptHost::Play(ObjectStore& objects)
 {

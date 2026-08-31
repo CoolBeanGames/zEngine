@@ -15,6 +15,8 @@
 #include "ModelData.h"
 #include "core/GameObject.h"
 #include "ScriptHost.h"
+#include "Scene.h"
+#include <optional>
 #include <chrono>
 
 class Renderer;
@@ -38,6 +40,13 @@ public:
     void SetPaused(bool paused);
     void Step();
     bool Playing() const noexcept { return scriptHost_.Playing(); }
+    static constexpr int NewSceneCommand=3100, SaveSceneCommand=3101, SaveSceneAsCommand=3102, OpenSceneCommand=3103;
+    bool NewScene();
+    bool OpenScene(const std::filesystem::path& path);
+    bool SaveScene(const std::filesystem::path& path = {});
+    bool TranslateShortcut(const MSG& message);
+    const std::filesystem::path& ScenePath() const noexcept { return scenePath_; }
+    bool SceneDirty() const noexcept { return sceneDirty_; }
     zengine::GameObject& CreateEmptyGameObject();
     std::filesystem::path CreateScriptAsset();
     void OpenScript(const std::filesystem::path& path);
@@ -88,6 +97,15 @@ private:
     RECT CreateScriptRectangle() const;
     bool PrepareScripts();
     void ReportScriptErrors();
+    bool ConfirmSceneClose();
+    bool SaveSceneAs();
+    void ChooseScene();
+    void ApplyScene(const std::filesystem::path&,std::string source,const zengine::scenes::Document&);
+    void MarkSceneDirty();
+    void UpdateSceneTitle();
+    std::wstring SceneName() const;
+    RECT CreateSceneRectangle() const;
+    bool PendingModels(bool assignmentsOnly=false) const;
 
     struct AssetJob
     {
@@ -95,6 +113,8 @@ private:
         bool loadMesh = false;
         zengine::GameObjectId object = 0; // Zero creates a new object after a successful load.
         std::uint64_t revision = 0;
+        std::uint64_t scene = 0;
+        bool restoreOnly = false;
     };
     struct AssetResult
     {
@@ -102,6 +122,8 @@ private:
         bool loadMesh = false;
         zengine::GameObjectId object = 0;
         std::uint64_t revision = 0;
+        std::uint64_t scene = 0;
+        bool restoreOnly = false;
         ModelData model;
         MeshHandle cachedMesh;
         std::vector<std::string> warnings;
@@ -110,6 +132,12 @@ private:
     std::vector<std::filesystem::path> assets_;
     std::deque<AssetJob> assetJobs_;
     std::future<AssetResult> assetWork_;
+    std::optional<AssetJob> activeAssetJob_;
+    std::uint64_t sceneGeneration_ = 1;
+    std::filesystem::path scenePath_;
+    std::string sceneSource_, sceneBaseline_;
+    bool sceneDirty_ = false;
+    std::optional<zengine::scenes::Document> playScene_;
     std::wstring status_ = L"Ready - drop an FBX into the Media Library";
     zengine::ObjectStore objects_;
     zengine::ScriptHost scriptHost_;

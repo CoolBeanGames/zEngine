@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <limits>
 
 namespace
 {
@@ -82,10 +83,15 @@ bool zengine::GameObject::HasTag(std::string_view tag) const
 }
 zengine::GameObject& zengine::ObjectStore::Create(std::string name)
 {
-    auto object = std::unique_ptr<GameObject>(new GameObject(nextId_, std::move(name)));
+    return Restore(nextId_,std::move(name));
+}
+zengine::GameObject& zengine::ObjectStore::Restore(GameObjectId id, std::string name)
+{
+    if (!id || id==std::numeric_limits<GameObjectId>::max() || Find(id)) throw std::invalid_argument("Invalid or duplicate GameObject ID.");
+    auto object = std::unique_ptr<GameObject>(new GameObject(id, std::move(name)));
     auto& result = *object;
     objects_.push_back(std::move(object));
-    ++nextId_;
+    nextId_=std::max(nextId_,id+1);
     return result;
 }
 zengine::GameObject* zengine::ObjectStore::Find(GameObjectId id) noexcept

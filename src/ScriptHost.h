@@ -16,6 +16,8 @@ namespace zengine
         std::vector<Field> Fields(ScriptBehavior&);
         void SetField(ScriptBehavior&, const std::string& name, const std::string& text);
         std::string Error(const ScriptBehavior&) const;
+        std::map<std::string,script::Value> AuthoredValues(const ScriptBehavior&) const;
+        void RestoreValues(ScriptBehavior&, std::map<std::string,script::Value> values);
         bool Play(ObjectStore&);
         void Stop(ObjectStore&);
         void Tick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.Tick(objects, delta); }

@@ -217,6 +217,7 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
         else if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
             scriptHost_->SetField(*script,entry.name,Utf8(text));
         entry.field.valid=true;
+        if (changed_) changed_();
     }
     catch (const std::exception&) { entry.field.valid=false; }
     InvalidateRect(entry.field.window,nullptr,FALSE);

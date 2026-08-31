@@ -124,6 +124,7 @@ namespace zengine
     {
     public:
         GameObject& Create(std::string name = "GameObject");
+        GameObject& Restore(GameObjectId id, std::string name);
         GameObject* Find(GameObjectId id) noexcept;
         const GameObject* Find(GameObjectId id) const noexcept;
         std::size_t Size() const noexcept { return objects_.size(); }

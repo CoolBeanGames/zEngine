@@ -39,6 +39,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         {
             if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
             {
+                if (editor.TranslateShortcut(message)) continue;
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
             }

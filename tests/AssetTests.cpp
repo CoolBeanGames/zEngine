@@ -7,6 +7,7 @@
 #include "WindowCapture.h"
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
+#include "SceneAssets.h"
 #include <objbase.h>
 #include <shlobj.h>
 
@@ -477,6 +478,110 @@ void ScriptIntegrationEditorTests(bool capture)
     std::cout<<"PASS: create/edit/save .zsh, attach, Inspector variables/priority, Play/Step/Stop, actual mesh movement, draw gate, compile recovery\n";
 }
 
+// Answers only modal prompts owned by this test editor, on this test's UI thread.
+struct ScenePromptAnswer
+{
+    HWND owner; int answer; UINT_PTR timer=0; bool handled=false;
+    static inline ScenePromptAnswer* active=nullptr;
+    ScenePromptAnswer(HWND window,int response):owner(window),answer(response)
+    {
+        active=this;
+        timer=SetTimer(nullptr,0,10,[](HWND,UINT,UINT_PTR,DWORD) {
+            if (!active) return;
+            EnumThreadWindows(GetCurrentThreadId(),[](HWND dialog,LPARAM data)->BOOL {
+                auto& self=*reinterpret_cast<ScenePromptAnswer*>(data);
+                wchar_t name[32]{}; GetClassNameW(dialog,name,32);
+                if (GetWindow(dialog,GW_OWNER)==self.owner && std::wstring(name)==L"#32770" && GetDlgItem(dialog,self.answer))
+                { self.handled=true; SendMessageW(dialog,WM_COMMAND,self.answer,0); return FALSE; }
+                return TRUE;
+            },reinterpret_cast<LPARAM>(active));
+        });
+        Require(timer!=0,"Cannot install scene prompt test responder");
+    }
+    ~ScenePromptAnswer() { KillTimer(nullptr,timer); active=nullptr; }
+};
+void SceneEditorTests(bool capture)
+{
+    TestDirectory test; const auto project=test.path/L"Project"; const auto assets=project/L"Assets";
+    Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM init failed");
+    std::filesystem::path sceneA,sceneB;
+    {
+        EditorShell editor(GetModuleHandleW(nullptr)); const auto window=editor.Create(SW_HIDE,project); editor.InitializeRenderer();
+        const auto inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
+        const auto field=[&](int id) { return GetDlgItem(inspector,id); };
+        SetWindowTextW(field(InspectorPanel::NameField),L"Scene A Cube");
+        SetWindowTextW(field(InspectorPanel::TagsField),L"player, visible");
+        SetWindowTextW(field(InspectorPanel::FirstTransformField),L"1.25");
+        const auto script=editor.CreateScriptAsset();
+        zengine::scripts::Save(assets,script,"class NewBehavior : gameObject { label(\"Movement\"); export float speed=2; func update(float dt) { transform.position.x+=speed*dt; } }");
+        Require(editor.AttachScript(1,script),"Scene script attach failed");
+        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+3),L"1.5");
+        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+5),L"6");
+        auto& empty=editor.CreateEmptyGameObject(); const auto emptyId=empty.Id();
+        SetWindowTextW(field(InspectorPanel::NameField),L"Scene A Empty");
+        sceneA=assets/L"A.zscene"; Require(editor.SaveScene(sceneA) && !editor.SceneDirty(),"Save Scene failed");
+        const auto original=zengine::scenes::Load(sceneA);
+        Require(editor.NewScene() && editor.GameObjects().Size()==0 && !editor.SelectedGameObject(),"New Scene did not clear tree/Inspector");
+        sceneB=editor.ScenePath(); Require(zengine::scenes::IsScene(sceneB),"New Scene asset not created");
+        editor.CreateEmptyGameObject(); SetWindowTextW(field(InspectorPanel::NameField),L"Scene B Only");
+        Require(editor.SaveScene(),"Save active new scene failed");
+        RECT client{}; GetClientRect(window,&client);
+        // A.zscene sorts first. Opening it uses the same native double-click path as the library.
+        SendMessageW(window,WM_LBUTTONDBLCLK,MK_LBUTTON,MAKELPARAM(350,client.bottom-220));
+        Require(editor.ScenePath()==sceneA && editor.GameObjects().Size()==2,"Library double-click did not open scene");
+        auto* cube=editor.GameObjects().Find(1);
+        Require(cube && cube->Name()=="Scene A Cube" && cube->HasTag("player") && editor.GameObjects().Find(emptyId)->Name()=="Scene A Empty","Scene identity/tree data lost");
+        Require(cube->GetTransform().Position().x==1.25f && cube->BehaviorAt(1).Priority()==1.5f,"Transform or behavior priority lost");
+        wchar_t value[64]{}; GetWindowTextW(field(InspectorPanel::FirstBehaviorField+5),value,64);
+        Require(std::wstring(value)==L"6" && editor.BuildSceneFrame().meshes.size()==1,"Script variable or mesh binding lost");
+        Require(editor.Play(),"Current scene did not play"); editor.SetPaused(true); editor.Step(); editor.Render();
+        Require(std::abs(cube->GetTransform().Position().x-1.35f)<0.0001f,"Wrong scene/variable was played");
+        SetWindowTextW(field(InspectorPanel::NameField),L"Temporary play name");
+        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+3),L"99");
+        SendMessageW(field(InspectorPanel::MeshEnabled),BM_SETCHECK,BST_UNCHECKED,0);
+        SendMessageW(inspector,WM_COMMAND,MAKEWPARAM(InspectorPanel::MeshEnabled,BN_CLICKED),reinterpret_cast<LPARAM>(field(InspectorPanel::MeshEnabled)));
+        bool rejected=false; try { editor.SaveScene(); } catch (...) { rejected=true; }
+        Require(rejected && zengine::scenes::Load(sceneA)==original,"Play-mode save overwrote authored scene");
+        rejected=false; try { editor.OpenScene(sceneB); } catch (...) { rejected=true; }
+        Require(rejected && editor.ScenePath()==sceneA,"Scene switched during Play");
+        editor.Stop();
+        Require(cube->Name()=="Scene A Cube" && cube->GetTransform().Position().x==1.25f && cube->BehaviorAt(1).Priority()==1.5f && cube->BehaviorAt(0).Enabled() && !editor.SceneDirty(),"Stop did not restore scene Inspector state");
+        SetWindowTextW(field(InspectorPanel::FirstTransformField),L"77"); Require(editor.SceneDirty(),"Scene edit did not mark dirty");
+        { ScenePromptAnswer answer(window,IDCANCEL); Require(!editor.OpenScene(sceneB) && answer.handled && editor.ScenePath()==sceneA,"Cancel lost current scene"); }
+        { ScenePromptAnswer answer(window,IDYES); Require(editor.OpenScene(sceneB) && answer.handled,"Save-and-switch failed"); }
+        Require(editor.GameObjects().Size()==1 && editor.SelectedGameObject()->Name()=="Scene B Only" && editor.BuildSceneFrame().meshes.empty(),"Old scene content leaked into new scene");
+        Require(editor.OpenScene(sceneA) && editor.SelectedGameObject()->GetTransform().Position().x==77,"Saved Inspector edits did not persist");
+        SetWindowTextW(field(InspectorPanel::FirstTransformField),L"88");
+        { ScenePromptAnswer answer(window,IDNO); Require(editor.OpenScene(sceneB) && answer.handled,"Discard-and-switch failed"); }
+        Require(zengine::scenes::Decode(zengine::scenes::Load(sceneA)).objects.front().transform.Position().x==77,"Discard wrote changes to disk");
+        const auto invalid=assets/L"Broken.zscene"; { std::ofstream out(invalid); out<<"invalid scene"; }
+        rejected=false; try { editor.OpenScene(invalid); } catch (...) { rejected=true; }
+        Require(rejected && editor.SelectedGameObject()->Name()=="Scene B Only","Broken scene destroyed current scene");
+        // Old asynchronous mesh results cannot touch a different scene with the same object ID.
+        std::vector<std::string> warnings;
+        const auto imported=FbxImporter::Import(CreateSource(test.path/L"source"),assets,warnings);
+        auto meshScene=zengine::scenes::Decode(zengine::scenes::Load(sceneA));
+        const auto relative=std::filesystem::relative(imported,assets).generic_u8string();
+        meshScene.objects[0].behaviors[0].asset=std::string(reinterpret_cast<const char*>(relative.data()),relative.size());
+        const auto loading=assets/L"Loading.zscene"; zengine::scenes::Save(assets,loading,zengine::scenes::Encode(meshScene));
+        Require(editor.OpenScene(loading),"Loading scene failed");
+        Require(!editor.Play(),"Play began before restored models loaded");
+        editor.Render(); // Starts an async load for ID 1.
+        Require(editor.OpenScene(sceneB),"Could not switch away from restored mesh load");
+        for (int i=0;i<30;++i) { editor.Render(); Sleep(2); }
+        Require(editor.SelectedGameObject()->Name()=="Scene B Only" && editor.SelectedGameObject()->BehaviorCount()==0 && editor.BuildSceneFrame().meshes.empty(),"Stale mesh load modified another scene");
+        if (capture) { Require(editor.OpenScene(sceneA),"Capture scene open"); editor.Render(); CaptureWindow(window,L"scene-assets-qa.bmp"); }
+    }
+    {
+        EditorShell editor(GetModuleHandleW(nullptr)); (void)editor.Create(SW_HIDE,project); editor.InitializeRenderer();
+        Require(editor.OpenScene(sceneA) && editor.GameObjects().Size()==2 && editor.SelectedGameObject()->GetTransform().Position().x==77,"Scene failed across editor restart");
+        Require(editor.Play(),"Restored scene cannot play after restart"); editor.SetPaused(true); editor.Step(); editor.Render();
+        Require(std::abs(editor.SelectedGameObject()->GetTransform().Position().x-77.1f)<0.0001f,"Exported speed lost across restart"); editor.Stop();
+    }
+    CoUninitialize();
+    std::cout<<"PASS: new/save/open scene assets, double-click, Inspector persistence, current-scene Play, save/discard/cancel, restart, stale async loads\n";
+}
+
 int main(int argc, char** argv)
 {
     try
@@ -486,6 +591,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scripts") ScriptIntegrationEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--scenes") SceneEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc == 1) ImportTests();
         else throw std::runtime_error("Unknown test mode");
         return 0;

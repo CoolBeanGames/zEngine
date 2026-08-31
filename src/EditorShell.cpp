@@ -5,6 +5,7 @@
 #include "InspectorPanel.h"
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
+#include "SceneAssets.h"
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include <commdlg.h>
@@ -201,6 +202,8 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
         : std::filesystem::absolute(projectDirectory)) / "Assets";
     RefreshAssets();
     DragAcceptFiles(window_, TRUE);
+    sceneBaseline_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_));
+    UpdateSceneTitle();
     RECT client{};
     GetClientRect(window_, &client);
     Layout(static_cast<std::uint32_t>(client.right), static_cast<std::uint32_t>(client.bottom));
@@ -295,16 +298,25 @@ bool EditorShell::PrepareScripts()
                 catch (const std::exception& e) { valid=false; status_=WideText(e.what()); }
             }
     inspectorPanel_->RefreshBehaviors();
+    if (!sceneBaseline_.empty())
+    {
+        sceneDirty_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_))!=sceneBaseline_;
+        UpdateSceneTitle();
+    }
     InvalidateRect(window_,nullptr,FALSE);
     return valid;
 }
 bool EditorShell::Play()
 {
     if (Playing()) return true;
+    if (PendingModels()) { status_=L"Wait for this scene's models to finish loading before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     for (const auto& editor:scriptEditors_) if (editor->Dirty())
     { status_=L"Save your script edits (Ctrl+S) before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     SetFocus(window_); // Finish Inspector edits before snapshotting values/transforms.
-    if (!PrepareScripts() || !scriptHost_.Play(objects_)) { ReportScriptErrors(); return false; }
+    if (!PrepareScripts()) { ReportScriptErrors(); return false; }
+    auto authored=zengine::scenes::Capture(objects_,scriptHost_);
+    if (!scriptHost_.Play(objects_)) { ReportScriptErrors(); return false; }
+    playScene_=std::move(authored);
     paused_=false; stepDraw_=false; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
     status_=L"Playing - Stop restores transforms and discards runtime variable changes";
     inspectorPanel_->RefreshBehaviors(); inspectorPanel_->RefreshLiveValues(); ReportScriptErrors();
@@ -315,8 +327,18 @@ void EditorShell::Stop()
 {
     SetFocus(window_);
     scriptHost_.Stop(objects_); paused_=false; stepDraw_=false; tickAccumulator_=0;
+    if (playScene_)
+        for (const auto& saved:playScene_->objects)
+            if (auto* object=objects_.Find(saved.id))
+            {
+                object->SetName(saved.name); object->SetTags(saved.tags); object->GetTransform()=saved.transform;
+                for (std::size_t i=0;i<saved.behaviors.size();++i)
+                { object->BehaviorAt(i).SetPriority(saved.behaviors[i].priority); object->BehaviorAt(i).SetEnabled(saved.behaviors[i].enabled); }
+            }
+    playScene_.reset();
     status_=L"Stopped - scene transforms restored";
     PrepareScripts(); inspectorPanel_->RefreshLiveValues();
+    if (const auto* selected=SelectedGameObject()) inspectorPanel_->Bind(objects_.Find(selected->Id()));
     InvalidateRect(window_,nullptr,FALSE);
 }
 void EditorShell::SetPaused(bool paused)
@@ -482,7 +504,7 @@ void EditorShell::Paint()
     DrawTextLabel(bufferContext, L"+ Create Empty", create, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     int sceneY = create.bottom + 5;
     RECT sceneRoot{sceneX, sceneY, sceneBrowser_.right - 8, sceneY + 25};
-    DrawTextLabel(bufferContext, L"\u25be  Untitled Scene", sceneRoot, TextColor);
+    DrawTextLabel(bufferContext, L"\u25be  "+SceneName()+(sceneDirty_?L" *":L""), sceneRoot, TextColor);
     const RECT objectList = ObjectListRectangle();
     const int treeClip = SaveDC(bufferContext);
     IntersectClipRect(bufferContext, objectList.left, objectList.top, objectList.right, objectList.bottom);
@@ -533,10 +555,13 @@ void EditorShell::Paint()
     FillRectangle(bufferContext, newScript, FieldColor);
     DrawBorder(bufferContext, newScript, BorderColor);
     DrawTextLabel(bufferContext, L"+ New Script", newScript, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    const RECT newScene=CreateSceneRectangle();
+    FillRectangle(bufferContext,newScene,FieldColor); DrawBorder(bufferContext,newScene,BorderColor);
+    DrawTextLabel(bufferContext,L"+ New Scene",newScene,TextColor,DT_CENTER|DT_SINGLELINE|DT_VCENTER);
     RECT dropArea{folderPane.right + 20, mediaTop + 20, mediaLibrary_.right - 20, mediaLibrary_.bottom - 20};
     DrawBorder(bufferContext, dropArea, RGB(72, 75, 83));
     RECT libraryHint{dropArea.left + 8, dropArea.top, dropArea.right - 8, dropArea.top + 26};
-    DrawTextLabel(bufferContext, L"FBX: drag to Scene to create, or onto an object to assign  |  ZSH: double-click to edit", libraryHint,
+    DrawTextLabel(bufferContext, L"FBX: drag to assign  |  ZSH: double-click to edit  |  Scene: double-click to open", libraryHint,
                   MutedTextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     const RECT list = AssetListRectangle();
     const int saved = SaveDC(bufferContext);
@@ -551,7 +576,7 @@ void EditorShell::Paint()
         if (index == selectedAsset_) FillRectangle(bufferContext, row, SelectionColor);
         row.left += 8;
         const bool script = zengine::scripts::IsScript(assets_[index]);
-        DrawTextLabel(bufferContext, script ? L"ZSH   " + assets_[index].filename().wstring() : L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
+        DrawTextLabel(bufferContext, script ? L"ZSH   " + assets_[index].filename().wstring() : zengine::scenes::IsScene(assets_[index]) ? L"SCENE   "+assets_[index].filename().wstring() : L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
                       DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
     RestoreDC(bufferContext, saved);
@@ -619,6 +644,7 @@ RECT EditorShell::ObjectListRectangle() const
 }
 zengine::GameObject& EditorShell::CreateEmptyGameObject()
 {
+    if (Playing()) throw std::runtime_error("Stop Play before creating objects.");
     std::string name = "GameObject";
     for (unsigned suffix = 1;; ++suffix)
     {
@@ -629,6 +655,7 @@ zengine::GameObject& EditorShell::CreateEmptyGameObject()
         name = "GameObject (" + std::to_string(suffix) + ")";
     }
     auto& object = objects_.Create(std::move(name));
+    MarkSceneDirty();
     SelectGameObject(object.Id());
     const auto list = ObjectListRectangle();
     const int rows = std::max(1, static_cast<int>(list.bottom - list.top) / 27);
@@ -647,6 +674,7 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
 }
 void EditorShell::OnObjectChanged()
 {
+    MarkSceneDirty();
     if (const auto* selected = SelectedGameObject())
         SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + WideText(selected->Name())).c_str());
     InvalidateRect(window_, &sceneBrowser_, FALSE);
@@ -674,9 +702,9 @@ void EditorShell::RefreshAssets()
         }
         for (const auto& entry : std::filesystem::recursive_directory_iterator(assetsDirectory_))
         {
-            if (entry.is_regular_file() && zengine::scripts::IsScript(entry.path()))
+            if (entry.is_regular_file() && (zengine::scripts::IsScript(entry.path()) || zengine::scenes::IsScene(entry.path())))
             {
-                try { assets_.push_back(zengine::scripts::Resolve(assetsDirectory_, entry.path())); }
+                try { assets_.push_back(zengine::scenes::IsScene(entry.path()) ? zengine::scenes::Resolve(assetsDirectory_,entry.path()) : zengine::scripts::Resolve(assetsDirectory_, entry.path())); }
                 catch (const std::exception&) {} // Ignore assets escaping the project via links.
             }
         }
@@ -710,11 +738,14 @@ void EditorShell::PollAssetWork()
 {
     if (assetWork_.valid() && assetWork_.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
     {
+        const auto completedJob=activeAssetJob_;
+        activeAssetJob_.reset();
         try
         {
             auto result = assetWork_.get();
             if (result.loadMesh)
             {
+                if (result.scene!=sceneGeneration_) return; // Never apply a previous scene's asynchronous assignment.
                 if (result.object && meshRevisions_[result.object] != result.revision) return; // Superseded assignment.
                 if (!renderer_) throw std::runtime_error("Renderer is not initialized.");
                 MeshHandle handle = result.cachedMesh ? result.cachedMesh : meshCache_[result.path].lock();
@@ -737,7 +768,7 @@ void EditorShell::PollAssetWork()
                 mesh->SetAsset(asset);
                 if (!result.object) SelectGameObject(object->Id());
                 else if (selectedObject_ == object->Id()) inspectorPanel_->RefreshBehaviors();
-                OnObjectChanged();
+                if (!result.restoreOnly) OnObjectChanged();
                 status_ = L"Assigned " + name + L" to " + WideText(object->Name());
             }
             else
@@ -753,6 +784,7 @@ void EditorShell::PollAssetWork()
         }
         catch (const std::exception& error)
         {
+            if (completedJob && completedJob->loadMesh && completedJob->scene!=sceneGeneration_) return;
             status_ = L"Asset operation failed: " + WideText(error.what());
         }
         InvalidateRect(window_, nullptr, FALSE);
@@ -761,6 +793,7 @@ void EditorShell::PollAssetWork()
     {
         const auto job = assetJobs_.front();
         assetJobs_.pop_front();
+        activeAssetJob_=job;
         status_ = (job.loadMesh ? L"Loading " : L"Importing ") + job.path.filename().wstring();
         const auto directory = assetsDirectory_;
         const MeshHandle cached = job.loadMesh ? meshCache_[job.path].lock() : nullptr;
@@ -769,6 +802,7 @@ void EditorShell::PollAssetWork()
             result.loadMesh = job.loadMesh;
             result.object = job.object;
             result.revision = job.revision;
+            result.scene=job.scene; result.restoreOnly=job.restoreOnly;
             result.path = job.path;
             result.cachedMesh = cached;
             if (job.loadMesh) { if (!cached) result.model = FbxImporter::Load(job.path, true); }
@@ -806,6 +840,7 @@ void EditorShell::FinishAssetDrag(POINT point)
     ReleaseCapture();
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
     if (!moved) return;
+    if (zengine::scenes::IsScene(path)) { status_=L"Double-click a scene asset to open it."; InvalidateRect(window_,&statusBar_,FALSE); return; }
     if (zengine::scripts::IsScript(path))
     {
         if (const auto id = ScriptDropTarget(point)) AttachScript(id, path);
@@ -818,6 +853,138 @@ void EditorShell::FinishAssetDrag(POINT point)
 RECT EditorShell::CreateScriptRectangle() const
 {
     return {mediaLibrary_.right-236, mediaLibrary_.top+4, mediaLibrary_.right-122, mediaLibrary_.top+26};
+}
+RECT EditorShell::CreateSceneRectangle() const
+{
+    return {mediaLibrary_.right-356,mediaLibrary_.top+4,mediaLibrary_.right-242,mediaLibrary_.top+26};
+}
+std::wstring EditorShell::SceneName() const
+{
+    return scenePath_.empty()?L"Untitled Scene":scenePath_.stem().wstring();
+}
+void EditorShell::UpdateSceneTitle()
+{
+    SetWindowTextW(window_,(L"zEngine Editor - "+SceneName()+(sceneDirty_?L" *":L"")).c_str());
+    InvalidateRect(window_,&sceneBrowser_,FALSE);
+}
+void EditorShell::MarkSceneDirty()
+{
+    if (!Playing()) { sceneDirty_=true; UpdateSceneTitle(); }
+}
+bool EditorShell::PendingModels(bool assignmentsOnly) const
+{
+    const auto pending=[&](const AssetJob& job) { return job.loadMesh && job.scene==sceneGeneration_ && (!assignmentsOnly || !job.restoreOnly); };
+    return (activeAssetJob_ && pending(*activeAssetJob_)) || std::any_of(assetJobs_.begin(),assetJobs_.end(),pending);
+}
+bool EditorShell::ConfirmSceneClose()
+{
+    if (Playing()) throw std::runtime_error("Stop Play before switching scenes.");
+    SetFocus(window_);
+    // Compare actual authored data so canceling/reverting an edit doesn't cause a spurious prompt.
+    sceneDirty_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_))!=sceneBaseline_;
+    UpdateSceneTitle();
+    if (!sceneDirty_ && !PendingModels(true)) return true;
+    if (PendingModels(true)) throw std::runtime_error("Wait for pending model assignments before switching scenes.");
+    const int answer=MessageBoxW(window_,(L"Save changes to "+SceneName()+L" before continuing?").c_str(),L"Unsaved scene",MB_YESNOCANCEL|MB_ICONQUESTION);
+    return answer==IDNO || (answer==IDYES && SaveScene());
+}
+bool EditorShell::SaveScene(const std::filesystem::path& path)
+{
+    if (Playing()) throw std::runtime_error("Stop Play before saving a scene.");
+    if (PendingModels(true)) throw std::runtime_error("Wait for pending model assignments before saving the scene.");
+    SetFocus(window_);
+    if (path.empty() && scenePath_.empty()) return SaveSceneAs();
+    const auto file=zengine::scenes::Resolve(assetsDirectory_,path.empty()?scenePath_:path);
+    const auto data=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_));
+    // A different target is create-only. Save As asks explicitly before replacing an existing asset.
+    zengine::scenes::Save(assetsDirectory_,file,data,file==scenePath_?&sceneSource_:nullptr);
+    scenePath_=file; sceneSource_=data; sceneBaseline_=data; sceneDirty_=false;
+    RefreshAssets(); UpdateSceneTitle(); status_=L"Saved scene: "+SceneName(); InvalidateRect(window_,nullptr,FALSE); return true;
+}
+bool EditorShell::SaveSceneAs()
+{
+    if (Playing()) throw std::runtime_error("Stop Play before saving a scene.");
+    if (PendingModels(true)) throw std::runtime_error("Wait for pending model assignments before saving the scene.");
+    SetFocus(window_); std::filesystem::create_directories(assetsDirectory_);
+    std::array<wchar_t,32768> filename{};
+    const auto proposed=(assetsDirectory_/(SceneName()+L".zscene")).wstring();
+    std::copy_n(proposed.c_str(),std::min(proposed.size(),filename.size()-1),filename.data());
+    OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=window_; dialog.lpstrFile=filename.data(); dialog.nMaxFile=static_cast<DWORD>(filename.size());
+    dialog.lpstrFilter=L"zEngine scenes (*.zscene)\0*.zscene\0\0"; dialog.lpstrDefExt=L"zscene";
+    dialog.lpstrTitle=L"Save scene in the current project's Assets directory"; dialog.Flags=OFN_OVERWRITEPROMPT|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&dialog)) return false;
+    const auto file=zengine::scenes::Resolve(assetsDirectory_,filename.data());
+    if (file==scenePath_) return SaveScene();
+    const auto data=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_));
+    std::optional<std::string> expected;
+    if (std::filesystem::exists(file)) expected=zengine::scenes::Load(file);
+    zengine::scenes::Save(assetsDirectory_,file,data,expected?&*expected:nullptr);
+    scenePath_=file; sceneSource_=data; sceneBaseline_=data; sceneDirty_=false;
+    RefreshAssets(); UpdateSceneTitle(); status_=L"Saved scene: "+SceneName(); InvalidateRect(window_,nullptr,FALSE); return true;
+}
+bool EditorShell::NewScene()
+{
+    if (!ConfirmSceneClose()) return false;
+    const auto file=zengine::scenes::Create(assetsDirectory_);
+    const auto source=zengine::scenes::Load(file);
+    ApplyScene(file,source,zengine::scenes::Decode(source)); return true;
+}
+bool EditorShell::OpenScene(const std::filesystem::path& path)
+{
+    if (Playing()) throw std::runtime_error("Stop Play before opening another scene.");
+    // Read and validate before prompting or changing the active scene.
+    const auto file=zengine::scenes::Resolve(assetsDirectory_,path);
+    const auto source=zengine::scenes::Load(file);
+    const auto scene=zengine::scenes::Decode(source);
+    if (!ConfirmSceneClose()) return false;
+    // Saving the old scene may have updated this same file while the prompt was open.
+    const auto current=zengine::scenes::Load(file);
+    ApplyScene(file,current,current==source?scene:zengine::scenes::Decode(current)); return true;
+}
+void EditorShell::ApplyScene(const std::filesystem::path& file,std::string source,const zengine::scenes::Document& scene)
+{
+    auto next=zengine::scenes::Instantiate(scene); // Build first; bad data cannot destroy the current scene.
+    inspectorPanel_->Bind(nullptr);
+    ++sceneGeneration_;
+    std::erase_if(assetJobs_,[](const AssetJob& job) { return job.loadMesh; });
+    meshBindings_.clear(); meshRevisions_.clear();
+    scriptHost_=std::move(next.scripts); objects_=std::move(next.objects);
+    scenePath_=file; sceneSource_=std::move(source); firstObject_=0; selectedObject_=0;
+    status_=L"Opened scene: "+SceneName();
+    PrepareScripts();
+    for (std::size_t i=0;i<objects_.Size();++i)
+    {
+        auto& object=objects_.At(i);
+        if (const auto* mesh=object.GetBehavior<zengine::MeshRenderer>(); mesh && !mesh->Asset().empty())
+        {
+            if (mesh->Asset()==zengine::MeshRenderer::CubeAsset)
+            { if (renderer_) meshBindings_[object.Id()]={mesh->Asset(),renderer_->Cube()}; }
+            else try
+            {
+                const auto model=ResolveModel(std::filesystem::path(WideText(mesh->Asset())));
+                assetJobs_.push_back({model,true,object.Id(),++meshRevisions_[object.Id()],sceneGeneration_,true});
+            }
+            catch (const std::exception& e) { status_=L"Scene opened; model unavailable: "+WideText(e.what()); }
+        }
+    }
+    if (objects_.Size()) SelectGameObject(objects_.At(0).Id());
+    sceneBaseline_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_)); sceneDirty_=false;
+    RefreshAssets(); UpdateSceneTitle(); InvalidateRect(window_,nullptr,FALSE);
+}
+void EditorShell::ChooseScene()
+{
+    if (Playing()) throw std::runtime_error("Stop Play before opening another scene.");
+    std::array<wchar_t,32768> file{}; const auto initial=assetsDirectory_.wstring();
+    OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=window_; dialog.lpstrFile=file.data(); dialog.nMaxFile=static_cast<DWORD>(file.size());
+    dialog.lpstrFilter=L"zEngine scenes (*.zscene)\0*.zscene\0\0"; dialog.lpstrInitialDir=initial.c_str();
+    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
+    if (GetOpenFileNameW(&dialog)) OpenScene(file.data());
+}
+bool EditorShell::TranslateShortcut(const MSG& message)
+{
+    if (message.message!=WM_KEYDOWN || message.wParam!='S' || !(GetKeyState(VK_CONTROL)&0x8000) ||
+        (message.hwnd!=window_ && !IsChild(window_,message.hwnd))) return false;
+    SendMessageW(window_,WM_COMMAND,(GetKeyState(VK_SHIFT)&0x8000)?SaveSceneAsCommand:SaveSceneCommand,0); return true;
 }
 std::filesystem::path EditorShell::CreateScriptAsset()
 {
@@ -857,6 +1024,7 @@ bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::
             behavior && _wcsicmp(WideText(behavior->Asset()).c_str(),WideText(asset).c_str()) == 0)
         { status_ = L"That script is already attached."; InvalidateRect(window_, &statusBar_, FALSE); return false; }
     object->AddBehavior<zengine::ScriptBehavior>(asset);
+    MarkSceneDirty();
     SelectGameObject(id);
     status_ = L"Attached " + file.filename().wstring() + L" to " + WideText(object->Name()) + L" - press Play to run";
     PrepareScripts();
@@ -888,9 +1056,11 @@ void EditorShell::ChooseScript()
 }
 bool EditorShell::AddMeshRenderer(zengine::GameObjectId id)
 {
+    if (Playing()) throw std::runtime_error("Stop Play before adding behaviors.");
     auto* object = objects_.Find(id);
     if (!object || object->GetBehavior<zengine::MeshRenderer>()) return false;
     object->AddBehavior<zengine::MeshRenderer>();
+    MarkSceneDirty();
     if (id == selectedObject_) inspectorPanel_->RefreshBehaviors();
     status_ = L"Added Mesh Renderer - assign an imported model or use the built-in cube";
     InvalidateRect(window_, nullptr, FALSE);
@@ -898,23 +1068,27 @@ bool EditorShell::AddMeshRenderer(zengine::GameObjectId id)
 }
 void EditorShell::AssignCube(zengine::GameObjectId id)
 {
+    if (Playing()) throw std::runtime_error("Stop Play before changing model assignments.");
     auto* object = objects_.Find(id);
     if (!object || !renderer_) throw std::runtime_error("Select an object and initialize the renderer first.");
     AddMeshRenderer(id);
     ++meshRevisions_[id];
     meshBindings_[id] = {zengine::MeshRenderer::CubeAsset,renderer_->Cube()};
     object->GetBehavior<zengine::MeshRenderer>()->SetAsset(zengine::MeshRenderer::CubeAsset);
+    MarkSceneDirty();
     if (id == selectedObject_) inspectorPanel_->RefreshBehaviors();
     status_ = L"Assigned built-in cube";
     InvalidateRect(window_, nullptr, FALSE);
 }
 void EditorShell::ClearMesh(zengine::GameObjectId id)
 {
+    if (Playing()) throw std::runtime_error("Stop Play before changing model assignments.");
     auto* object = objects_.Find(id);
     auto* mesh = object ? object->GetBehavior<zengine::MeshRenderer>() : nullptr;
     if (!mesh) return;
     ++meshRevisions_[id];
     mesh->SetAsset({}); meshBindings_.erase(id);
+    MarkSceneDirty();
     if (id == selectedObject_) inspectorPanel_->RefreshBehaviors();
     status_ = L"Cleared model; Mesh Renderer remains attached";
     InvalidateRect(window_, nullptr, FALSE);
@@ -930,9 +1104,10 @@ std::filesystem::path EditorShell::ResolveModel(const std::filesystem::path& pat
 }
 void EditorShell::QueueModel(const std::filesystem::path& path, zengine::GameObjectId id)
 {
+    if (Playing()) throw std::runtime_error("Stop Play before changing model assignments.");
     if (id && !objects_.Find(id)) throw std::runtime_error("Unknown target GameObject.");
     const auto file = ResolveModel(path);
-    assetJobs_.push_back({file,true,id,id ? ++meshRevisions_[id] : 0});
+    assetJobs_.push_back({file,true,id,id ? ++meshRevisions_[id] : 0,sceneGeneration_,false});
     status_ = L"Queued model assignment";
     InvalidateRect(window_, &statusBar_, FALSE);
 }
@@ -1033,8 +1208,14 @@ LRESULT EditorShell::HandleMessage(
     switch (message)
     {
     case WM_CLOSE:
-        if (ConfirmScriptClose()) DestroyWindow(window);
+        if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
+    case WM_COMMAND:
+        if (LOWORD(wParam)==NewSceneCommand) { NewScene(); return 0; }
+        if (LOWORD(wParam)==SaveSceneCommand) { SaveScene(); return 0; }
+        if (LOWORD(wParam)==SaveSceneAsCommand) { SaveSceneAs(); return 0; }
+        if (LOWORD(wParam)==OpenSceneCommand) { ChooseScene(); return 0; }
+        break;
     case WM_CONTEXTMENU:
     {
         POINT screen{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)}, point=screen;
@@ -1043,10 +1224,12 @@ LRESULT EditorShell::HandleMessage(
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
+        AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0),NewSceneCommand,L"Create Scene (.zscene)");
         const auto command=TrackPopupMenu(menu, TPM_RETURNCMD|TPM_RIGHTBUTTON, screen.x,screen.y,0,window_,nullptr);
         DestroyMenu(menu);
         if (command == 1) OpenScript(CreateScriptAsset());
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
+        if (command==NewSceneCommand) NewScene();
         return 0;
     }
     case WM_LBUTTONDBLCLK:
@@ -1056,7 +1239,12 @@ LRESULT EditorShell::HandleMessage(
         if (PtInRect(&list,point))
         {
             const auto index=firstAsset_+(point.y-list.top)/28;
-            if (index >= 0 && index < static_cast<LONG>(assets_.size()) && zengine::scripts::IsScript(assets_[index])) OpenScript(assets_[index]);
+            if (index >= 0 && index < static_cast<LONG>(assets_.size()))
+            {
+                const auto asset=assets_[index];
+                if (zengine::scripts::IsScript(asset)) OpenScript(asset);
+                else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
+            }
         }
         return 0;
     }
@@ -1090,6 +1278,18 @@ LRESULT EditorShell::HandleMessage(
     {
         SetFocus(window_);
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const RECT fileMenu{44,optionsBar_.top,99,optionsBar_.bottom};
+        if (PtInRect(&fileMenu,point))
+        {
+            HMENU menu=CreatePopupMenu(); const UINT flags=MF_STRING|(Playing()?MF_GRAYED:0);
+            AppendMenuW(menu,flags,NewSceneCommand,L"New Scene"); AppendMenuW(menu,flags,OpenSceneCommand,L"Open Scene...");
+            AppendMenuW(menu,flags,SaveSceneCommand,L"Save Scene\tCtrl+S"); AppendMenuW(menu,flags,SaveSceneAsCommand,L"Save Scene As...\tCtrl+Shift+S");
+            POINT at{44,optionsBar_.bottom}; ClientToScreen(window_,&at);
+            const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,at.x,at.y,0,window_,nullptr); DestroyMenu(menu);
+            if (command) SendMessageW(window_,WM_COMMAND,command,0); return 0;
+        }
+        const auto newScene=CreateSceneRectangle();
+        if (PtInRect(&newScene,point)) { NewScene(); return 0; }
         const int centerX=(viewportPanel_.left+viewportPanel_.right)/2;
         const RECT play{centerX-42,viewportPanel_.top+4,centerX-14,viewportPanel_.top+26};
         const RECT pause{centerX-12,viewportPanel_.top+4,centerX+16,viewportPanel_.top+26};
@@ -1119,7 +1319,7 @@ LRESULT EditorShell::HandleMessage(
                               std::abs(point.y - assetDragStart_.y) >= GetSystemMetrics(SM_CYDRAG);
             if (assetDragMoved_)
             {
-                const bool valid = ScriptDropTarget(point) != 0 || (!zengine::scripts::IsScript(assets_.at(draggedAsset_)) && PtInRect(&viewportContent_,point));
+                const bool valid = !zengine::scenes::IsScene(assets_.at(draggedAsset_)) && (ScriptDropTarget(point) != 0 || (!zengine::scripts::IsScript(assets_.at(draggedAsset_)) && PtInRect(&viewportContent_,point)));
                 SetCursor(LoadCursorW(nullptr, valid ? IDC_HAND : IDC_NO));
             }
             return 0;
