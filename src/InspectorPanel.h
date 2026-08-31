@@ -47,11 +47,13 @@ private:
     void SetText(int index, const std::wstring& value);
     struct BehaviorField
     {
+        enum class Style { Normal, BehaviorHeader, ScriptLabel };
         zengine::Behavior* behavior = nullptr;
         std::string name;
         std::wstring label;
         Field field;
         bool priority = false;
+        Style style = Style::Normal;
     };
     std::wstring BehaviorValue(std::size_t index);
     void ChangeBehaviorField(std::size_t index);
@@ -59,10 +61,13 @@ private:
     std::vector<BehaviorField> behaviorFields_;
     zengine::ScriptHost* scriptHost_ = nullptr;
     int BehaviorHeight() const;
+    int RowHeight(const BehaviorField& entry) const;
 
     HWND window_ = nullptr;
     HINSTANCE instance_ = nullptr;
     HFONT font_ = nullptr;
+    HFONT behaviorFont_ = nullptr, labelFont_ = nullptr;
+    int behaviorHeaderHeight_ = 32;
     HBRUSH background_ = nullptr;
     HBRUSH fieldBrush_ = nullptr;
     HBRUSH invalidBrush_ = nullptr;

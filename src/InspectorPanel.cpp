@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cwctype>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -48,6 +49,8 @@ namespace
 InspectorPanel::~InspectorPanel()
 {
     if (window_ && IsWindow(window_)) DestroyWindow(window_);
+    if (behaviorFont_) DeleteObject(behaviorFont_);
+    if (labelFont_) DeleteObject(labelFont_);
     if (background_) DeleteObject(background_);
     if (fieldBrush_) DeleteObject(fieldBrush_);
     if (invalidBrush_) DeleteObject(invalidBrush_);
@@ -57,6 +60,23 @@ InspectorPanel::~InspectorPanel()
 void InspectorPanel::Create(HWND parent, HINSTANCE instance, HFONT font, std::function<void()> changed)
 {
     instance_ = instance; font_ = font; changed_ = std::move(changed);
+    LOGFONTW description{};
+    if (!GetObjectW(font_,sizeof(description),&description)) throw std::runtime_error("Cannot read Inspector font.");
+    description.lfWeight=FW_BOLD;
+    labelFont_=CreateFontIndirectW(&description); // Script labels retain the body font size.
+    const HDC dc=GetDC(parent);
+    const int extraPixels=MulDiv(3,GetDeviceCaps(dc,LOGPIXELSY),72);
+    description.lfHeight+=description.lfHeight<0 ? -extraPixels : extraPixels;
+    behaviorFont_=CreateFontIndirectW(&description);
+    if (behaviorFont_)
+    {
+        const auto old=SelectObject(dc,behaviorFont_);
+        TEXTMETRICW metrics{}; GetTextMetricsW(dc,&metrics);
+        behaviorHeaderHeight_=std::max(32,static_cast<int>(metrics.tmHeight)+10);
+        SelectObject(dc,old);
+    }
+    ReleaseDC(parent,dc);
+    if (!labelFont_ || !behaviorFont_) throw std::runtime_error("Cannot create Inspector heading fonts.");
     background_ = CreateSolidBrush(Background);
     fieldBrush_ = CreateSolidBrush(RGB(52, 54, 60));
     invalidBrush_ = CreateSolidBrush(RGB(92, 45, 45));
@@ -115,8 +135,9 @@ void InspectorPanel::RefreshBehaviors()
     updating_=true;
     for (auto& entry:behaviorFields_) if (entry.field.window) DestroyWindow(entry.field.window);
     behaviorFields_.clear();
-    const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable) {
+    const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable, BehaviorField::Style style=BehaviorField::Style::Normal) {
         BehaviorField entry; entry.behavior=behavior; entry.name=std::move(name); entry.label=std::move(label); entry.priority=priority;
+        entry.style=style;
         if (field)
         {
             const auto id=FirstBehaviorField+behaviorFields_.size();
@@ -133,14 +154,17 @@ void InspectorPanel::RefreshBehaviors()
     {
         auto& behavior=object_->BehaviorAt(i);
         auto* script=dynamic_cast<zengine::ScriptBehavior*>(&behavior);
-        add(&behavior,{},script?Wide(script->Asset()):L"Mesh Renderer",false,false,false);
+        const auto name=script ? std::filesystem::path(Wide(script->Asset())).stem().wstring() :
+            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" : L"Native Behavior";
+        add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
         if (script && scriptHost_)
         {
             const auto error=scriptHost_->Error(*script);
             if (!error.empty()) add(&behavior,{},L"Error: "+Wide(error),false,false,false);
             for (const auto& field:scriptHost_->Fields(*script))
-                add(&behavior,field.name,field.name.empty()?Wide(field.label):Wide(field.name+" ("+field.type+")"),false,!field.name.empty(),field.editable);
+                add(&behavior,field.name,field.name.empty()?Wide(field.label):Wide(field.name+" ("+field.type+")"),false,!field.name.empty(),field.editable,
+                    field.name.empty()?BehaviorField::Style::ScriptLabel:BehaviorField::Style::Normal);
         }
     }
     for (std::size_t i=0;i<behaviorFields_.size();++i) if (auto control=behaviorFields_[i].field.window)
@@ -159,8 +183,12 @@ void InspectorPanel::RefreshBehaviors()
 int InspectorPanel::BehaviorHeight() const
 {
     int height=0;
-    for (const auto& entry:behaviorFields_) height+=entry.field.window?52:24;
+    for (const auto& entry:behaviorFields_) height+=RowHeight(entry);
     return height;
+}
+int InspectorPanel::RowHeight(const BehaviorField& entry) const
+{
+    return entry.style==BehaviorField::Style::BehaviorHeader ? behaviorHeaderHeight_ : entry.field.window?52:24;
 }
 std::wstring InspectorPanel::BehaviorValue(std::size_t index)
 {
@@ -345,7 +373,7 @@ void InspectorPanel::Layout()
     for (auto& entry:behaviorFields_)
     {
         if (entry.field.window) MoveWindow(entry.field.window,12,y+21,std::max(30,width-24),24,TRUE);
-        y+=entry.field.window?52:24;
+        y+=RowHeight(entry);
     }
     y+=5;
     for (HWND control : {meshEnabled_,chooseMesh_,cubeMesh_,clearMesh_}) ShowWindow(control,hasMesh ? SW_SHOW : SW_HIDE);
@@ -385,7 +413,14 @@ void InspectorPanel::Paint()
     label(object_ && object_->BehaviorCount() ? L"Behaviors attached" : L"No behaviors attached", 12, width >= 250 ? 297 : 346, width - 24);
     int rowY=width>=250?321:370;
     for (const auto& entry:behaviorFields_)
-    { label(entry.label.c_str(),12,rowY,width-24); rowY+=entry.field.window?52:24; }
+    {
+        SelectObject(dc,entry.style==BehaviorField::Style::BehaviorHeader ? behaviorFont_ :
+            entry.style==BehaviorField::Style::ScriptLabel ? labelFont_ : font_);
+        RECT row{12,rowY-scroll_,width-12,rowY-scroll_+(entry.style==BehaviorField::Style::BehaviorHeader?RowHeight(entry):20)};
+        DrawTextW(dc,entry.label.c_str(),-1,&row,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
+        rowY+=RowHeight(entry);
+    }
+    SelectObject(dc,font_);
     const auto* mesh = object_ ? object_->GetBehavior<zengine::MeshRenderer>() : nullptr;
     const int base = (width >= 250 ? 326 : 375) + BehaviorHeight();
     if (mesh)
