@@ -13,3 +13,14 @@ inline DirectX::XMMATRIX TransformMatrix(const zengine::Transform& transform)
         XMMatrixRotationY(XMConvertToRadians(r.y)) * XMMatrixRotationZ(XMConvertToRadians(r.z)) *
         XMMatrixTranslation(p.x, p.y, p.z);
 }
+
+inline DirectX::XMMATRIX ParentMatrix(const zengine::ObjectStore& objects,const zengine::GameObject& object)
+{
+    auto matrix=DirectX::XMMatrixIdentity(); auto parent=object.Parent();
+    for (unsigned depth=0;parent && depth<64;++depth)
+    {
+        const auto* ancestor=objects.Find(parent); if (!ancestor) break;
+        matrix=matrix*TransformMatrix(ancestor->GetTransform()); parent=ancestor->Parent();
+    }
+    return matrix;
+}

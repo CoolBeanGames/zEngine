@@ -492,7 +492,7 @@ void Renderer::Render(const ViewportFrame& frame)
         if (!draw.mesh) continue;
         const auto& mesh = *draw.mesh;
         if (mesh.device != device_.Get()) throw std::runtime_error("Mesh belongs to another render device.");
-        setConstants(TransformMatrix(draw.transform), false);
+        setConstants(TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity()), false);
         context_->IASetVertexBuffers(0, 1, mesh.vertices.GetAddressOf(), &stride, &offset);
         context_->IASetIndexBuffer(mesh.indices.Get(), mesh.indexFormat, 0);
         for (const auto& part : mesh.parts)
@@ -506,7 +506,9 @@ void Renderer::Render(const ViewportFrame& frame)
     }
     if (frame.showEditorGuides && frame.selectionTransform)
     {
-        const auto shape=gizmo::Build(camera,*frame.selectionTransform,frame.tool);
+        const auto parent=frame.selectionParent?XMLoadFloat4x4(&*frame.selectionParent):XMMatrixIdentity();
+        auto localCamera=camera; localCamera.view=parent*camera.view;
+        const auto shape=gizmo::Build(localCamera,*frame.selectionTransform,frame.tool);
         if (shape.lines.size()*2>1024) throw std::runtime_error("Transform handle buffer overflow.");
         D3D11_MAPPED_SUBRESOURCE mapped{};
         ThrowIfFailed(context_->Map(axesBuffer_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"Map transform handles");
@@ -520,7 +522,7 @@ void Renderer::Render(const ViewportFrame& frame)
         context_->Unmap(axesBuffer_.Get(),0);
         axesVertexCount_=static_cast<UINT>(shape.lines.size()*2);
         context_->OMSetDepthStencilState(overlayDepth_.Get(), 0);
-        drawLines(axesBuffer_.Get(), axesVertexCount_, XMMatrixIdentity());
+        drawLines(axesBuffer_.Get(), axesVertexCount_, parent);
     }
 
     // Do not let pipeline bindings keep an otherwise released model alive in an empty scene.

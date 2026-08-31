@@ -6,6 +6,8 @@
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
 #include "SceneAssets.h"
+#include "PrefabAssets.h"
+#include "RenderTransform.h"
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include <commdlg.h>
@@ -203,7 +205,7 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     }
     RefreshAssets();
     DragAcceptFiles(window_, TRUE);
-    sceneBaseline_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_));
+    sceneBaseline_=zengine::scenes::Encode(CaptureDocument());
     UpdateSceneTitle();
     RECT client{};
     GetClientRect(window_, &client);
@@ -301,7 +303,7 @@ bool EditorShell::PrepareScripts()
     inspectorPanel_->RefreshBehaviors();
     if (!sceneBaseline_.empty())
     {
-        sceneDirty_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_))!=sceneBaseline_;
+        sceneDirty_=zengine::scenes::Encode(CaptureDocument())!=sceneBaseline_;
         UpdateSceneTitle();
     }
     InvalidateRect(window_,nullptr,FALSE);
@@ -309,6 +311,7 @@ bool EditorShell::PrepareScripts()
 }
 bool EditorShell::Play()
 {
+    if (!editingPrefab_.empty()) { status_=L"Close the prefab editing view before playing the scene."; InvalidateRect(window_,nullptr,FALSE); return false; }
     EndGizmoDrag(false);
     if (!sceneOpen_) { status_=L"Create or open a scene before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     if (Playing()) return true;
@@ -341,7 +344,7 @@ void EditorShell::Stop()
     playScene_.reset();
     status_=L"Stopped - scene transforms restored";
     PrepareScripts(); inspectorPanel_->RefreshLiveValues();
-    if (const auto* selected=SelectedGameObject()) inspectorPanel_->Bind(objects_.Find(selected->Id()));
+    if (const auto* selected=SelectedGameObject()) SelectGameObject(selected->Id());
     InvalidateRect(window_,nullptr,FALSE);
 }
 void EditorShell::SetPaused(bool paused)
@@ -384,9 +387,20 @@ ViewportFrame EditorShell::BuildSceneFrame() const
         const auto* mesh = object.GetBehavior<zengine::MeshRenderer>();
         const auto bound = meshBindings_.find(object.Id());
         if (mesh && mesh->Enabled() && !mesh->Asset().empty() && bound != meshBindings_.end() && bound->second.asset == mesh->Asset())
-            frame.meshes.push_back({bound->second.mesh, object.GetTransform()});
+        {
+            DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
+            frame.meshes.push_back({bound->second.mesh, object.GetTransform(),parent});
+        }
     }
-    if (const auto* object = SelectedGameObject()) frame.selectionTransform = object->GetTransform();
+    if (const auto* object = SelectedGameObject(); object && CanEdit(object->Id(),true))
+    {
+        const auto parent=ParentMatrix(objects_,*object);
+        if (std::abs(DirectX::XMVectorGetX(DirectX::XMMatrixDeterminant(parent)))>1e-10f)
+        {
+            frame.selectionTransform = object->GetTransform(); DirectX::XMFLOAT4X4 value;
+            DirectX::XMStoreFloat4x4(&value,parent); frame.selectionParent=value;
+        }
+    }
     return frame;
 }
 
@@ -504,7 +518,7 @@ void EditorShell::Paint()
     // Main panels
     SelectObject(bufferContext, headerFont_);
     DrawPanel(bufferContext, sceneBrowser_, L"Scene Browser");
-    DrawPanel(bufferContext, viewportPanel_, L"Scene");
+    DrawPanel(bufferContext, viewportPanel_, editingPrefab_.empty()?L"Scene":L"Prefab");
     DrawPanel(bufferContext, inspector_, L"Inspector");
     DrawPanel(bufferContext, mediaLibrary_, L"Media Library");
     SelectObject(bufferContext, uiFont_);
@@ -528,8 +542,8 @@ void EditorShell::Paint()
         if (row.top >= objectList.bottom) break;
         const auto& object = objects_.At(index);
         if (object.Id() == selectedObject_) FillRectangle(bufferContext, row, SelectionColor);
-        row.left += 12;
-        const std::wstring icon = object.GetBehavior<zengine::MeshRenderer>() ? L"\u25a0  " : L"\u25c7  ";
+        row.left += 12+ObjectDepth(object.Id())*12;
+        const std::wstring icon = prefabSources_.contains(object.Id())?L"[P] ":object.GetBehavior<zengine::MeshRenderer>() ? L"\u25a0  " : L"\u25c7  ";
         DrawTextLabel(bufferContext, icon + WideText(object.Name()), row, TextColor,
                       DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
@@ -589,7 +603,7 @@ void EditorShell::Paint()
         if (index == selectedAsset_) FillRectangle(bufferContext, row, SelectionColor);
         row.left += 8;
         const bool script = zengine::scripts::IsScript(assets_[index]);
-        DrawTextLabel(bufferContext, script ? L"ZSH   " + assets_[index].filename().wstring() : zengine::scenes::IsScene(assets_[index]) ? L"SCENE   "+assets_[index].filename().wstring() : L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
+        DrawTextLabel(bufferContext, script ? L"ZSH   " + assets_[index].filename().wstring() : zengine::prefabs::IsPrefab(assets_[index])?L"PREFAB   "+assets_[index].filename().wstring():zengine::scenes::IsScene(assets_[index]) ? L"SCENE   "+assets_[index].filename().wstring() : L"FBX   " + assets_[index].parent_path().filename().wstring(), row, TextColor,
                       DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
     RestoreDC(bufferContext, saved);
@@ -669,6 +683,7 @@ zengine::GameObject& EditorShell::CreateEmptyGameObject()
         name = "GameObject (" + std::to_string(suffix) + ")";
     }
     auto& object = objects_.Create(std::move(name));
+    if (!editingPrefab_.empty() && objects_.Size()>1) object.SetParent(objects_.At(0).Id());
     MarkSceneDirty();
     SelectGameObject(object.Id());
     const auto list = ObjectListRectangle();
@@ -683,12 +698,14 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
     EndGizmoDrag(true);
     auto* object = objects_.Find(id);
     if (!object) return;
-    if (inspectorPanel_) inspectorPanel_->Bind(object);
+    if (inspectorPanel_) inspectorPanel_->Bind(object,CanEdit(id),CanEdit(id,true));
     selectedObject_ = id;
+    if (prefabSources_.contains(id)) status_=L"Prefab instance: inherited fields are read-only; double-click its asset to edit the source";
     InvalidateRect(window_, &sceneBrowser_, FALSE);
 }
 void EditorShell::OnObjectChanged()
 {
+    if (!Playing()) RecordTransformOverride(selectedObject_);
     MarkSceneDirty();
     if (const auto* selected = SelectedGameObject())
         SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + WideText(selected->Name())).c_str());
@@ -717,9 +734,9 @@ void EditorShell::RefreshAssets()
         }
         for (const auto& entry : std::filesystem::recursive_directory_iterator(assetsDirectory_))
         {
-            if (entry.is_regular_file() && (zengine::scripts::IsScript(entry.path()) || zengine::scenes::IsScene(entry.path())))
+            if (entry.is_regular_file() && (zengine::scripts::IsScript(entry.path()) || zengine::scenes::IsScene(entry.path()) || zengine::prefabs::IsPrefab(entry.path())))
             {
-                try { assets_.push_back(zengine::scenes::IsScene(entry.path()) ? zengine::scenes::Resolve(assetsDirectory_,entry.path()) : zengine::scripts::Resolve(assetsDirectory_, entry.path())); }
+                try { assets_.push_back(zengine::prefabs::IsPrefab(entry.path())?zengine::prefabs::Resolve(assetsDirectory_,entry.path()):zengine::scenes::IsScene(entry.path()) ? zengine::scenes::Resolve(assetsDirectory_,entry.path()) : zengine::scripts::Resolve(assetsDirectory_, entry.path())); }
                 catch (const std::exception&) {} // Ignore assets escaping the project via links.
             }
         }
@@ -856,6 +873,12 @@ void EditorShell::FinishAssetDrag(POINT point)
     ReleaseCapture();
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
     if (!moved) return;
+    if (zengine::prefabs::IsPrefab(path))
+    {
+        const auto parent=ScriptDropTarget(point);
+        if (parent || PtInRect(&viewportContent_,point) || PtInRect(&sceneBrowser_,point)) InstantiatePrefab(path,parent);
+        return;
+    }
     if (zengine::scenes::IsScene(path)) { status_=L"Double-click a scene asset to open it."; InvalidateRect(window_,&statusBar_,FALSE); return; }
     if (zengine::scripts::IsScript(path))
     {
@@ -876,6 +899,7 @@ RECT EditorShell::CreateSceneRectangle() const
 }
 std::wstring EditorShell::SceneName() const
 {
+    if (!editingPrefab_.empty()) return editingPrefab_.stem().wstring()+L" (Prefab)";
     if (!sceneOpen_) return L"No scene open";
     return scenePath_.empty()?L"Untitled Scene":scenePath_.stem().wstring();
 }
@@ -900,7 +924,7 @@ bool EditorShell::ConfirmSceneClose()
     if (Playing()) throw std::runtime_error("Stop Play before switching scenes.");
     SetFocus(window_);
     // Compare actual authored data so canceling/reverting an edit doesn't cause a spurious prompt.
-    sceneDirty_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_))!=sceneBaseline_;
+    sceneDirty_=zengine::scenes::Encode(CaptureDocument())!=sceneBaseline_;
     UpdateSceneTitle();
     if (!sceneDirty_ && !PendingModels(true)) return true;
     if (PendingModels(true)) throw std::runtime_error("Wait for pending model assignments before switching scenes.");
@@ -909,6 +933,7 @@ bool EditorShell::ConfirmSceneClose()
 }
 bool EditorShell::SaveScene(const std::filesystem::path& path)
 {
+    if (!editingPrefab_.empty()) return SavePrefab();
     EndGizmoDrag(false);
     RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before saving a scene.");
@@ -916,7 +941,7 @@ bool EditorShell::SaveScene(const std::filesystem::path& path)
     SetFocus(window_);
     if (path.empty() && scenePath_.empty()) return SaveSceneAs();
     const auto file=zengine::scenes::Resolve(assetsDirectory_,path.empty()?scenePath_:path);
-    const auto data=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_));
+    const auto data=zengine::scenes::Encode(CaptureDocument());
     // A different target is create-only. Save As asks explicitly before replacing an existing asset.
     zengine::scenes::Save(assetsDirectory_,file,data,file==scenePath_?&sceneSource_:nullptr);
     scenePath_=file; sceneSource_=data; sceneBaseline_=data; sceneDirty_=false;
@@ -924,6 +949,7 @@ bool EditorShell::SaveScene(const std::filesystem::path& path)
 }
 bool EditorShell::SaveSceneAs()
 {
+    if (!editingPrefab_.empty()) return SavePrefab();
     EndGizmoDrag(false);
     RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before saving a scene.");
@@ -938,7 +964,7 @@ bool EditorShell::SaveSceneAs()
     if (!GetSaveFileNameW(&dialog)) return false;
     const auto file=zengine::scenes::Resolve(assetsDirectory_,filename.data());
     if (file==scenePath_) return SaveScene();
-    const auto data=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_));
+    const auto data=zengine::scenes::Encode(CaptureDocument());
     std::optional<std::string> expected;
     if (std::filesystem::exists(file)) expected=zengine::scenes::Load(file);
     zengine::scenes::Save(assetsDirectory_,file,data,expected?&*expected:nullptr);
@@ -947,6 +973,7 @@ bool EditorShell::SaveSceneAs()
 }
 bool EditorShell::NewScene()
 {
+    if (!editingPrefab_.empty() && !ClosePrefab()) return false;
     RequireProject();
     if (!ConfirmSceneClose()) return false;
     const auto file=zengine::scenes::Create(assetsDirectory_);
@@ -955,6 +982,7 @@ bool EditorShell::NewScene()
 }
 bool EditorShell::OpenScene(const std::filesystem::path& path)
 {
+    if (!editingPrefab_.empty() && !ClosePrefab()) return false;
     RequireProject();
     if (Playing()) throw std::runtime_error("Stop Play before opening another scene.");
     // Read and validate before prompting or changing the active scene.
@@ -969,11 +997,14 @@ bool EditorShell::OpenScene(const std::filesystem::path& path)
 void EditorShell::ApplyScene(const std::filesystem::path& file,std::string source,const zengine::scenes::Document& scene)
 {
     EndGizmoDrag(true);
-    auto next=zengine::scenes::Instantiate(scene); // Build first; bad data cannot destroy the current scene.
+    const auto expanded=zengine::prefabs::ResolveScene(assetsDirectory_,scene);
+    auto next=zengine::scenes::Instantiate(expanded.scene); // Build first; bad data cannot destroy the current scene.
     inspectorPanel_->Bind(nullptr);
     ++sceneGeneration_;
     std::erase_if(assetJobs_,[](const AssetJob& job) { return job.loadMesh; });
     meshBindings_.clear(); meshRevisions_.clear();
+    prefabLinks_.clear(); for (const auto& object:scene.objects) if (!object.prefab.empty()) prefabLinks_[object.id]=object;
+    prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects);
     scenePath_=file; sceneSource_=std::move(source); firstObject_=0; selectedObject_=0;
     sceneOpen_=true;
@@ -995,7 +1026,7 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
         }
     }
     if (objects_.Size()) SelectGameObject(objects_.At(0).Id());
-    sceneBaseline_=zengine::scenes::Encode(zengine::scenes::Capture(objects_,scriptHost_)); sceneDirty_=false;
+    sceneBaseline_=zengine::scenes::Encode(CaptureDocument()); sceneDirty_=false;
     RefreshAssets(); RememberProjectScene(); UpdateSceneTitle(); InvalidateRect(window_,nullptr,FALSE);
 }
 void EditorShell::ChooseScene()
@@ -1042,6 +1073,7 @@ void EditorShell::OpenScript(const std::filesystem::path& path)
 }
 bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::path& path)
 {
+    RequireEditable(id);
     if (Playing()) { status_=L"Stop Play before attaching scripts."; InvalidateRect(window_,&statusBar_,FALSE); return false; }
     auto* object = objects_.Find(id);
     if (!object) return false;
@@ -1087,6 +1119,7 @@ void EditorShell::ChooseScript()
 }
 bool EditorShell::AddMeshRenderer(zengine::GameObjectId id)
 {
+    RequireEditable(id);
     if (Playing()) throw std::runtime_error("Stop Play before adding behaviors.");
     auto* object = objects_.Find(id);
     if (!object || object->GetBehavior<zengine::MeshRenderer>()) return false;
@@ -1113,6 +1146,7 @@ void EditorShell::AssignCube(zengine::GameObjectId id)
 }
 void EditorShell::ClearMesh(zengine::GameObjectId id)
 {
+    RequireEditable(id);
     if (Playing()) throw std::runtime_error("Stop Play before changing model assignments.");
     auto* object = objects_.Find(id);
     auto* mesh = object ? object->GetBehavior<zengine::MeshRenderer>() : nullptr;
@@ -1135,6 +1169,7 @@ std::filesystem::path EditorShell::ResolveModel(const std::filesystem::path& pat
 }
 void EditorShell::QueueModel(const std::filesystem::path& path, zengine::GameObjectId id)
 {
+    if (id) RequireEditable(id);
     RequireScene();
     if (Playing()) throw std::runtime_error("Stop Play before changing model assignments.");
     if (id && !objects_.Find(id)) throw std::runtime_error("Unknown target GameObject.");
@@ -1248,9 +1283,12 @@ LRESULT EditorShell::HandleMessage(
     {
     case WM_CLOSE:
         EndGizmoDrag(true);
+        if (!editingPrefab_.empty() && !ClosePrefab()) return 0;
         if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
     case WM_COMMAND:
+        if (LOWORD(wParam)==SavePrefabCommand) { SavePrefab(); return 0; }
+        if (LOWORD(wParam)==ClosePrefabCommand) { ClosePrefab(); return 0; }
         if (LOWORD(wParam)>=MoveToolCommand && LOWORD(wParam)<=ScaleToolCommand) { SetTransformTool(static_cast<gizmo::Mode>(LOWORD(wParam)-MoveToolCommand)); return 0; }
         if (LOWORD(wParam)==NewProjectCommand) { NewProjectDialog(); return 0; }
         if (LOWORD(wParam)==OpenProjectCommand) { ChooseProject(); return 0; }
@@ -1286,6 +1324,7 @@ LRESULT EditorShell::HandleMessage(
             {
                 const auto asset=assets_[index];
                 if (zengine::scripts::IsScript(asset)) OpenScript(asset);
+                else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
                 else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
             }
         }
@@ -1319,6 +1358,7 @@ LRESULT EditorShell::HandleMessage(
         return 1;
     case WM_LBUTTONDOWN:
     {
+        if (draggedObject_) { draggedObject_=0; ReleaseCapture(); }
         SetFocus(window_);
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         for (int i=0;i<3;++i) { const auto rectangle=ToolRectangle(i); if (PtInRect(&rectangle,point)) { SetTransformTool(static_cast<gizmo::Mode>(i)); return 0; } }
@@ -1332,6 +1372,7 @@ LRESULT EditorShell::HandleMessage(
             AppendMenuW(menu,flags,NewSceneCommand,L"New Scene"); AppendMenuW(menu,flags,OpenSceneCommand,L"Open Scene...");
             const UINT saveFlags=flags|(!sceneOpen_?MF_GRAYED:0);
             AppendMenuW(menu,saveFlags,SaveSceneCommand,L"Save Scene\tCtrl+S"); AppendMenuW(menu,saveFlags,SaveSceneAsCommand,L"Save Scene As...\tCtrl+Shift+S");
+            if (!editingPrefab_.empty()) { AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,SavePrefabCommand,L"Save Prefab\tCtrl+S"); AppendMenuW(menu,MF_STRING,ClosePrefabCommand,L"Close Prefab / Return to Scene"); }
             POINT at{44,optionsBar_.bottom}; ClientToScreen(window_,&at);
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,at.x,at.y,0,window_,nullptr); DestroyMenu(menu);
             if (command) SendMessageW(window_,WM_COMMAND,command,0); return 0;
@@ -1352,7 +1393,11 @@ LRESULT EditorShell::HandleMessage(
         if (PtInRect(&list, point))
         {
             const auto index = firstObject_ + (point.y - list.top) / 27;
-            if (index >= 0 && index < static_cast<LONG>(objects_.Size())) SelectGameObject(objects_.At(index).Id());
+            if (index >= 0 && index < static_cast<LONG>(objects_.Size()))
+            {
+                SelectGameObject(objects_.At(index).Id());
+                draggedObject_=selectedObject_; objectDragStart_=point; objectDragMoved_=false; SetCapture(window_);
+            }
             return 0;
         }
         BeginDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
@@ -1360,6 +1405,13 @@ LRESULT EditorShell::HandleMessage(
         return 0;
     }
     case WM_MOUSEMOVE:
+        if (draggedObject_)
+        {
+            const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+            objectDragMoved_=objectDragMoved_ || std::abs(point.x-objectDragStart_.x)>=GetSystemMetrics(SM_CXDRAG) || std::abs(point.y-objectDragStart_.y)>=GetSystemMetrics(SM_CYDRAG);
+            if (objectDragMoved_) SetCursor(LoadCursorW(nullptr,PtInRect(&mediaLibrary_,point)?IDC_HAND:IDC_NO));
+            return 0;
+        }
         if (draggedAsset_ >= 0)
         {
             const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -1379,6 +1431,13 @@ LRESULT EditorShell::HandleMessage(
         }
         break;
     case WM_LBUTTONUP:
+        if (draggedObject_)
+        {
+            const auto object=draggedObject_; const bool moved=objectDragMoved_; draggedObject_=0; ReleaseCapture();
+            const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+            if (moved && PtInRect(&mediaLibrary_,point)) CreatePrefab(object);
+            return 0;
+        }
         FinishAssetDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         EndDrag();
         return 0;
@@ -1406,6 +1465,7 @@ LRESULT EditorShell::HandleMessage(
         return 0;
     }
     case WM_CAPTURECHANGED:
+        draggedObject_=0; objectDragMoved_=false;
         dragTarget_ = DragTarget::None;
         draggedAsset_ = -1;
         assetDragMoved_ = false;
@@ -1432,6 +1492,7 @@ LRESULT EditorShell::HandleMessage(
         if (wParam=='W' || wParam=='E' || wParam=='R') { SetTransformTool(wParam=='W'?gizmo::Mode::Move:wParam=='E'?gizmo::Mode::Rotate:gizmo::Mode::Scale); return 0; }
         if (wParam == VK_ESCAPE)
         {
+            if (draggedObject_) { draggedObject_=0; ReleaseCapture(); return 0; }
             if (draggedAsset_ >= 0)
             {
                 draggedAsset_ = -1;

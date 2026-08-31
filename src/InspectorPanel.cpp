@@ -117,7 +117,7 @@ void InspectorPanel::Create(HWND parent, HINSTANCE instance, HFONT font, std::fu
     Layout();
 }
 
-void InspectorPanel::Bind(zengine::GameObject* object)
+void InspectorPanel::Bind(zengine::GameObject* object,bool editData,bool editTransform)
 {
     EndScrub(true);
     for (int index = 0; index < static_cast<int>(fields_.size()); ++index)
@@ -126,6 +126,7 @@ void InspectorPanel::Bind(zengine::GameObject* object)
         if (behaviorFields_[index].field.window && GetFocus()==behaviorFields_[index].field.window)
         { FinishBehaviorField(index,false); SetFocus(window_); }
     object_ = object;
+    editData_=editData; editTransform_=editTransform;
     RefreshFields();
     RefreshBehaviors();
 }
@@ -141,7 +142,7 @@ void InspectorPanel::RefreshBehaviors()
         if (field)
         {
             const auto id=FirstBehaviorField+behaviorFields_.size();
-            entry.field.window=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|ES_AUTOHSCROLL|(editable?0:ES_READONLY),
+            entry.field.window=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|ES_AUTOHSCROLL|((editable && editData_)?0:ES_READONLY),
                 0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
             if (!entry.field.window) throw std::runtime_error("Cannot create script field.");
             SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
@@ -173,8 +174,9 @@ void InspectorPanel::RefreshBehaviors()
         SetWindowTextW(control,value.c_str()); behaviorFields_[i].field.focusText=value;
     }
     updating_=false;
-    EnableWindow(addScriptButton_, object_ != nullptr);
-    EnableWindow(addBehaviorButton_, object_ != nullptr);
+    EnableWindow(addScriptButton_, object_ != nullptr && editData_);
+    EnableWindow(addBehaviorButton_, object_ != nullptr && editData_);
+    for (const auto control:{meshEnabled_,chooseMesh_,cubeMesh_,clearMesh_}) EnableWindow(control,object_!=nullptr && editData_);
     const auto* mesh = object_ ? object_->GetBehavior<zengine::MeshRenderer>() : nullptr;
     SendMessageW(meshEnabled_, BM_SETCHECK, mesh && mesh->Enabled() ? BST_CHECKED : BST_UNCHECKED, 0);
     Layout();
@@ -200,7 +202,7 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
 }
 void InspectorPanel::ChangeBehaviorField(std::size_t index)
 {
-    if (updating_) return;
+    if (updating_ || !editData_) return;
     auto& entry=behaviorFields_.at(index);
     try
     {
@@ -290,13 +292,13 @@ void InspectorPanel::RefreshFields()
     {
         SetText(index, FieldValue(index));
         fields_[index].focusText = FieldValue(index);
-        EnableWindow(fields_[index].window, object_ != nullptr);
+        EnableWindow(fields_[index].window, object_ != nullptr && (index<2?editData_:editTransform_));
     }
     InvalidateRect(window_, nullptr, FALSE);
 }
 void InspectorPanel::ChangeField(int index)
 {
-    if (updating_ || !object_) return;
+    if (updating_ || !object_ || !(index<2?editData_:editTransform_)) return;
     const auto text = ReadText(fields_[index].window);
     try
     {
@@ -453,6 +455,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_ERASEBKGND: return 1;
     case WM_COMMAND:
     {
+        if (!editData_ && (LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddScriptCommand)) return 0;
         const int dynamicIndex=LOWORD(w)-FirstBehaviorField;
         if (dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()))
         {
@@ -559,7 +562,7 @@ LRESULT InspectorPanel::HandleEdit(HWND window, UINT message, WPARAM w, LPARAM l
         return 0;
     }
     if (message == WM_CHAR && (w == VK_RETURN || w == VK_ESCAPE || w == VK_TAB)) return 0;
-    if (index >= 2 && object_)
+    if (index >= 2 && object_ && editTransform_)
     {
         if (message == WM_LBUTTONDOWN)
         {

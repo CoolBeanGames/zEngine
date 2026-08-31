@@ -63,6 +63,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
     {
         const auto& object=objects.At(i);
         ObjectData data{object.Id(),object.Name(),object.Tags(),object.GetTransform(),{}};
+        data.parent=object.Parent();
         for (std::size_t j=0;j<object.BehaviorCount();++j)
         {
             const auto& behavior=object.BehaviorAt(j);
@@ -80,13 +81,14 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
 std::string Encode(const Document& scene)
 {
     std::ostringstream out; out.imbue(std::locale::classic()); out<<std::setprecision(17);
-    out<<"ZENGINE_SCENE 1\nobjects "<<scene.objects.size()<<'\n';
+    out<<"ZENGINE_SCENE 2\nobjects "<<scene.objects.size()<<'\n';
     for (const auto& object:scene.objects)
     {
         out<<"object "<<object.id<<' '<<std::quoted(object.name)<<"\ntags "<<object.tags.size();
         for (const auto& tag:object.tags) out<<' '<<std::quoted(tag);
         out<<"\ntransform";
         for (const auto v:{object.transform.Position(),object.transform.Rotation(),object.transform.Scale()}) out<<' '<<v.x<<' '<<v.y<<' '<<v.z;
+        out<<"\nparent "<<object.parent<<"\nprefab "<<std::quoted(object.prefab)<<' '<<(object.transformOverride?1:0);
         out<<"\nbehaviors "<<object.behaviors.size()<<'\n';
         for (const auto& b:object.behaviors)
         {
@@ -104,7 +106,7 @@ Document Decode(std::string_view text)
 {
     Require(text.size()<=MaxSceneBytes,"Scene exceeds the 8 MiB limit.");
     std::istringstream in{std::string(text)}; in.imbue(std::locale::classic());
-    Token(in,"ZENGINE_SCENE"); Require(Count(in,1)==1,"Unsupported scene version."); Token(in,"objects");
+    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,2); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
     Document scene; const auto count=Count(in,10000); std::set<GameObjectId> ids;
     for (std::size_t i=0;i<count;++i)
     {
@@ -114,6 +116,13 @@ Document Decode(std::string_view text)
         Token(in,"tags"); const auto tags=Count(in,256);
         for (std::size_t j=0;j<tags;++j) object.tags.push_back(Text(in));
         Token(in,"transform"); object.transform.SetPosition(Vector(in)); object.transform.SetRotation(Vector(in)); object.transform.SetScale(Vector(in));
+        if (version>=2)
+        {
+            Token(in,"parent"); Require(static_cast<bool>(in>>object.parent),"Invalid parent ID.");
+            Token(in,"prefab"); object.prefab=Text(in); object.transformOverride=Boolean(in);
+            if (!object.prefab.empty()) { Asset(object.prefab,false); Require(object.prefab.ends_with(".zprefab"),"Expected prefab reference."); }
+            else Require(!object.transformOverride,"Only prefab instances can override inherited transforms.");
+        }
         Token(in,"behaviors"); const auto behaviors=Count(in,256); bool mesh=false;
         for (std::size_t j=0;j<behaviors;++j)
         {
@@ -128,7 +137,20 @@ Document Decode(std::string_view text)
         }
         scene.objects.push_back(std::move(object));
     }
-    Token(in,"end"); in>>std::ws; Require(in.eof(),"Unexpected trailing scene data."); return scene;
+    Token(in,"end"); in>>std::ws; Require(in.eof(),"Unexpected trailing scene data.");
+    std::map<GameObjectId,GameObjectId> parents;
+    for (const auto& object:scene.objects)
+    {
+        Require(!object.parent || ids.contains(object.parent),"Missing parent object.");
+        if (!object.prefab.empty()) Require(object.behaviors.empty() && object.tags.empty(),"Prefab instances inherit their data from the asset.");
+        parents.emplace(object.id,object.parent);
+    }
+    for (const auto& object:scene.objects)
+    {
+        auto parent=object.parent; std::size_t depth=0;
+        while (parent) { Require(parent!=object.id && ++depth<=64,"Cyclic or excessively deep object hierarchy."); parent=parents.at(parent); }
+    }
+    return scene;
 }
 Instance Instantiate(const Document& scene)
 {
@@ -136,6 +158,8 @@ Instance Instantiate(const Document& scene)
     for (const auto& data:scene.objects)
     {
         auto& object=instance.objects.Restore(data.id,data.name); object.SetTags(data.tags); object.GetTransform()=data.transform;
+        Require(data.prefab.empty(),"Resolve prefab references before instantiating scene data.");
+        object.SetParent(data.parent);
         for (const auto& b:data.behaviors)
         {
             Behavior* behavior=nullptr;

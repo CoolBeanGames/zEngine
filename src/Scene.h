@@ -21,6 +21,9 @@ namespace zengine::scenes
         std::vector<std::string> tags;
         Transform transform;
         std::vector<BehaviorData> behaviors;
+        GameObjectId parent=0;
+        std::string prefab;
+        bool transformOverride=false;
     };
     struct Document { std::vector<ObjectData> objects; };
     // Scene data/codec have no filesystem, renderer, or window dependencies.

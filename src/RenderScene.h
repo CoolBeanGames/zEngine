@@ -11,6 +11,7 @@ struct MeshDraw
 {
     MeshHandle mesh;
     zengine::Transform transform;
+    std::optional<DirectX::XMFLOAT4X4> parentMatrix;
 };
 // Submission values only: no GameObject pointers or importer types cross this boundary.
 struct ViewportFrame
@@ -20,4 +21,5 @@ struct ViewportFrame
     bool showEditorGuides = false;
     gizmo::Mode tool = gizmo::Mode::Move;
     int highlightedAxis = -1;
+    std::optional<DirectX::XMFLOAT4X4> selectionParent;
 };

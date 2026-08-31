@@ -1,5 +1,6 @@
 #include "EditorShell.h"
 #include "InspectorPanel.h"
+#include "RenderTransform.h"
 #include <windowsx.h>
 
 RECT EditorShell::ToolRectangle(int index) const
@@ -19,6 +20,15 @@ void EditorShell::EndGizmoDrag(bool cancel)
     {
         if (auto* object=objects_.Find(gizmoObject_)) object->GetTransform()=gizmoDrag_->Original();
         sceneDirty_=gizmoWasDirty_; UpdateSceneTitle();
+    }
+    if (!cancel)
+    {
+        if (const auto* object=objects_.Find(gizmoObject_))
+        {
+            const auto equal=[](zengine::Vec3 a,zengine::Vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; };
+            const auto& original=gizmoDrag_->Original(); const auto& current=object->GetTransform();
+            if (!equal(original.Position(),current.Position()) || !equal(original.Rotation(),current.Rotation()) || !equal(original.Scale(),current.Scale())) RecordTransformOverride(gizmoObject_);
+        }
     }
     gizmoDrag_.reset(); gizmoObject_=0; hoveredAxis_=-1;
     if (GetCapture()==viewportWindow_) ReleaseCapture();
@@ -46,8 +56,11 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
     case WM_LBUTTONDOWN:
     {
         SetFocus(window);
-        const auto* object=SelectedGameObject(); if (!object || Playing()) return 0;
-        const ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_));
+        const auto* object=SelectedGameObject(); if (!object || Playing() || !CanEdit(object->Id(),true)) return 0;
+        ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_));
+        const auto parent=ParentMatrix(objects_,*object);
+        if (std::abs(DirectX::XMVectorGetX(DirectX::XMMatrixDeterminant(parent)))<=1e-10f) return 0;
+        camera.view=parent*camera.view;
         const auto shape=gizmo::Build(camera,object->GetTransform(),transformTool_);
         if (const auto hit=gizmo::Pick(camera,shape,point))
         {
@@ -63,9 +76,10 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
         else
         {
             hoveredAxis_=-1;
-            if (const auto* object=SelectedGameObject(); object && !Playing())
+            if (const auto* object=SelectedGameObject(); object && !Playing() && CanEdit(object->Id(),true))
             {
-                const ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_));
+                ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_));
+                camera.view=ParentMatrix(objects_,*object)*camera.view;
                 const auto shape=gizmo::Build(camera,object->GetTransform(),transformTool_);
                 if (const auto hit=gizmo::Pick(camera,shape,point)) hoveredAxis_=hit->axis;
             }

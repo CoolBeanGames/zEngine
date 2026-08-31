@@ -20,11 +20,11 @@ The editor provides an options bar, resizable scene browser, resizable inspector
 - Edit its **Name** and comma-separated **Tags** in the Inspector. Tags are trimmed, case-sensitive, and deduplicated. Names must not be blank.
 - Click a transform number to select its text and type a value. Valid values apply immediately. **Enter** commits; **Escape** restores the value from before the edit; **Tab/Shift-Tab** advances between fields. Incomplete/invalid numbers are shown with a red background and do not overwrite the last valid transform; leaving the field restores that valid number.
 - Press and drag horizontally on a numeric field: right increases, left decreases. Position/scale change by 0.01 per pixel and rotation by 0.5 degrees per pixel. Hold **Shift before dragging** for ten-times finer changes. Escape or losing mouse capture cancels an unfinished drag.
-- Position is world-space; rotation uses X, then Y, then Z Euler angles in degrees; scale is per-axis. Zero and negative scales are supported. Inspector values are bounded to +/-1,000,000 and must be finite. Small inspector panels scroll to keep fields accessible.
+- Transforms are local to the parent (world-space for scene roots); rotation uses X, then Y, then Z Euler angles in degrees; scale is per-axis. Zero and negative scales are supported. Inspector values are bounded to +/-1,000,000 and must be finite. Small inspector panels scroll to keep fields accessible.
 
 An empty object contains only its transform and metadata: it has no mesh and no behaviors by default. The selected object's **editor-only transform handles** use X red, Y green, and Z blue against a world grid. These guides are not runtime GameObject components. A cube is a regular GameObject with a Mesh Renderer behavior. Moving one object never changes another object's transform. Moving objects far from the fixed camera can move them out of view; camera navigation is not implemented yet.
 
-GameObjects, attachments, priorities, mesh assignments, and authored Inspector variables persist when you save the current **scene asset**. Parenting, scene undo/redo, and clicking meshes to select objects are still deferred.
+GameObjects, attachments, priorities, mesh assignments, and authored Inspector variables persist when you save the current **scene asset**. Prefab hierarchies support parenting; general tree reparenting, scene undo/redo, and clicking meshes to select objects are still deferred.
 
 ### Viewport transform tools
 
@@ -47,7 +47,17 @@ GameObjects, attachments, priorities, mesh assignments, and authored Inspector v
 
 Scene files are bounded, versioned UTF-8 text (`ZENGINE_SCENE 1`), currently limited to 8 MiB, 10,000 objects, 256 behaviors/tags per object, and 1,024 saved variables per behavior. Invalid IDs, duplicate mesh components, unknown behavior/value types, nonfinite numbers, path traversal, truncation, and unsupported versions are rejected. `zEngineScenes` contains the scene document, codec, and object/behavior reconstruction with no Win32 or rendering dependencies. `zEngineSceneAssets` provides project-contained file I/O and atomic saves. The editor supplies scene selection and render bindings. No third-party serialization dependency is required.
 
-The current tree remains flat; parent/child relationships and cross-object script reference serialization will come with their corresponding systems. The last scene is reopened automatically through its project config on editor startup.
+New saves use `ZENGINE_SCENE 2`, adding parent IDs and linked prefab references; version 1 scenes still load. The tree indents children. Cross-object script reference serialization remains deferred. The last scene is reopened automatically through its project config on editor startup.
+
+## Prefab assets
+
+- Drag an ordinary Scene Browser object into the Media Library to create a project-owned `.zprefab`. Its authored subtree becomes the prefab contents; the original object becomes a linked instance without changing its ID or placement.
+- Drag a prefab asset into the viewport to instantiate it. Double-click the asset to open an isolated prefab editing stage with its contents selected in the Inspector. Edit names, tags, transforms, mesh assignments, scripts, and exported values normally, then **Ctrl+S / File > Save Prefab**. **File > Close Prefab** returns to your previous scene, preserving its unsaved edits. Play is available in scenes, not in the prefab stage.
+- Scene instances inherit the source's name, tags, components, and script values. These inherited fields are read-only; edit the source prefab to change them. An instance root's transform remains editable and becomes a placement override. Generated children are edited through their source prefab. This first version does not support per-instance component/variable overrides or unpacking.
+- In the prefab stage, **Create Empty** adds a child to its root. Drop another prefab into the viewport to nest it under that root, or onto an editable tree object to choose its parent. Nested references stay linked: saving the inner source updates it throughout outer prefabs and scenes. Circular nesting is rejected before saving.
+- Returning from prefab editing resolves the scene against the saved source. Other scenes resolve their references when opened; their files do not need rewriting. External prefab edits require reopening the scene. Missing/corrupt prefab dependencies prevent opening instead of silently losing objects. Save conflicts preserve the existing asset.
+
+`zEnginePrefabs` provides bounded codecs and dependency expansion; project-contained file operations remain separate from the core and renderer. References are relative to Assets. Limits include 10,000 expanded objects, 32 nested prefab levels, 128 distinct dependencies, and 32 MiB of dependency data. Nested transforms use full parent matrices (including nonuniform scale); gizmos edit in parent space and are disabled when a parent matrix is singular.
 
 ### Module boundaries
 

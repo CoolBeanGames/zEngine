@@ -29,6 +29,7 @@ void EditorShell::RequireScene() const
 }
 bool EditorShell::ConfirmProjectClose()
 {
+    if (!editingPrefab_.empty() && !ClosePrefab()) return false;
     if (Playing()) throw std::runtime_error("Stop Play before switching projects.");
     // Imports write into their captured Assets folder. Finish them before releasing that project.
     if (assetWork_.valid() || !assetJobs_.empty())
@@ -37,7 +38,7 @@ bool EditorShell::ConfirmProjectClose()
 }
 void EditorShell::RememberProjectScene()
 {
-    if (!project_) return;
+    if (!project_ || !editingPrefab_.empty()) return;
     try
     {
         auto next=*project_;
@@ -61,6 +62,7 @@ void EditorShell::ActivateProject(zengine::projects::Project project)
     ++sceneGeneration_;
     assetJobs_.clear(); activeAssetJob_.reset();
     meshBindings_.clear(); meshCache_.clear(); meshRevisions_.clear();
+    prefabLinks_.clear(); prefabGenerated_.clear(); prefabSources_.clear(); editingPrefab_.clear(); prefabReturn_.reset();
     scriptHost_=zengine::ScriptHost{}; objects_=zengine::ObjectStore{};
     project_=std::move(project); assetsDirectory_=assets;
     sceneOpen_=false; sceneDirty_=false; scenePath_.clear(); sceneSource_.clear();

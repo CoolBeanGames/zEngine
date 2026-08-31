@@ -33,6 +33,9 @@ target_link_libraries(zEngineScenes PUBLIC zEngineCore zEngineScriptHost)
 add_library(zEngineSceneAssets STATIC src/SceneAssets.cpp)
 target_link_libraries(zEngineSceneAssets PUBLIC zEngineScenes)
 target_compile_definitions(zEngineSceneAssets PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+add_library(zEnginePrefabs STATIC src/Prefab.cpp src/PrefabAssets.cpp)
+target_link_libraries(zEnginePrefabs PUBLIC zEngineSceneAssets)
+target_compile_definitions(zEnginePrefabs PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 add_library(zEngineProjects STATIC src/Project.cpp)
 target_compile_features(zEngineProjects PUBLIC cxx_std_20)
 target_include_directories(zEngineProjects PUBLIC src)
@@ -44,6 +47,7 @@ add_executable(zEngine WIN32
     src/EditorShell.cpp
     src/EditorProjects.cpp
     src/EditorGizmos.cpp
+    src/EditorPrefabs.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
@@ -76,6 +80,7 @@ target_link_libraries(zEngine PRIVATE
     zEngineScriptHost
     zEngineSceneAssets
     zEngineProjects
+    zEnginePrefabs
 )
 
 if(MSVC)
@@ -115,7 +120,8 @@ if(BUILD_TESTING)
     target_link_libraries(zEngineCoreTests PRIVATE zEngineCore)
     add_test(NAME GameObjectCore COMMAND zEngineCoreTests)
     add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/Renderer.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
-    target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos)
+    target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
+    target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos zEnginePrefabs)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
     target_compile_definitions(zEngineAssetTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
         TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
@@ -130,6 +136,8 @@ if(BUILD_TESTING)
     add_test(NAME SceneEditorIntegration COMMAND zEngineAssetTests --scenes)
     add_test(NAME ProjectEditorIntegration COMMAND zEngineAssetTests --projects)
     add_test(NAME TransformGizmos COMMAND zEngineAssetTests --gizmos)
+    add_test(NAME PrefabWorkflow COMMAND zEngineAssetTests --prefabs)
+    set_tests_properties(PrefabWorkflow PROPERTIES TIMEOUT 45)
     set_tests_properties(TransformGizmos PROPERTIES TIMEOUT 45)
     set_tests_properties(ProjectEditorIntegration PROPERTIES TIMEOUT 60)
     add_test(NAME ProjectSceneRecovery COMMAND zEngineAssetTests --project-recovery)

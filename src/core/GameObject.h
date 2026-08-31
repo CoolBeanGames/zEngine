@@ -77,6 +77,8 @@ namespace zengine
         GameObject(const GameObject&) = delete;
         GameObject& operator=(const GameObject&) = delete;
         GameObjectId Id() const noexcept { return id_; }
+        GameObjectId Parent() const noexcept { return parent_; }
+        void SetParent(GameObjectId parent) { parent_=parent; }
         const std::string& Name() const noexcept { return name_; }
         void SetName(std::string name);
         const std::vector<std::string>& Tags() const noexcept { return tags_; }
@@ -113,6 +115,7 @@ namespace zengine
         friend class ObjectStore;
         GameObject(GameObjectId id, std::string name);
         GameObjectId id_;
+        GameObjectId parent_=0;
         std::string name_;
         std::vector<std::string> tags_;
         Transform transform_;

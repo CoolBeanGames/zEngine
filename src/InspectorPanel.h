@@ -22,7 +22,7 @@ public:
     enum class MeshAction { Add, Choose, Cube, Clear };
     ~InspectorPanel();
     void Create(HWND parent, HINSTANCE instance, HFONT font, std::function<void()> changed);
-    void Bind(zengine::GameObject* object);
+    void Bind(zengine::GameObject* object,bool editData=true,bool editTransform=true);
     void RefreshBehaviors();
     void SetScriptHost(zengine::ScriptHost* host) { scriptHost_ = host; }
     void RefreshLiveValues();
@@ -30,6 +30,7 @@ public:
     void SetMeshHandler(std::function<void(MeshAction)> handler) { meshAction_ = std::move(handler); }
     HWND Window() const noexcept { return window_; }
 private:
+    bool editData_=true,editTransform_=true;
     struct Field { HWND window = nullptr; bool valid = true; std::wstring focusText; };
     static LRESULT CALLBACK WindowProcedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK EditProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);

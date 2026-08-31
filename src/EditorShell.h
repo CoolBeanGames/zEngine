@@ -17,6 +17,7 @@
 #include "ScriptHost.h"
 #include "Scene.h"
 #include "Project.h"
+#include "Prefab.h"
 #include <optional>
 #include <chrono>
 
@@ -41,6 +42,13 @@ public:
     const zengine::projects::Project* CurrentProject() const noexcept { return project_ ? &*project_ : nullptr; }
     const std::filesystem::path& AssetsDirectory() const noexcept { return assetsDirectory_; }
     bool HasOpenScene() const noexcept { return sceneOpen_; }
+    static constexpr int SavePrefabCommand=3300, ClosePrefabCommand=3301;
+    std::filesystem::path CreatePrefab(zengine::GameObjectId);
+    bool OpenPrefab(const std::filesystem::path&);
+    bool SavePrefab();
+    bool ClosePrefab();
+    zengine::GameObjectId InstantiatePrefab(const std::filesystem::path&,zengine::GameObjectId parent=0);
+    const std::filesystem::path& EditingPrefab() const { return editingPrefab_; }
     static constexpr int MoveToolCommand=3200, RotateToolCommand=3201, ScaleToolCommand=3202;
     void SetTransformTool(gizmo::Mode mode);
     gizmo::Mode TransformTool() const { return transformTool_; }
@@ -117,6 +125,22 @@ private:
     std::wstring SceneName() const;
     RECT CreateSceneRectangle() const;
     bool PendingModels(bool assignmentsOnly=false) const;
+    zengine::scenes::Document CaptureDocument() const;
+    void RefreshPrefabInstances();
+    void RebuildDocument(const zengine::scenes::Document&,zengine::GameObjectId select=0);
+    void RequireEditable(zengine::GameObjectId,bool transformOnly=false) const;
+    bool CanEdit(zengine::GameObjectId,bool transformOnly=false) const;
+    void RecordTransformOverride(zengine::GameObjectId);
+    int ObjectDepth(zengine::GameObjectId) const;
+    std::map<zengine::GameObjectId,zengine::scenes::ObjectData> prefabLinks_;
+    std::map<zengine::GameObjectId,std::string> prefabSources_;
+    std::set<zengine::GameObjectId> prefabGenerated_;
+    struct SceneSnapshot { zengine::scenes::Document document; std::filesystem::path path; std::string source,baseline; bool dirty=false,open=false; zengine::GameObjectId selected=0; };
+    std::optional<SceneSnapshot> prefabReturn_;
+    std::filesystem::path editingPrefab_;
+    zengine::GameObjectId draggedObject_=0;
+    POINT objectDragStart_{};
+    bool objectDragMoved_=false;
     LRESULT HandleViewportMessage(HWND,UINT,WPARAM,LPARAM);
     void EndGizmoDrag(bool cancel);
     void UpdateGizmoDrag(gizmo::Point);
