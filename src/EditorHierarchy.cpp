@@ -1,5 +1,8 @@
 #include "EditorShell.h"
 #include "InspectorPanel.h"
+#include "core/MeshRenderer.h"
+#include "physics/PhysicsBehavior.h"
+#include <limits>
 
 std::vector<zengine::GameObjectId> EditorShell::ObjectRows() const {
     auto rows=objects_.HierarchyOrder();
@@ -27,4 +30,38 @@ void EditorShell::RevertPrefabTransform(zengine::GameObjectId id) {
     for(auto& object:document.objects)if(object.id==id){object.transformMask=0;object.transformOverride=false;}
     RebuildDocument(document,id);MarkSceneDirty();
     status_=L"Prefab transform overrides reverted to the source asset";InvalidateRect(window_,nullptr,FALSE);
+}
+
+zengine::GameObject& EditorShell::CreateGameObject(ObjectPreset preset,zengine::GameObjectId parent) {
+    if(parent)RequireEditable(parent);
+    auto& object=CreateEmptyGameObject();
+    if(parent)SetObjectParent(object.Id(),parent);
+    const auto rename=[&](std::string base){std::string name=base;for(unsigned suffix=1;;++suffix){bool used=false;for(std::size_t i=0;i<objects_.Size();++i)if(objects_.At(i).Id()!=object.Id()&&objects_.At(i).Name()==name){used=true;break;}if(!used)break;name=base+" ("+std::to_string(suffix)+")";}object.SetName(std::move(name));};
+    if(preset==ObjectPreset::Cube){rename("Cube");AssignCube(object.Id());}
+    else if(preset==ObjectPreset::Camera)rename("Camera");
+    else if(preset!=ObjectPreset::Empty){rename(preset==ObjectPreset::RigidBody?"RigidBody":preset==ObjectPreset::KinematicBody?"KinematicBody":preset==ObjectPreset::StaticBody?"StaticBody":"Area");object.AddBehavior<zengine::physics::Collider>();if(preset==ObjectPreset::RigidBody)object.AddBehavior<zengine::physics::RigidBody>();else if(preset==ObjectPreset::KinematicBody)object.AddBehavior<zengine::physics::KinematicBody>();else if(preset==ObjectPreset::StaticBody)object.AddBehavior<zengine::physics::StaticBody>();else object.AddBehavior<zengine::physics::Area>();inspectorPanel_->RefreshBehaviors();OnObjectChanged();}
+    status_=preset==ObjectPreset::Camera?L"Created Camera GameObject (camera rendering behavior will be added with the camera system)":L"Created GameObject";
+    return object;
+}
+void EditorShell::CopyGameObject(zengine::GameObjectId id) {
+    RequireScene();RequireEditable(id);if(Playing())throw std::runtime_error("Stop Play before copying objects.");
+    const auto source=CaptureDocument();std::set<zengine::GameObjectId> selected;
+    for(const auto& object:source.objects){auto current=object.id;for(unsigned depth=0;current&&depth<=64;++depth){if(current==id){selected.insert(object.id);break;}const auto it=std::find_if(source.objects.begin(),source.objects.end(),[&](const auto& item){return item.id==current;});current=it==source.objects.end()?0:it->parent;}}
+    zengine::scenes::Document copy;for(const auto& object:source.objects)if(selected.contains(object.id))copy.objects.push_back(object);
+    if(copy.objects.empty())throw std::runtime_error("The selected object cannot be copied.");
+    auto root=std::find_if(copy.objects.begin(),copy.objects.end(),[&](const auto& object){return object.id==id;});root->parent=0;objectClipboard_=std::move(copy);status_=L"Copied GameObject hierarchy";InvalidateRect(window_,&statusBar_,FALSE);
+}
+zengine::GameObjectId EditorShell::PasteGameObject(zengine::GameObjectId parent) {
+    RequireScene();if(Playing())throw std::runtime_error("Stop Play before pasting objects.");if(!objectClipboard_)throw std::runtime_error("Copy a GameObject first.");
+    if(!editingPrefab_.empty()&&!parent)parent=objects_.At(0).Id();if(parent){RequireEditable(parent);if(!objects_.Find(parent))throw std::runtime_error("Unknown paste parent.");}
+    auto document=CaptureDocument();zengine::GameObjectId next=1;for(const auto& object:document.objects)next=std::max(next,object.id+1);
+    std::map<zengine::GameObjectId,zengine::GameObjectId> ids;for(const auto& object:objectClipboard_->objects){if(next==std::numeric_limits<zengine::GameObjectId>::max())throw std::runtime_error("GameObject IDs exhausted.");ids[object.id]=next++;}
+    const auto root=std::find_if(objectClipboard_->objects.begin(),objectClipboard_->objects.end(),[](const auto& object){return object.parent==0;});if(root==objectClipboard_->objects.end())throw std::runtime_error("Copied hierarchy has no root.");const auto oldRoot=root->id;for(auto object:objectClipboard_->objects){const auto old=object.id;object.id=ids.at(old);object.parent=old==oldRoot?parent:ids.at(object.parent);document.objects.push_back(std::move(object));}
+    const auto pasted=ids.at(oldRoot);RebuildDocument(document,pasted);MarkSceneDirty();status_=L"Pasted GameObject hierarchy";return pasted;
+}
+void EditorShell::DeleteGameObject(zengine::GameObjectId id) {
+    RequireScene();RequireEditable(id);if(Playing())throw std::runtime_error("Stop Play before deleting objects.");if(!editingPrefab_.empty()&&id==objects_.At(0).Id())throw std::runtime_error("A prefab must keep its root GameObject.");
+    auto document=CaptureDocument();std::set<zengine::GameObjectId> removed{id};for(bool changed=true;changed;){changed=false;for(const auto& object:document.objects)if(removed.contains(object.parent)&&removed.insert(object.id).second)changed=true;}
+    zengine::GameObjectId select=0;for(const auto& object:document.objects)if(object.id==id){select=object.parent;break;}std::erase_if(document.objects,[&](const auto& object){return removed.contains(object.id);});
+    RebuildDocument(document,select);MarkSceneDirty();status_=L"Deleted GameObject hierarchy";
 }

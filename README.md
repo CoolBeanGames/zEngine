@@ -49,7 +49,7 @@ For automated checks, the player accepts `--frames N` (1–3600 fixed ticks, hid
 
 ## Script editing assistance
 
-The Media Library supports named folders. **Add Folder** (or right-click → **New Folder**) creates one in the current directory. Double-click a folder to enter it, use **Up one folder** to go back, or click **Assets** to return to the project root. New scripts/scenes/prefabs and dropped FBX/image/script imports go into the current folder. Each asset type has its own small icon. The single Input Map remains at the root; model packages stay together and appear as models, not browsable implementation folders. Existing asset moves/renames with automatic reference rewriting are not implemented yet; create your folders before creating/importing assets.
+The Media Library supports named folders. Right-click the library to create a folder, behavior script, or scene in the current directory. Double-click a folder to enter it; a compact up-arrow button appears only inside subfolders, and clicking **Assets** returns directly to the project root. New scripts/scenes/prefabs and dropped FBX/image/script imports go into the current folder. Each asset type has its own small icon. The single Input Map remains at the root; model packages stay together and appear as models, not browsable implementation folders. Existing asset moves/renames with automatic reference rewriting are not implemented yet; create your folders before creating/importing assets.
 
 Enter indents to the current brace depth (four spaces). Closing a function declaration with `)` inserts its body when one is not already present; ordinary calls and control-flow conditions are not expanded. Closing `}` on an indentation-only line dedents it. These edits are undoable.
 
@@ -78,6 +78,7 @@ The header-only `EditorStyle.h` is shared by custom-painted toolbar controls and
 ## GameObjects and transforms
 
 - Click **+ Create Empty** in the Scene Browser to create and select a GameObject. Click its scene-tree row to select it again; scroll over the tree to browse longer lists.
+- Right-click empty Scene Browser space to add an empty object, cube, camera placeholder, or a physics-body/collider preset. Right-click an existing row to add the same presets as children. The row menu also supports copying, pasting complete hierarchies, and deleting an object with its descendants.
 - Edit its **Name** and comma-separated **Tags** in the Inspector. Tags are trimmed, case-sensitive, and deduplicated. Names must not be blank.
 - Click a transform number to select its text and type a value. Valid values apply immediately. **Enter** commits; **Escape** restores the value from before the edit; **Tab/Shift-Tab** advances between fields. Incomplete/invalid numbers are shown with a red background and do not overwrite the last valid transform; leaving the field restores that valid number.
 - Press and drag horizontally on a numeric field: right increases, left decreases. Position/scale change by 0.01 per pixel and rotation by 0.5 degrees per pixel. Hold **Shift before dragging** for ten-times finer changes. Escape or losing mouse capture cancels an unfinished drag.
@@ -124,7 +125,7 @@ Prefab instance roots can be parented normally; generated children must be edite
 
 ## Scene assets
 
-- Click **+ New Scene** in the Media Library, use **File > New Scene**, or right-click the library and choose **Create Scene (.zscene)**. This creates a uniquely named `NewScene.zscene` (numbered as needed) inside the current project's `Assets` directory, registers it in the project config, and opens it with an empty Scene Browser.
+- Use **File > New Scene**, or right-click the Media Library and choose **Create Scene (.zscene)**. This creates a uniquely named `NewScene.zscene` (numbered as needed) inside the current asset folder, registers it in the project config, and opens it with an empty Scene Browser.
 - **Double-click a scene asset** to open it, or use **File > Open Scene...**. Opening replaces the Scene Browser contents, Inspector selection/data, scripts, and rendered meshes with that scene's objects. The scene name appears in the window title and tree root; `*` indicates unsaved edits. New scenes start empty, with no implicit cube.
 - Use **File > Save Scene / Ctrl+S** to save. The first save lets you choose a `.zscene` filename inside Assets. **Save Scene As... / Ctrl+Shift+S** saves a separate scene asset. Ctrl+S in a script editor continues to save that script, not the scene. Scene saves are explicit, not autosaves.
 - Switching scenes or closing the editor prompts to **Save, Discard, or Cancel** when authored scene data changed. Failed/malformed loads leave the current scene intact. Saves use a temporary file and atomic replacement; external changes to the loaded scene are detected instead of silently overwritten. Use Save As to preserve your local version when the original changed externally.
@@ -156,7 +157,7 @@ This follows the component ownership pattern described in Unity's [GameObject re
 
 ## Script assets and editor
 
-- Click **+ New Script** in the Media Library, or right-click the library and choose **Create Behavior Script (.zsh)**. This creates `NewBehavior.zsh` (numbered automatically when that name exists) under the current project's `Assets` folder, with `start`, `update(float delta)`, and `draw` hooks, and opens it for editing.
+- Right-click the Media Library and choose **Create Behavior Script (.zsh)**. This creates `NewBehavior.zsh` (numbered automatically when that name exists) in the current asset folder, with `start`, `update(float delta)`, `physicsUpdate(float delta)`, and `draw` hooks, and opens it for editing.
 - Double-click a `.zsh` asset to open its resizable script window. Each file has a single editor window. Keywords, built-in types, numbers, strings, and comments are colored; **Tab** inserts four spaces and **Ctrl+Z/Ctrl+Y** undo/redo text edits.
 - Use **Save / Ctrl+S** to save UTF-8 text, and **Reload / Ctrl+R** to load disk changes. A `*` in the title marks unsaved edits. Closing a script or the main editor asks whether to save, discard, or cancel. Saves use a temporary file followed by replacement and reject overwriting a file changed externally since loading. Invalid source can still be saved while you work.
 - Full compiler diagnostics (unknown names, type mismatches, missing semicolons, etc.) and lexical checks show an error background/underline with source line/column messages. **Go to first error** selects and scrolls to the first problem. `export`, `label`, `GameObject`, `Transform`, and `Vector3` are syntax-highlighted.

@@ -82,6 +82,12 @@ public:
     const std::filesystem::path& ScenePath() const noexcept { return scenePath_; }
     bool SceneDirty() const noexcept { return sceneDirty_; }
     zengine::GameObject& CreateEmptyGameObject();
+    enum class ObjectPreset { Empty, Cube, Camera, RigidBody, KinematicBody, StaticBody, Area };
+    zengine::GameObject& CreateGameObject(ObjectPreset,zengine::GameObjectId parent=0);
+    void CopyGameObject(zengine::GameObjectId);
+    zengine::GameObjectId PasteGameObject(zengine::GameObjectId parent=0);
+    void DeleteGameObject(zengine::GameObjectId);
+    static constexpr int AddEmptyCommand=3700,AddCubeCommand=3701,AddCameraCommand=3702,AddRigidCommand=3703,AddKinematicCommand=3704,AddStaticCommand=3705,AddAreaObjectCommand=3706,CopyObjectCommand=3710,PasteObjectCommand=3711,DeleteObjectCommand=3712;
     std::filesystem::path CreateScriptAsset();
     void OpenScript(const std::filesystem::path& path);
     bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);
@@ -164,6 +170,7 @@ private:
     std::set<zengine::GameObjectId> prefabGenerated_;
     struct SceneSnapshot { zengine::scenes::Document document; std::filesystem::path path; std::string source,baseline; bool dirty=false,open=false; zengine::GameObjectId selected=0; };
     std::optional<SceneSnapshot> prefabReturn_;
+    std::optional<zengine::scenes::Document> objectClipboard_;
     std::filesystem::path editingPrefab_;
     zengine::GameObjectId draggedObject_=0;
     POINT objectDragStart_{};

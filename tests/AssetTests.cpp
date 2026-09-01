@@ -2,6 +2,7 @@
 #include "Renderer.h"
 #include "EditorShell.h"
 #include "core/MeshRenderer.h"
+#include "physics/PhysicsBehavior.h"
 #include "InspectorPanel.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
@@ -740,10 +741,15 @@ void HierarchyTests(bool capture) {
         Require(editor.SaveScene() && editor.OpenScene(path) && editor.GameObjects().Find(instance)->Parent()==root,"Prefab instance parent lost on reload");
         auto generated=zengine::GameObjectId{};for(std::size_t i=0;i<editor.GameObjects().Size();++i)if(editor.GameObjects().At(i).Parent()==instance)generated=editor.GameObjects().At(i).Id();
         Require(generated!=0,"Prefab children missing");rejected=false;try{editor.SetObjectParent(root,generated);}catch(...){rejected=true;}Require(rejected,"Generated prefab child accepted as authoring parent");
+        const auto rigid=editor.CreateGameObject(EditorShell::ObjectPreset::RigidBody,root).Id();Require(editor.GameObjects().Find(rigid)->Parent()==root&&editor.GameObjects().Find(rigid)->GetBehavior<zengine::physics::Collider>()&&editor.GameObjects().Find(rigid)->GetBehavior<zengine::physics::RigidBody>(),"Rigid-body context preset is incomplete");
+        editor.CopyGameObject(rigid);const auto pasted=editor.PasteGameObject(root);Require(editor.GameObjects().Find(pasted)&&editor.GameObjects().Find(pasted)->Parent()==root&&editor.GameObjects().Find(pasted)->GetBehavior<zengine::physics::RigidBody>(),"Context copy/paste lost hierarchy or behaviors");
+        editor.DeleteGameObject(rigid);Require(!editor.GameObjects().Find(rigid)&&editor.GameObjects().Find(pasted),"Context delete removed the wrong hierarchy");
+        const auto cube=editor.CreateGameObject(EditorShell::ObjectPreset::Cube,root).Id();Require(editor.GameObjects().Find(cube)->GetBehavior<zengine::MeshRenderer>()->Asset()==zengine::MeshRenderer::CubeAsset,"Cube context preset has no cube mesh");
+        const auto camera=editor.CreateGameObject(EditorShell::ObjectPreset::Camera,root).Id();Require(editor.GameObjects().Find(camera)->Name()=="Camera","Camera context preset missing");editor.DeleteGameObject(cube);editor.DeleteGameObject(camera);editor.DeleteGameObject(pasted);
         Require(editor.Play(),"Hierarchy Play failed");rejected=false;try{editor.SetObjectParent(instance,0);}catch(...){rejected=true;}Require(rejected,"Authoring reparent allowed during Play");editor.Stop();
         if(capture){editor.Render();CaptureWindow(window,L"hierarchy-qa.bmp");}
     }
-    CoUninitialize();std::cout<<"PASS: tree parenting, unparenting, collapse/expand, local transforms, save/reload, nested prefabs and Play edit guards\n";
+    CoUninitialize();std::cout<<"PASS: tree parenting, context presets/copy/paste/delete, unparenting, collapse/expand, local transforms, save/reload, nested prefabs and Play edit guards\n";
 }
 void GizmoTests(bool capture);
 void PrefabTests();

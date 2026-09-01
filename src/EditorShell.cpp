@@ -578,13 +578,10 @@ void EditorShell::Paint()
     RECT assetsLabel{folderPane.left + 12, folderPane.top + 12, folderPane.right - 8, folderPane.top + 36};
     DrawTextLabel(bufferContext, L"\u25be  Assets", assetsLabel, TextColor);
     RECT folderHint{folderPane.left + 30, folderPane.top + 43, folderPane.right - 8, folderPane.top + 68};
-    button(10,L"Up one folder");
+    if(project_ && AssetFolder()!=assetsDirectory_)button(10,L"\u2191");
     folderHint.top+=40;folderHint.bottom+=70;
     const auto relative=project_?std::filesystem::relative(AssetFolder(),assetsDirectory_).wstring():L"";
     DrawTextLabel(bufferContext,relative==L"."?L"Project Files":relative,folderHint,MutedTextColor,DT_LEFT|DT_WORDBREAK);
-    RECT addFolder{mediaLibrary_.right - 116, mediaLibrary_.top + 4, mediaLibrary_.right - 10, mediaLibrary_.top + 26};
-    button(9,L"+ Add Folder");
-    button(1,L"+ New Script");button(2,L"+ New Scene");
     RECT dropArea{folderPane.right + 20, mediaTop + 20, mediaLibrary_.right - 20, mediaLibrary_.bottom - 20};
     DrawBorder(bufferContext, dropArea, RGB(72, 75, 83));
     RECT libraryHint{dropArea.left + 8, dropArea.top, dropArea.right - 8, dropArea.top + 26};
@@ -1321,6 +1318,10 @@ LRESULT EditorShell::HandleMessage(
         if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
     case WM_COMMAND:
+        if(LOWORD(wParam)>=AddEmptyCommand&&LOWORD(wParam)<=AddAreaObjectCommand){CreateGameObject(static_cast<ObjectPreset>(LOWORD(wParam)-AddEmptyCommand),selectedObject_);return 0;}
+        if(LOWORD(wParam)==CopyObjectCommand){if(selectedObject_)CopyGameObject(selectedObject_);return 0;}
+        if(LOWORD(wParam)==PasteObjectCommand){PasteGameObject(selectedObject_);return 0;}
+        if(LOWORD(wParam)==DeleteObjectCommand){if(selectedObject_)DeleteGameObject(selectedObject_);return 0;}
         if(LOWORD(wParam)==UnparentCommand){if(selectedObject_)SetObjectParent(selectedObject_,0);return 0;}
         if(LOWORD(wParam)==RevertPrefabTransformCommand){if(selectedObject_)RevertPrefabTransform(selectedObject_);return 0;}
         if(LOWORD(wParam)==BuildProjectCommand){ChooseBuildFolder();return 0;}
@@ -1341,10 +1342,16 @@ LRESULT EditorShell::HandleMessage(
         POINT screen{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)}, point=screen;
         ScreenToClient(window_, &point);
         if(PtInRect(&sceneBrowser_,point)) {
-            if(const auto id=ScriptDropTarget(point))SelectGameObject(id);
-            HMENU menu=CreatePopupMenu();const UINT flags=MF_STRING|((Playing()||!selectedObject_||!CanEdit(selectedObject_,true))?MF_GRAYED:0);
-            AppendMenuW(menu,flags,UnparentCommand,L"Move to Scene Root");
-            AppendMenuW(menu,flags|(!prefabLinks_.contains(selectedObject_)?MF_GRAYED:0),RevertPrefabTransformCommand,L"Revert Prefab Transform Overrides");
+            const auto target=ScriptDropTarget(point);if(target)SelectGameObject(target);else {selectedObject_=0;inspectorPanel_->Bind(nullptr);InvalidateRect(window_,&sceneBrowser_,FALSE);}
+            HMENU menu=CreatePopupMenu(),add=CreatePopupMenu(),physics=CreatePopupMenu();const UINT addFlags=MF_STRING|((Playing()||!sceneOpen_||(target&&!CanEdit(target)))?MF_GRAYED:0);
+            AppendMenuW(add,addFlags,AddEmptyCommand,L"Empty GameObject");AppendMenuW(add,addFlags,AddCubeCommand,L"Cube");AppendMenuW(add,addFlags,AddCameraCommand,L"Camera");
+            AppendMenuW(physics,addFlags,AddRigidCommand,L"Rigid Body + Collider");AppendMenuW(physics,addFlags,AddKinematicCommand,L"Kinematic Body + Collider");AppendMenuW(physics,addFlags,AddStaticCommand,L"Static Body + Collider");AppendMenuW(physics,addFlags,AddAreaObjectCommand,L"Area + Collider");
+            AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(physics),L"Physics");AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(add),target?L"Add Child":L"Add");AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+            const UINT objectFlags=MF_STRING|((Playing()||!target||!CanEdit(target))?MF_GRAYED:0);const UINT pasteFlags=MF_STRING|((Playing()||!objectClipboard_||(target&&!CanEdit(target)))?MF_GRAYED:0);
+            AppendMenuW(menu,objectFlags,CopyObjectCommand,L"Copy");AppendMenuW(menu,pasteFlags,PasteObjectCommand,target?L"Paste as Child":L"Paste");AppendMenuW(menu,objectFlags,DeleteObjectCommand,L"Delete");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);const UINT transformFlags=MF_STRING|((Playing()||!target||!CanEdit(target,true))?MF_GRAYED:0);
+            AppendMenuW(menu,transformFlags,UnparentCommand,L"Move to Scene Root");
+            AppendMenuW(menu,transformFlags|(!prefabLinks_.contains(target)?MF_GRAYED:0),RevertPrefabTransformCommand,L"Revert Prefab Transform Overrides");
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,screen.x,screen.y,0,window_,nullptr);DestroyMenu(menu);if(command)SendMessageW(window_,WM_COMMAND,command,0);return 0;
         }
         if (!PtInRect(&mediaLibrary_, point)) break;
@@ -1413,7 +1420,6 @@ LRESULT EditorShell::HandleMessage(
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         hoveredChrome_=ChromeHit(point);pressedChrome_=hoveredChrome_;
         if(pressedChrome_>=0){InvalidateRect(window_,nullptr,FALSE);if(!ChromeEnabled(pressedChrome_)){pressedChrome_=-1;return 0;}}
-        if(pressedChrome_==9){NewAssetFolderDialog();return 0;}
         if(pressedChrome_==10){SendMessageW(window_,WM_COMMAND,UpFolderCommand,0);return 0;}
         if(pressedChrome_==11){showFps_=!showFps_;InvalidateRect(window_,&optionsBar_,FALSE);return 0;}
         const RECT assetRoot{mediaLibrary_.left+12,mediaLibrary_.top+PanelHeaderHeight+12,mediaLibrary_.left+150,mediaLibrary_.top+PanelHeaderHeight+36};
@@ -1436,8 +1442,6 @@ LRESULT EditorShell::HandleMessage(
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,at.x,at.y,0,window_,nullptr); DestroyMenu(menu);
             if (command) SendMessageW(window_,WM_COMMAND,command,0); return 0;
         }
-        const auto newScene=CreateSceneRectangle();
-        if (PtInRect(&newScene,point)) { NewScene(); return 0; }
         const int centerX=(viewportPanel_.left+viewportPanel_.right)/2;
         const RECT play{centerX-42,viewportPanel_.top+4,centerX-14,viewportPanel_.top+26};
         const RECT pause{centerX-12,viewportPanel_.top+4,centerX+16,viewportPanel_.top+26};
@@ -1446,8 +1450,6 @@ LRESULT EditorShell::HandleMessage(
         if (PtInRect(&pause,point)) { SetPaused(!paused_); return 0; }
         if (PtInRect(&step,point)) { Step(); return 0; }
         const RECT create = CreateObjectRectangle(), list = ObjectListRectangle();
-        const RECT createScript = CreateScriptRectangle();
-        if (PtInRect(&createScript, point)) { OpenScript(CreateScriptAsset()); return 0; }
         if (PtInRect(&create, point)) { CreateEmptyGameObject(); return 0; }
         if (PtInRect(&list, point))
         {
