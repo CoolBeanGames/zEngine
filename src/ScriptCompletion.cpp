@@ -53,6 +53,8 @@ Index::Index() {
     for(const auto name:{L"just_pressed",L"just_released",L"is_pressed",L"was_just_pressed",L"was_just_released"})add(L"InputAction",name,L"signal");
     add(L"InputAction",L"pressed",L"bool");add(L"InputAction",L"axis",L"Vector3");add(L"InputAction",L"value",L"Vector3");
     add(L"Physics",L"cast",L"gameObject",true);add(L"Physics",L"cast_all",L"array",true);
+    for(const auto name:{L"lerp",L"sin",L"cos",L"tan",L"sqrt",L"exp",L"round"})add(L"Mathf",name,L"float",true);
+    add(L"Mathf",L"dot",L"float",true);add(L"Mathf",L"cross",L"Vector3",true);
     add(L"PhysicsBody",L"velocity",L"Vector3");add(L"PhysicsBody",L"angular_velocity",L"Vector3");
     for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})add(L"PhysicsBody",name,L"void",true);
     for(const auto name:{L"collision_entered",L"collision_stayed",L"collision_exited",L"area_entered",L"area_stayed",L"area_exited"})add(L"PhysicsBody",name,L"signal");
@@ -102,7 +104,7 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
     for(const auto& c:Classes(t))if(t[c.begin].pos<caret && (c.end==t.size()||t[c.end].pos>=caret)){currentClass=c.name;classBegin=c.begin;classEnd=c.end;break;}
     auto members=[&](std::wstring type){std::map<std::wstring,Item> found;std::set<std::wstring> seen;
         while(index.types_.contains(type)&&seen.insert(type).second){const auto& c=index.types_.at(type);found.insert(c.members.begin(),c.members.end());type=c.base;}return found;};
-    auto variables=members(currentClass);variables[L"this"]={L"this",currentClass};variables[L"Input"]={L"Input",L"Input"};variables[L"Physics"]={L"Physics",L"Physics"};
+    auto variables=members(currentClass);variables[L"this"]={L"this",currentClass};variables[L"Input"]={L"Input",L"Input"};variables[L"Physics"]={L"Physics",L"Physics"};variables[L"Mathf"]={L"Mathf",L"Mathf"};
     // Only parameters/locals in the current method's live lexical scopes are visible.
     for(auto i=classBegin;i<classEnd && i+2<t.size();++i)if(t[i].text==L"func") {
         const auto close=Closing(t,i+2,L"(",L")");auto body=close+1;

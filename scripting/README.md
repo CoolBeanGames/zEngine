@@ -192,6 +192,16 @@ A class containing only empty void functions, including the original start/updat
 
 ## Host API and engine integration
 
+## Math helpers
+
+`Mathf` is a built-in static-style service available to every script. It provides `lerp(from, to, weight)`, `sin`, `cos`, `tan`, `sqrt`, `exp`, and `round` for scalar values, plus `dot(a, b)` and `cross(a, b)` for `Vector3` values. Integer arguments are accepted where a float is expected; invalid square roots and non-finite results are reported as script errors.
+
+```cpp
+float halfway = Mathf.lerp(0, 10, 0.5);
+float facing = Mathf.dot(transform.forward, Vector3(0, 0, 1));
+Vector3 normal = Mathf.cross(Vector3(1, 0, 0), Vector3(0, 1, 0));
+```
+
 Include `zscript/Script.h` and link `zEngineScripting`. `Compiler::Compile(text, filename)` returns either an immutable program or a diagnostic with source name and one-based line/column. This first version reports the first compile error. `Program::Stats()` exposes declaration and emitted-code counts.
 
 ```cpp

@@ -276,7 +276,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, IsType, MakeVector, SetComponent, Self, Input, Physics, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, IsType, MakeVector, SetComponent, Self, Input, Physics, Math, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -298,7 +298,7 @@ bool TextType(const std::string& t) { return t=="string" || t=="char"; }
 bool GlobalField(const std::string& name) {return name=="global_position" || name=="global_rotation" || name=="global_scale";}
 bool DirectionField(const std::string& name) {return name=="forward" || name=="up" || name=="right";}
 bool NativeBehavior(const std::string& name){return name=="Behavior"||name=="PhysicsBody"||name=="RigidBody"||name=="KinematicBody"||name=="StaticBody"||name=="Area"||name=="Collider";}
-bool NativeClass(const std::string& name){return name=="gameObject"||name=="Transform"||name=="InputService"||name=="InputAction"||name=="PhysicsService"||name=="prefab"||NativeBehavior(name);}
+bool NativeClass(const std::string& name){return name=="gameObject"||name=="Transform"||name=="InputService"||name=="InputAction"||name=="PhysicsService"||name=="Mathf"||name=="prefab"||NativeBehavior(name);}
 Value DefaultValue(const std::string& t) {
     if (t == "int") return std::int64_t{0};
     if (t == "float") return 0.0;
@@ -413,6 +413,7 @@ class BytecodeCompiler {
         if (e.kind == Expr::Name) {
             if (t.text == "Input") { Emit(Op::Input,t); return "InputService"; }
             if (t.text == "Physics") { Emit(Op::Physics,t); return "PhysicsService"; }
+            if (t.text == "Mathf") { Emit(Op::Math,t); return "Mathf"; }
             if (t.text == "this") { Emit(Op::Self, t); return owner.name; }
             auto local = Local(t.text);
             if (local != std::numeric_limits<std::size_t>::max()) { Emit(Op::LoadLocal, t, local); return function.locals[local]; }
@@ -430,7 +431,7 @@ class BytecodeCompiler {
                 Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
-                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
+                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
@@ -630,6 +631,12 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Class physicsService;physicsService.name="PhysicsService";
     for(const auto& name:{"cast","cast_all"}){Function f;f.params={"Vector3","Vector3","int"};f.result=std::string(name)=="cast"?"gameObject":"array";physicsService.methods.emplace(name,std::move(f));}
     program.classes.emplace(physicsService.name,std::move(physicsService));
+    Class math;math.name="Mathf";
+    for(const auto& name:{"sin","cos","tan","sqrt","exp","round"}){Function f;f.params={"float"};f.result="float";math.methods.emplace(name,std::move(f));}
+    {Function f;f.params={"float","float","float"};f.result="float";math.methods.emplace("lerp",std::move(f));}
+    {Function f;f.params={"Vector3","Vector3"};f.result="float";math.methods.emplace("dot",std::move(f));}
+    {Function f;f.params={"Vector3","Vector3"};f.result="Vector3";math.methods.emplace("cross",std::move(f));}
+    program.classes.emplace(math.name,std::move(math));
     Class physicsBody;physicsBody.name="PhysicsBody";
     physicsBody.fields={{{Token::Identifier,"velocity"},"Vector3"},{{Token::Identifier,"angular_velocity"},"Vector3"}};
     physicsBody.signals={"collision_entered","collision_stayed","collision_exited","area_entered","area_stayed","area_exited"};
@@ -671,7 +678,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
-            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
+            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -776,6 +783,7 @@ struct Runtime::Impl {
     std::size_t connectionCount = 0;
     ObjectRef inputService;
     ObjectRef physicsService;
+    ObjectRef mathService;
     InputFrame inputFrame;
     std::map<std::string,ObjectRef> inputActions;
     std::function<ObjectRef(std::string_view)> objectLookup;
@@ -1086,6 +1094,26 @@ struct Runtime::Impl {
             const auto hits=physicsCastCall(from,to,mask);if(name=="cast")return hits.empty()?Value{ObjectRef{}}:Value{hits.front()};
             std::vector<Value> values;values.reserve(hits.size());for(auto hit:hits)values.push_back(hit);return MakeArray(std::move(values),t);
         }
+        if(object.type->name=="Mathf") {
+            auto number=[&](std::size_t index){return Number(Coerce(args[index],"float",t));};
+            if(name=="lerp") {
+                if(args.size()!=3)Error(t,"Mathf.lerp takes from, to, and weight");
+                const auto from=number(0),to=number(1),weight=number(2),result=from+(to-from)*weight;
+                if(!std::isfinite(result))Error(t,"Mathf produced a non-finite result");return result;
+            }
+            if(name=="dot" || name=="cross") {
+                if(args.size()!=2)Error(t,"Mathf vector methods take two Vector3 values");
+                const auto a=std::get<Vector3>(Coerce(args[0],"Vector3",t)),b=std::get<Vector3>(Coerce(args[1],"Vector3",t));
+                if(name=="dot")return a.x*b.x+a.y*b.y+a.z*b.z;
+                return Coerce(Vector3{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x},"Vector3",t);
+            }
+            if(args.size()!=1)Error(t,"Mathf unary methods take one number");
+            const auto value=number(0);double result=0;
+            if(name=="sin")result=std::sin(value);else if(name=="cos")result=std::cos(value);else if(name=="tan")result=std::tan(value);
+            else if(name=="sqrt"){if(value<0)Error(t,"Mathf.sqrt requires a nonnegative value");result=std::sqrt(value);}
+            else if(name=="exp")result=std::exp(value);else if(name=="round")result=std::round(value);else Error(t,"Unknown Mathf method");
+            if(!std::isfinite(result))Error(t,"Mathf produced a non-finite result");return result;
+        }
         if(name=="find" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("find")) {
             Tick(t);if(args.size()!=1)Error(t,"find takes one scene object name");
             const auto requested=std::get<std::string>(Coerce(args[0],"string",t));
@@ -1178,6 +1206,7 @@ struct Runtime::Impl {
             case Op::Self: stack.push_back(ref); break;
             case Op::Input: if(!inputService.id)inputService=Create("InputService",t);stack.push_back(inputService);break;
             case Op::Physics: if(!physicsService.id)physicsService=Create("PhysicsService",t);stack.push_back(physicsService);break;
+            case Op::Math: if(!mathService.id)mathService=Create("Mathf",t);stack.push_back(mathService);break;
             case Op::LoadLocal: stack.push_back(locals[ins.a]); break;
             case Op::StoreLocal: locals[ins.a] = Coerce(pop(), f.locals[ins.a], t); break;
                         case Op::LoadField: {

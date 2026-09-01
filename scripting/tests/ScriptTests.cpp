@@ -405,9 +405,28 @@ void PrefabReferences() {
     runtime.Start(spawner);Check(requested=="Props/Crate.zprefab" && std::get<ObjectRef>(runtime.Call(spawner,"result"))==spawned,"Prefab spawn did not return the created GameObject");
     Error([&]{Compile("class Invalid { prefab p=prefab(); }");},"supplied by the host");
 }
+void MathfFunctions() {
+    auto program=Compile(R"(class MathTest {
+        func scalar():bool {
+            return Mathf.lerp(2,6,0.25)==3 && Mathf.sin(0)==0 && Mathf.cos(0)==1 &&
+                Mathf.tan(0)==0 && Mathf.sqrt(9)==3 && Mathf.exp(0)==1 && Mathf.round(2.6)==3;
+        }
+        func vector():bool {
+            Vector3 a=Vector3(1,2,3); Vector3 b=Vector3(4,5,6);
+            return Mathf.dot(a,b)==32 && Mathf.cross(Vector3(1,0,0),Vector3(0,1,0))==Vector3(0,0,1);
+        }
+        func invalid(){float value=Mathf.sqrt(-1);}
+    })");
+    Runtime runtime(program);const auto object=runtime.Create("MathTest");
+    Check(std::get<bool>(runtime.Call(object,"scalar")),"Mathf scalar methods returned incorrect values");
+    Check(std::get<bool>(runtime.Call(object,"vector")),"Mathf vector methods returned incorrect values");
+    Error([&]{runtime.Call(object,"invalid");},"nonnegative");
+    Error([&]{Compile("class Bad : Mathf {}");},"Cannot inherit");
+    Error([&]{Compile("class Bad { Mathf value=Mathf(); }");},"supplied by the host");
+}
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
+        {"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},

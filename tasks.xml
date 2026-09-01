@@ -134,14 +134,14 @@ I need a way to be able to pass behaviors (and inherit from them), i for instanc
   -round</prompt>
     <requirements>new math helper functions implemented</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <error>false</error>
     <errorMessage></errorMessage>
     <commit>true</commit>
     <build>false</build>
     <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Added the built-in Mathf script service with lerp, trigonometry, square root, exponent, rounding, dot product, and cross product. Calls are type checked, guarded against invalid or non-finite results, documented, exposed to autocomplete, and covered by runtime and editor tests.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-11">
     <prompt>timer:
