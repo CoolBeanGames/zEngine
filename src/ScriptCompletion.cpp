@@ -31,11 +31,11 @@ std::vector<ClassRange> Classes(const std::vector<Token>& t) {
 }
 Index::Index() {
     auto add=[&](const wchar_t* type,const wchar_t* name,const wchar_t* result,bool function=false){types_[type].members[name]={name,result,function};};
-    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"prefab",L"gameObject",L"GameObject",L"Transform",L"Behavior",L"PhysicsBody",L"RigidBody",L"KinematicBody",L"StaticBody",L"Area",L"Collider"})types_[type];
+    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"prefab",L"gameObject",L"GameObject",L"Transform",L"Timer",L"Behavior",L"PhysicsBody",L"RigidBody",L"KinematicBody",L"StaticBody",L"Area",L"Collider"})types_[type];
     types_[L"GameObject"].base=L"gameObject";
     types_[L"Behavior"].base=L"gameObject";types_[L"PhysicsBody"].base=L"Behavior";for(const auto type:{L"RigidBody",L"KinematicBody",L"StaticBody",L"Area"})types_[type].base=L"PhysicsBody";types_[L"Collider"].base=L"Behavior";
     add(L"gameObject",L"transform",L"Transform");
-    add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);
+    add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);add(L"gameObject",L"make_timer",L"Timer",true);
     add(L"gameObject",L"physics",L"PhysicsBody");
     add(L"gameObject",L"rigidbody",L"RigidBody");add(L"gameObject",L"kinematic_body",L"KinematicBody");add(L"gameObject",L"static_body",L"StaticBody");add(L"gameObject",L"area",L"Area");add(L"gameObject",L"collider",L"Collider");
     for(const auto name:{L"position",L"rotation",L"scale"})add(L"Transform",name,L"Vector3");
@@ -48,6 +48,7 @@ Index::Index() {
     add(L"prefab",L"spawn",L"gameObject",true);
     for(const auto name:{L"connect",L"disconnect",L"emit"})add(L"signal",name,L"void",true);
     add(L"signal",L"is_connected",L"bool",true);
+    types_[L"Timer"].base=L"gameObject";add(L"Timer",L"finished",L"signal");
     for(const auto name:{L"is_action_pressed",L"is_action_just_pressed",L"is_action_just_released"})add(L"Input",name,L"bool",true);
     add(L"Input",L"action",L"InputAction",true);add(L"Input",L"get_axis",L"float",true);add(L"Input",L"get_vector",L"Vector3",true);
     for(const auto name:{L"just_pressed",L"just_released",L"is_pressed",L"was_just_pressed",L"was_just_released"})add(L"InputAction",name,L"signal");
@@ -138,7 +139,7 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
         if(result.prefix.empty())return result;
         candidates=variables;
         for(const auto& [name,type]:index.types_)if(name!=L"signal" && name!=L"InputAction")candidates[name]={name,L"type"};
-        for(const auto word:{L"class",L"func",L"return",L"if",L"else",L"while",L"true",L"false",L"null",L"export",L"multiline",L"label",L"signal",L"is"})candidates[word]={word,L"keyword"};
+        for(const auto word:{L"class",L"func",L"return",L"if",L"else",L"while",L"for",L"true",L"false",L"null",L"export",L"multiline",L"label",L"signal",L"is",L"not",L"and",L"or",L"nor"})candidates[word]={word,L"keyword"};
         auto preceding=source.substr(0,result.start);const auto last=preceding.find_last_not_of(L" \t\r\n");
         if(last!=preceding.npos && last>=3 && preceding.substr(last-3,4)==L"func") {
             candidates.clear();for(const auto name:{L"start",L"update",L"physicsUpdate",L"draw"})candidates[name]={name,L"lifecycle",true};

@@ -57,6 +57,7 @@ int main(int argc, char**)
             Check(has(complete(L"class A : gameObject { func f(){ parent."),L"transform"),"Parent member completion missing");
             Check(has(complete(L"class A : RigidBody { func f(){ rigidbody."),L"add_impulse"),"RigidBody reference completion missing");
             Check(has(complete(L"class A { func f(){ Mathf."),L"cross"),"Mathf completion missing");
+            Check(has(complete(L"class A : gameObject { func f(){ make_timer(1)."),L"finished"),"Timer signal completion missing");
             Check(has(complete(L"class A : gameObject { func f(){ find(\"Root\")."),L"parent"),"Object lookup return completion missing");
             Check(has(complete(L"class A { func f() { Other obj; obj."),L"speed"),"Typed member completion missing");
             Check(has(complete(L"class A { func f() { Other obj; obj."),L"ping"),"Inherited signal missing");

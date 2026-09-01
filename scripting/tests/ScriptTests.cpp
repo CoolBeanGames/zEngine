@@ -84,17 +84,21 @@ void LifecycleAndInheritance() {
 void ValuesAndControlFlow() {
     auto p = Compile(R"(class Math { int calls; string text = "hi";
         func sum(int n) : int { int total = 0; int i = 0; while (i < n) { total += i; i += 1; } { int total = 99; } return total; }
+        func conditional_for(int n) : int { int total=0; int i=0; for(i<n){total+=i;i+=1;} return total; }
         func choose(bool yes) : string { if (yes) { return text + "!"; } else { return "no"; } }
         func calc() : float { return -(2 + 3) * 4 / 2.0 + 0.5; }
         func side() : bool { calls += 1; return true; }
         func logic() : bool { bool a = false && side(); bool b = true || side(); bool c = true && side(); bool d = false || side(); return 3 >= 3 && 2 <= 4 && 5 > 4 && 1 != 2 && !false; }
+        func word_logic() : bool { calls=0; bool a=false and side(); bool b=true or side(); bool c=false nor false; bool d=true nor side(); bool e=false nor side(); return not a and b and c and not d and not e and 1!=2; }
         func widen(int n) : float { return n; }
     })");
     Runtime r(p); auto o = r.Create("Math");
     Check(Int(r.Call(o, "sum", {std::int64_t{5}})) == 10, "Loop/local scopes");
+    Check(Int(r.Call(o,"conditional_for",{std::int64_t{5}}))==10,"Conditional for loop failed");
     Check(std::get<std::string>(r.Call(o, "choose", {true})) == "hi!" && std::get<std::string>(r.Call(o, "choose", {false})) == "no", "Branch returns");
     Check(Float(r.Call(o, "calc")) == -9.5 && Float(r.Call(o, "widen", {std::int64_t{4}})) == 4, "Arithmetic/coercion");
     Check(std::get<bool>(r.Call(o, "logic")) && Int(r.Get(o, "calls")) == 2, "Short circuit");
+    Check(std::get<bool>(r.Call(o,"word_logic")) && Int(r.Get(o,"calls"))==1,"Keyword logical operators or nor short circuit failed");
     Error([&] { r.Start(o); }, "gameObject-derived");
 }
 void ReferencesAndInitializers() {
@@ -424,9 +428,26 @@ void MathfFunctions() {
     Error([&]{Compile("class Bad : Mathf {}");},"Cannot inherit");
     Error([&]{Compile("class Bad { Mathf value=Mathf(); }");},"supplied by the host");
 }
+void Timers() {
+    auto program=Compile(R"(class Clock : gameObject {
+        int fired; Timer timer;
+        func start(){timer=make_timer(1);timer.finished.connect(on_finished);}
+        func on_finished(){fired+=1;}
+        func count():int{return fired;}
+        func touch(){timer.finished.emit();}
+    })");
+    Runtime runtime(program);const auto clock=runtime.Create("Clock");runtime.Update(clock,0.4);
+    Check(Int(runtime.Call(clock,"count"))==0,"Timer fired too early");runtime.Update(clock,0.6);
+    Check(Int(runtime.Call(clock,"count"))==1,"Timer did not emit finished at its duration");runtime.Update(clock,10);
+    Check(Int(runtime.Call(clock,"count"))==1,"One-shot timer fired more than once");
+    Error([&]{runtime.Call(clock,"touch");},"deleted");
+    Error([&]{Compile("class Bad : Timer {}");},"Cannot inherit");
+    Error([&]{Compile("class Bad : gameObject { Timer t=Timer(); }");},"supplied by the host");
+    auto invalid=Compile("class Invalid : gameObject {func start(){make_timer(-1);}}");Runtime bad(invalid);auto object=bad.Create("Invalid");Error([&]{bad.Start(object);},"nonnegative");
+}
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
+        {"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},

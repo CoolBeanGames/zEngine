@@ -138,7 +138,7 @@ class Mover : gameObject
 - Classes introduce type names and support single inheritance. All members are public. Overrides must preserve the full signature and dispatch through the actual object type, including through base references. No overloads, constructors with parameters, access modifiers, or `super` yet.
 - Construct objects with `ClassName()`. Construct vectors with `Vector3()` or `Vector3(x, y, z)`. Vectors copy by value; class variables share object references. `this` names the current instance.
 - Member access and assignment use `.`. Compound `+=`, `-=`, `*=`, `/=` evaluate the destination receiver once. Vectors support addition/subtraction, negation, scalar multiply/divide, component-wise Vector3 multiplication, equality, and readable/writable `x`, `y`, `z` components.
-- Arithmetic, comparisons, short-circuit `&&`/`||`, unary `!`, `if`/`else`, `while`, lexical local scopes, and `return` are supported. Conditions require `bool`. Integer division truncates toward zero.
+- Arithmetic, comparisons, short-circuit `&&`/`and`, `||`/`or`, logical `nor`, unary `!`/`not`, `!=`, `if`/`else`, conditional `while` and `for` loops, lexical local scopes, and `return` are supported. Conditions require `bool`. `for (condition)` is a condition-controlled loop equivalent to `while (condition)`; it intentionally does not use the C-style initializer/step header. `a nor b` is equivalent to `not (a or b)` and short-circuits when `a` is true. Integer division truncates toward zero.
 - `func name(params) : return_type` declares a result; omitting the suffix means `void`. Non-void functions must return on every path; an empty non-void function is an error.
 - `//` line comments and `/* ... */` non-nested block comments are ignored outside string literals. Unterminated block comments are diagnosed. Strings support escaped quotes, backslashes, newline, carriage-return, and tab escapes.
 - Top-level free functions, imports, exceptions, hot reload, filesystem/network access, and native function registration are not implemented. Put behavior functions inside a class.
@@ -200,6 +200,19 @@ A class containing only empty void functions, including the original start/updat
 float halfway = Mathf.lerp(0, 10, 0.5);
 float facing = Mathf.dot(transform.forward, Vector3(0, 0, 1));
 Vector3 normal = Mathf.cross(Vector3(1, 0, 0), Vector3(0, 1, 0));
+```
+
+## Timers
+
+GameObject behaviors can create one-shot, runtime-owned timers. A timer is an invisible GameObject that emits its ordinary `finished` signal after the requested number of seconds, then deletes itself. Timer time advances with the owning script runtime's Update calls, so pausing the game also pauses timers.
+
+```cpp
+func start() {
+    make_timer(1.5).finished.connect(on_delay_finished);
+}
+func on_delay_finished() {
+    // Runs once after 1.5 seconds of game time.
+}
 ```
 
 Include `zscript/Script.h` and link `zEngineScripting`. `Compiler::Compile(text, filename)` returns either an immutable program or a diagnostic with source name and one-based line/column. This first version reports the first compile error. `Program::Stats()` exposes declaration and emitted-code counts.

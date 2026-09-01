@@ -150,41 +150,41 @@ add a timer the idea is we would deifine it as below and it would create an invi
   -finished is just a regular signal</prompt>
     <requirements>timer is added</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <error>false</error>
     <errorMessage></errorMessage>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Added one-shot runtime-owned Timer GameObjects through make_timer(seconds). Timers expose the ordinary finished signal, advance on game Update time, pause with the runtime, fire once, invalidate themselves after completion, support autocomplete, and are covered by runtime and editor tests.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-12">
     <prompt>if we dont already then add a not keyworld (not, and, or, nor and ! or !=)
 (this should just modify any expression)</prompt>
     <requirements>verified modifier keywords</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <error>false</error>
     <errorMessage></errorMessage>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Verified and retained symbolic ! and !=, and added equivalent not, and, and or keywords plus a short-circuit nor operator. Logical aliases type check as bool expressions, are syntax highlighted and autocompleted, documented, and covered by execution tests.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-13">
     <prompt>for loops make sure we have them being conditional (while x=true)</prompt>
     <requirements>for loops are conditional</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <error>false</error>
     <errorMessage></errorMessage>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Added for(condition) as an explicit condition-controlled loop equivalent to while(condition), matching the editor's existing for-block insertion. The keyword is reserved, highlighted, autocompleted, documented, and execution tested. All 27 tests pass and builds/debug was refreshed.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-14">
     <prompt>inspector:

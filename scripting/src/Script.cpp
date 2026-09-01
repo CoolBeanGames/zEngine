@@ -24,8 +24,8 @@ bool Alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
 bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
 bool Reserved(std::string_view s) {
-    static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
-    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || words.contains(s);
+    static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "for", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
+    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || s == "not" || s == "and" || s == "or" || s == "nor" || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
     if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
@@ -124,8 +124,8 @@ class Parser {
         ++pos; if (type) t.text = Canonical(t.text); return t;
     }
     static int Precedence(std::string_view op) {
-        if (op == "||") return 1;
-        if (op == "&&") return 2;
+        if (op == "||" || op == "or" || op == "nor") return 1;
+        if (op == "&&" || op == "and") return 2;
         if (op == "==" || op == "!=") return 3;
         if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "is") return 4;
         if (op == "+" || op == "-" || op == "&") return 5;
@@ -140,7 +140,7 @@ class Parser {
     std::unique_ptr<Expr> Expression(int min = 1) {
         Guard guard(*this);
         auto e = std::make_unique<Expr>(); e->token = Current();
-        if (Match("-") || Match("!")) { e->kind = Expr::Unary; e->children.push_back(Expression(7)); }
+        if (Match("-") || Match("!") || Match("not")) { e->kind = Expr::Unary; e->children.push_back(Expression(7)); }
         else if (Match("(")) { e = Expression(); Expect(")"); }
         else if (Match("[")) {
             e->kind = Expr::Array;
@@ -183,7 +183,7 @@ class Parser {
             CheckHeight(*next); e = std::move(next);
         }
         std::size_t operators = 0;
-        while ((Current().kind == Token::Symbol || Is("is")) && Precedence(Current().text) >= min) {
+        while ((Current().kind == Token::Symbol || Is("is") || Is("and") || Is("or") || Is("nor")) && Precedence(Current().text) >= min) {
             if (++operators > 128) Fail(source, Current(), "Expression length limit exceeded");
             auto next = std::make_unique<Expr>(); next->kind = Expr::Binary; next->token = Current(); ++pos;
             next->children.push_back(std::move(e));
@@ -201,7 +201,7 @@ class Parser {
             while (!Is("}")) { if (Current().kind == Token::End) Fail(source, Current(), "Unterminated block"); s.children.push_back(Statement()); }
             Expect("}"); return s;
         }
-        if (Match("if") || Match("while")) {
+        if (Match("if") || Match("while") || Match("for")) {
             s.kind = s.token.text == "if" ? Stmt::If : Stmt::While;
             Expect("("); s.expressions.push_back(Expression()); Expect(")");
             if (!Is("{")) Fail(source, Current(), "Control flow requires a braced block");
@@ -298,7 +298,7 @@ bool TextType(const std::string& t) { return t=="string" || t=="char"; }
 bool GlobalField(const std::string& name) {return name=="global_position" || name=="global_rotation" || name=="global_scale";}
 bool DirectionField(const std::string& name) {return name=="forward" || name=="up" || name=="right";}
 bool NativeBehavior(const std::string& name){return name=="Behavior"||name=="PhysicsBody"||name=="RigidBody"||name=="KinematicBody"||name=="StaticBody"||name=="Area"||name=="Collider";}
-bool NativeClass(const std::string& name){return name=="gameObject"||name=="Transform"||name=="InputService"||name=="InputAction"||name=="PhysicsService"||name=="Mathf"||name=="prefab"||NativeBehavior(name);}
+bool NativeClass(const std::string& name){return name=="gameObject"||name=="Transform"||name=="InputService"||name=="InputAction"||name=="PhysicsService"||name=="Mathf"||name=="Timer"||name=="prefab"||NativeBehavior(name);}
 Value DefaultValue(const std::string& t) {
     if (t == "int") return std::int64_t{0};
     if (t == "float") return 0.0;
@@ -431,7 +431,7 @@ class BytecodeCompiler {
                 Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
-                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
+                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "Timer" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
@@ -480,16 +480,19 @@ class BytecodeCompiler {
         }
         if (e.kind == Expr::Unary) {
             auto type = Expression(*e.children[0]);
-            Require(type == "any" || (t.text == "!" ? type == "bool" : (Numeric(type) || type == "Vector3")), t, "Invalid unary operand");
-            Emit(t.text == "!" ? Op::Not : Op::Negate, t); return type;
+            Require(type == "any" || ((t.text == "!" || t.text == "not") ? type == "bool" : (Numeric(type) || type == "Vector3")), t, "Invalid unary operand");
+            Emit((t.text == "!" || t.text == "not") ? Op::Not : Op::Negate, t); return type;
         }
         auto left = Expression(*e.children[0]);
-        if (t.text == "&&" || t.text == "||") {
+        if (t.text == "&&" || t.text == "||" || t.text == "and" || t.text == "or" || t.text == "nor") {
             Require(left == "bool", t, "Logical operands must be bool");
             auto branch = Emit(Op::JumpFalse, t);
-            if (t.text == "||") {
+            if (t.text == "||" || t.text == "or") {
                 Emit(Op::Constant, t, 0, {}, true); auto finish = Emit(Op::Jump, t); Patch(branch);
                 Require(Expression(*e.children[1]) == "bool", t, "Logical operands must be bool"); Patch(finish);
+            } else if (t.text == "nor") {
+                Emit(Op::Constant, t, 0, {}, false); auto finish = Emit(Op::Jump, t); Patch(branch);
+                Require(Expression(*e.children[1]) == "bool", t, "Logical operands must be bool");Emit(Op::Not,t);Patch(finish);
             } else {
                 Require(Expression(*e.children[1]) == "bool", t, "Logical operands must be bool");
                 auto finish = Emit(Op::Jump, t); Patch(branch); Emit(Op::Constant, t, 0, {}, false); Patch(finish);
@@ -659,7 +662,9 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     gameObject.fields.push_back({Token{Token::Identifier,"area"},"Area"});
     gameObject.fields.push_back({Token{Token::Identifier,"collider"},"Collider"});
     Function find;find.params={"string"};find.result="gameObject";gameObject.methods.emplace("find",std::move(find));
+    Function makeTimer;makeTimer.params={"float"};makeTimer.result="Timer";gameObject.methods.emplace("make_timer",std::move(makeTimer));
     program.classes.emplace("gameObject", std::move(gameObject));
+    Class timer;timer.name="Timer";timer.base="gameObject";timer.fields=program.classes.at("gameObject").fields;timer.signals={"finished"};program.classes.emplace(timer.name,std::move(timer));
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
     auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());
     for(const auto& name:{"RigidBody","KinematicBody","StaticBody","Area"}){Class body;body.name=name;body.base="PhysicsBody";body.fields=nativePhysics.fields;body.signals=nativePhysics.signals;program.classes.emplace(body.name,std::move(body));}
@@ -678,7 +683,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
-            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
+            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="Timer" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -772,6 +777,7 @@ struct Runtime::Impl {
         std::map<std::string, std::vector<CallableRef>> connections;
         enum StartState { Pending, Starting, Started, StartFailed } start = Pending;
         bool failed = false;
+        bool alive = true;
     };
     std::shared_ptr<const Program::Impl> program;
     RuntimeLimits limits;
@@ -786,6 +792,8 @@ struct Runtime::Impl {
     ObjectRef mathService;
     InputFrame inputFrame;
     std::map<std::string,ObjectRef> inputActions;
+    struct TimerRecord { ObjectRef object; double remaining = 0; };
+    std::vector<TimerRecord> timers;
     std::function<ObjectRef(std::string_view)> objectLookup;
     Runtime::PhysicsBodyCall physicsBodyCall;
     Runtime::PhysicsCastCall physicsCastCall;
@@ -804,6 +812,7 @@ struct Runtime::Impl {
         if (ref.id == 0) Error(t, "Null object reference");
         if (ref.runtime != identity || ref.id > objects.size()) Error(t, "Object belongs to another runtime or is invalid");
         auto& object = *objects[ref.id - 1];
+        if (!object.alive) Error(t, "Object has been deleted");
         if (object.failed) Error(t, "Object initialization failed");
         return object;
     }
@@ -1081,6 +1090,11 @@ struct Runtime::Impl {
     }
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
+        if(name=="make_timer" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("make_timer")) {
+            if(args.size()!=1)Error(t,"make_timer takes a duration in seconds");
+            const auto duration=Number(Coerce(args[0],"float",t));if(duration<0)Error(t,"Timer duration must be nonnegative");
+            const auto timer=Create("Timer",t);timers.push_back({timer,duration});return timer;
+        }
         if(object.type->name=="prefab") {if(name!="spawn"||!args.empty())Error(t,"prefab.spawn takes no arguments");if(object.prefabAsset.empty())Error(t,"Assign a prefab asset before calling spawn");if(!prefabSpawnCall)Error(t,"Prefab spawning is not available in this runtime");return prefabSpawnCall(object.prefabAsset);}
         if(program->Assignable("PhysicsBody",object.type->name) && (name=="add_force"||name=="add_impulse"||name=="add_torque"||name=="add_angular_impulse")) {
             if(!physicsBodyCall)Error(t,"Physics is not available in this runtime");
@@ -1267,6 +1281,16 @@ struct Runtime::Impl {
             if(s.pressed)Signal({ref,"is_pressed"},"emit",{},{});
         }
     }
+    void AdvanceTimers(double delta) {
+        const auto initial=timers.size();std::vector<ObjectRef> expired;
+        for(std::size_t i=0;i<initial;++i)if((timers[i].remaining-=delta)<=0)expired.push_back(timers[i].object);
+        for(const auto timer:expired) {
+            try { Signal({timer,"finished"},"emit",{},{}); }
+            catch (...) { Resolve(timer).alive=false;timers.erase(std::remove_if(timers.begin(),timers.end(),[&](const auto& item){return item.object==timer;}),timers.end());throw; }
+            auto& object=Resolve(timer);for(const auto& [_,connections]:object.connections)connectionCount-=connections.size();object.connections.clear();object.alive=false;
+            timers.erase(std::remove_if(timers.begin(),timers.end(),[&](const auto& item){return item.object==timer;}),timers.end());
+        }
+    }
     void Behavior(ObjectRef ref) const {
         const auto& object = Resolve(ref);
         if (!program->Assignable("gameObject", object.type->name)) Error({}, "Lifecycle hooks require a gameObject-derived behavior");
@@ -1310,7 +1334,7 @@ void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();
 void Runtime::Start(ObjectRef object) { impl_->Reset(); impl_->Start(object); }
 void Runtime::Update(ObjectRef object, double delta) {
     if (!std::isfinite(delta) || delta < 0) impl_->Error({}, "Delta must be finite and nonnegative");
-    impl_->Reset(); impl_->Hook(object, "update", {delta});
+    impl_->Reset(); impl_->Hook(object, "update", {delta}); impl_->AdvanceTimers(delta);
 }
 void Runtime::PhysicsUpdate(ObjectRef object, double delta) {
     if (!std::isfinite(delta) || delta < 0) impl_->Error({}, "Delta must be finite and nonnegative");
