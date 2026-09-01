@@ -15,6 +15,7 @@
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include <commdlg.h>
+#include <commctrl.h>
 
 #include <windowsx.h>
 
@@ -576,21 +577,10 @@ void EditorShell::Paint()
 
     // Project asset library
     const int mediaTop = mediaLibrary_.top + PanelHeaderHeight;
-    const int folderPaneWidth = std::clamp<LONG>((mediaLibrary_.right - mediaLibrary_.left) / 5, 150, 250);
-    RECT folderPane{mediaLibrary_.left + 1, mediaTop, mediaLibrary_.left + folderPaneWidth, mediaLibrary_.bottom - 1};
-    FillRectangle(bufferContext, folderPane, RGB(36, 38, 43));
-    RECT assetsLabel{folderPane.left + 12, folderPane.top + 12, folderPane.right - 8, folderPane.top + 36};
-    DrawTextLabel(bufferContext, L"\u25be  Assets", assetsLabel, TextColor);
-    RECT folderHint{folderPane.left + 30, folderPane.top + 43, folderPane.right - 8, folderPane.top + 68};
-    if(project_ && AssetFolder()!=assetsDirectory_)button(10,L"\u2191");
-    folderHint.top+=40;folderHint.bottom+=70;
+    RECT breadcrumb{mediaLibrary_.left+12,mediaTop+8,mediaLibrary_.right-12,mediaTop+36};
+    if(project_ && AssetFolder()!=assetsDirectory_){button(10,L"\u2191");breadcrumb.left+=40;}
     const auto relative=project_?std::filesystem::relative(AssetFolder(),assetsDirectory_).wstring():L"";
-    DrawTextLabel(bufferContext,relative==L"."?L"Project Files":relative,folderHint,MutedTextColor,DT_LEFT|DT_WORDBREAK);
-    RECT dropArea{folderPane.right + 20, mediaTop + 20, mediaLibrary_.right - 20, mediaLibrary_.bottom - 20};
-    DrawBorder(bufferContext, dropArea, RGB(72, 75, 83));
-    RECT libraryHint{dropArea.left + 8, dropArea.top, dropArea.right - 8, dropArea.top + 26};
-    DrawTextLabel(bufferContext, L"Double-click folders to browse | New assets and imports go into this folder", libraryHint,
-                  MutedTextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    DrawTextLabel(bufferContext,L"Assets"+(relative.empty()||relative==L"."?L"":L" / "+relative),breadcrumb,MutedTextColor,DT_LEFT|DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
     const RECT list = AssetListRectangle();
     const int saved = SaveDC(bufferContext);
     IntersectClipRect(bufferContext, list.left, list.top, list.right, list.bottom);
@@ -598,14 +588,10 @@ void EditorShell::Paint()
         DrawTextLabel(bufferContext, L"No assets - create a script or import an FBX", list, MutedTextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     for (int index = firstAsset_; index < static_cast<int>(assets_.size()); ++index)
     {
-        RECT row{list.left, list.top + (index - firstAsset_) * 28, list.right,
-                 list.top + (index - firstAsset_ + 1) * 28};
-        if (row.top >= list.bottom) break;
-        if (index == selectedAsset_) FillRectangle(bufferContext, row, SelectionColor);
-        row.left += 8;
-        const auto kind=assetLibrary::Type(assets_[index]);assetLibrary::Icon(bufferContext,kind,row.left,row.top+3);row.left+=27;
-        DrawTextLabel(bufferContext, kind==assetLibrary::Kind::Input ? L"Input Map (project)" : kind==assetLibrary::Kind::Model && assetLibrary::Package(assets_[index].parent_path()) ? assets_[index].parent_path().filename().wstring() : assets_[index].filename().wstring(), row, TextColor,
-                      DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        RECT cell=AssetCellRectangle(index);if(cell.top>=list.bottom)break;
+        if(index==selectedAsset_)FillRectangle(bufferContext,cell,SelectionColor);
+        const auto kind=assetLibrary::Type(assets_[index]);const int iconX=(cell.left+cell.right)/2-9;assetLibrary::Icon(bufferContext,kind,iconX,cell.top+12);
+        RECT name{cell.left+4,cell.top+39,cell.right-4,cell.bottom-3};DrawTextLabel(bufferContext,AssetDisplayName(assets_[index]),name,TextColor,DT_CENTER|DT_WORDBREAK|DT_END_ELLIPSIS);
     }
     RestoreDC(bufferContext, saved);
 
@@ -693,6 +679,7 @@ zengine::GameObject& EditorShell::CreateEmptyGameObject()
     SelectGameObject(object.Id());
     status_ = L"Created empty GameObject - edit its transform in the Inspector";
     InvalidateRect(window_, nullptr, FALSE);
+    BeginObjectRename(object.Id());
     return object;
 }
 void EditorShell::SelectGameObject(zengine::GameObjectId id)
@@ -723,9 +710,37 @@ void EditorShell::OnObjectChanged()
 
 RECT EditorShell::AssetListRectangle() const
 {
-    const int folderWidth = std::clamp(static_cast<int>(mediaLibrary_.right - mediaLibrary_.left) / 5, 150, 250);
-    return {mediaLibrary_.left + folderWidth + 21, mediaLibrary_.top + PanelHeaderHeight + 48,
-            mediaLibrary_.right - 21, mediaLibrary_.bottom - 21};
+    return {mediaLibrary_.left+12,mediaLibrary_.top+PanelHeaderHeight+42,mediaLibrary_.right-12,mediaLibrary_.bottom-12};
+}
+int EditorShell::AssetColumns() const {const auto list=AssetListRectangle();return std::max(1,static_cast<int>(list.right-list.left)/112);}
+RECT EditorShell::AssetCellRectangle(int index) const {const auto list=AssetListRectangle();const int columns=AssetColumns(),slot=index-firstAsset_,column=slot%columns,row=slot/columns;return {list.left+column*112,list.top+row*84,list.left+column*112+104,list.top+row*84+78};}
+int EditorShell::AssetAt(POINT point) const {const auto list=AssetListRectangle();if(!PtInRect(&list,point))return -1;const int column=(point.x-list.left)/112,row=(point.y-list.top)/84;if(column<0||column>=AssetColumns())return -1;const int index=firstAsset_+row*AssetColumns()+column;if(index<0||index>=static_cast<int>(assets_.size()))return -1;const auto cell=AssetCellRectangle(index);return PtInRect(&cell,point)?index:-1;}
+std::wstring EditorShell::AssetDisplayName(const std::filesystem::path& asset) const {const auto kind=assetLibrary::Type(asset);return kind==assetLibrary::Kind::Input?L"Input Map":kind==assetLibrary::Kind::Model&&assetLibrary::Package(asset.parent_path())?asset.parent_path().filename().wstring():asset.filename().wstring();}
+LRESULT CALLBACK EditorShell::RenameProcedure(HWND window,UINT message,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR data)
+{
+    auto* editor=reinterpret_cast<EditorShell*>(data);if(message==WM_KEYDOWN&&(w==VK_RETURN||w==VK_ESCAPE)){editor->FinishRename(w==VK_ESCAPE);return 0;}
+    if(message==WM_KILLFOCUS){editor->FinishRename(false);return 0;}
+    return DefSubclassProc(window,message,w,l);
+}
+void EditorShell::BeginAssetRename(const std::filesystem::path& asset)
+{
+    FinishRename(true);RefreshAssets();const auto storage=assetLibrary::Storage(asset);int index=-1;for(int i=0;i<static_cast<int>(assets_.size());++i)if(assetLibrary::Storage(assets_[i])==storage){index=i;break;}if(index<0)return;
+    selectedAsset_=index;const auto cell=AssetCellRectangle(index);RECT edit{cell.left+2,cell.top+39,cell.right-2,cell.bottom-2};
+    renameTarget_=RenameTarget::Asset;renameAsset_=assets_[index];renameEdit_=CreateWindowExW(0,L"EDIT",AssetDisplayName(assets_[index]).c_str(),WS_CHILD|WS_VISIBLE|WS_BORDER|ES_CENTER|ES_AUTOHSCROLL,edit.left,edit.top,edit.right-edit.left,edit.bottom-edit.top,window_,reinterpret_cast<HMENU>(3900),instance_,nullptr);
+    SendMessageW(renameEdit_,WM_SETFONT,reinterpret_cast<WPARAM>(uiFont_),TRUE);SetWindowSubclass(renameEdit_,RenameProcedure,1,reinterpret_cast<DWORD_PTR>(this));SetFocus(renameEdit_);SendMessageW(renameEdit_,EM_SETSEL,0,-1);InvalidateRect(window_,&mediaLibrary_,FALSE);
+}
+void EditorShell::BeginObjectRename(zengine::GameObjectId id)
+{
+    FinishRename(true);RequireEditable(id);if(Playing())throw std::runtime_error("Stop Play before renaming objects.");SelectGameObject(id);const auto rows=ObjectRows();const auto found=std::find(rows.begin(),rows.end(),id);if(found==rows.end())return;const int row=static_cast<int>(found-rows.begin())-firstObject_;const auto list=ObjectListRectangle();RECT edit{list.left+28+ObjectDepth(id)*12,list.top+row*27+2,list.right-4,list.top+row*27+25};
+    renameTarget_=RenameTarget::Object;renameObject_=id;renameObjectOriginal_=objects_.Find(id)->Name();renameEdit_=CreateWindowExW(0,L"EDIT",WideText(renameObjectOriginal_).c_str(),WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,edit.left,edit.top,edit.right-edit.left,edit.bottom-edit.top,window_,reinterpret_cast<HMENU>(3900),instance_,nullptr);
+    SendMessageW(renameEdit_,WM_SETFONT,reinterpret_cast<WPARAM>(uiFont_),TRUE);SetWindowSubclass(renameEdit_,RenameProcedure,1,reinterpret_cast<DWORD_PTR>(this));SetFocus(renameEdit_);SendMessageW(renameEdit_,EM_SETSEL,0,-1);
+}
+void EditorShell::FinishRename(bool cancel)
+{
+    if(!renameEdit_||finishingRename_)return;finishingRename_=true;wchar_t value[512]{};GetWindowTextW(renameEdit_,value,512);RemoveWindowSubclass(renameEdit_,RenameProcedure,1);DestroyWindow(renameEdit_);renameEdit_=nullptr;
+    const auto target=renameTarget_;const auto asset=renameAsset_;const auto object=renameObject_;const auto original=renameObjectOriginal_;renameTarget_=RenameTarget::None;renameAsset_.clear();renameObject_=0;renameObjectOriginal_.clear();
+    if(!cancel)try{if(target==RenameTarget::Asset)RenameAsset(asset,value);else if(target==RenameTarget::Object){RequireEditable(object);auto* current=objects_.Find(object);if(current&&current->Name()==original){current->SetName(Utf8Text(value));OnObjectChanged();}}}catch(const std::exception& error){status_=L"Rename failed: "+WideText(error.what());InvalidateRect(window_,nullptr,FALSE);}
+    finishingRename_=false;
 }
 
 void EditorShell::RefreshAssets()
@@ -739,7 +754,7 @@ void EditorShell::RefreshAssets()
         try {if(!std::filesystem::is_directory(AssetFolder()))assetFolder_.clear();}catch(const std::exception&){assetFolder_.clear();}
         assets_=assetLibrary::List(assetsDirectory_,AssetFolder());
     }
-    firstAsset_ = std::clamp(firstAsset_, 0, std::max(0, static_cast<int>(assets_.size()) - 1));
+    const int columns=AssetColumns();firstAsset_=std::clamp(firstAsset_/columns*columns,0,std::max(0,(static_cast<int>(assets_.size())-1)/columns*columns));
     selectedAsset_ = -1;
 }
 
@@ -809,6 +824,7 @@ void EditorShell::PollAssetWork()
                 if (GetCapture() == window_ && dragTarget_ == DragTarget::None) ReleaseCapture();
                 RefreshAssets();
                 status_ = L"Imported " + result.path.parent_path().filename().wstring();
+                BeginAssetRename(result.path);
             }
             if (!result.warnings.empty())
                 status_ += L" (albedo fallback: " + WideText(result.warnings.front()) + L")";
@@ -857,12 +873,9 @@ void EditorShell::PollAssetWork()
 
 void EditorShell::BeginAssetDrag(POINT point)
 {
-    const RECT list = AssetListRectangle();
-    if (!PtInRect(&list, point)) return;
-    const int index = firstAsset_ + static_cast<int>(point.y - list.top) / 28;
-    if (index >= static_cast<int>(assets_.size())) return;
+    const int index=AssetAt(point);if(index<0)return;
     const auto kind=assetLibrary::Type(assets_[index]);
-    if(kind==assetLibrary::Kind::Input || kind==assetLibrary::Kind::Folder || kind==assetLibrary::Kind::Image || kind==assetLibrary::Kind::File){selectedAsset_=index;draggedAsset_=-1;InvalidateRect(window_,&mediaLibrary_,FALSE);return;}
+    if(kind==assetLibrary::Kind::Input){selectedAsset_=index;draggedAsset_=-1;InvalidateRect(window_,&mediaLibrary_,FALSE);return;}
     selectedAsset_ = draggedAsset_ = index;
     assetDragStart_ = point;
     assetDragMoved_ = false;
@@ -880,6 +893,8 @@ void EditorShell::FinishAssetDrag(POINT point)
     ReleaseCapture();
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
     if (!moved) return;
+    const auto destinationIndex=AssetAt(point);
+    if(destinationIndex>=0 && destinationIndex<static_cast<int>(assets_.size()) && assetLibrary::Type(assets_[destinationIndex])==assetLibrary::Kind::Folder && destinationIndex!=selectedAsset_){MoveAsset(path,assets_[destinationIndex]);return;}
     if(path.extension()==L".zinput")return;
     if (zengine::prefabs::IsPrefab(path))
     {
@@ -990,7 +1005,7 @@ bool EditorShell::NewScene()
     if (!ConfirmSceneClose()) return false;
     const auto file=zengine::scenes::Create(AssetFolder());
     const auto source=zengine::scenes::Load(file);
-    ApplyScene(file,source,zengine::scenes::Decode(source)); return true;
+    ApplyScene(file,source,zengine::scenes::Decode(source));BeginAssetRename(file); return true;
 }
 bool EditorShell::OpenScene(const std::filesystem::path& path)
 {
@@ -1008,6 +1023,9 @@ bool EditorShell::OpenScene(const std::filesystem::path& path)
 }
 void EditorShell::ApplyScene(const std::filesystem::path& file,std::string source,const zengine::scenes::Document& scene)
 {
+    // An inline editor belongs to the scene that is about to be replaced.  A
+    // delayed WM_KILLFOCUS must never rename an object in the newly opened scene.
+    FinishRename(true);
     EndGizmoDrag(true);
     auto authored=scene;
     for(auto& object:authored.objects)if(!object.prefab.empty() && object.transformOverride && !object.transformMask){
@@ -1075,11 +1093,10 @@ std::filesystem::path EditorShell::CreateScriptAsset()
     const auto path = zengine::scripts::Create(AssetFolder());
     RefreshAssets();
     selectedAsset_ = static_cast<int>(std::find(assets_.begin(),assets_.end(),path)-assets_.begin());
-    const auto list = AssetListRectangle();
-    const int rows = std::max(1, static_cast<int>(list.bottom-list.top)/28);
-    firstAsset_ = std::max(0, selectedAsset_ - rows + 1);
+    const auto list=AssetListRectangle();const int visible=std::max(1,static_cast<int>(list.bottom-list.top)/84)*AssetColumns();firstAsset_=std::max(0,(selectedAsset_-visible+AssetColumns())/AssetColumns()*AssetColumns());
     status_ = L"Created " + path.filename().wstring() + L" - double-click to edit";
     InvalidateRect(window_, nullptr, FALSE);
+    BeginAssetRename(path);
     return path;
 }
 void EditorShell::OpenScript(const std::filesystem::path& path)
@@ -1362,6 +1379,8 @@ LRESULT EditorShell::HandleMessage(
         if(LOWORD(wParam)==CopyObjectCommand){if(selectedObject_)CopyGameObject(selectedObject_);return 0;}
         if(LOWORD(wParam)==PasteObjectCommand){PasteGameObject(selectedObject_);return 0;}
         if(LOWORD(wParam)==DeleteObjectCommand){if(selectedObject_)DeleteGameObject(selectedObject_);return 0;}
+        if(LOWORD(wParam)==RenameObjectCommand){if(selectedObject_)BeginObjectRename(selectedObject_);return 0;}
+        if(LOWORD(wParam)==RenameAssetCommand){if(selectedAsset_>=0&&selectedAsset_<static_cast<int>(assets_.size()))BeginAssetRename(assets_[selectedAsset_]);return 0;}
         if(LOWORD(wParam)==UnparentCommand){if(selectedObject_)SetObjectParent(selectedObject_,0);return 0;}
         if(LOWORD(wParam)==RevertPrefabTransformCommand){if(selectedObject_)RevertPrefabTransform(selectedObject_);return 0;}
         if(LOWORD(wParam)==BuildProjectCommand){ChooseBuildFolder();return 0;}
@@ -1388,33 +1407,35 @@ LRESULT EditorShell::HandleMessage(
             AppendMenuW(physics,addFlags,AddRigidCommand,L"Rigid Body + Collider");AppendMenuW(physics,addFlags,AddKinematicCommand,L"Kinematic Body + Collider");AppendMenuW(physics,addFlags,AddStaticCommand,L"Static Body + Collider");AppendMenuW(physics,addFlags,AddAreaObjectCommand,L"Area + Collider");
             AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(physics),L"Physics");AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(add),target?L"Add Child":L"Add");AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
             const UINT objectFlags=MF_STRING|((Playing()||!target||!CanEdit(target))?MF_GRAYED:0);const UINT pasteFlags=MF_STRING|((Playing()||!objectClipboard_||(target&&!CanEdit(target)))?MF_GRAYED:0);
-            AppendMenuW(menu,objectFlags,CopyObjectCommand,L"Copy");AppendMenuW(menu,pasteFlags,PasteObjectCommand,target?L"Paste as Child":L"Paste");AppendMenuW(menu,objectFlags,DeleteObjectCommand,L"Delete");
+            AppendMenuW(menu,objectFlags,CopyObjectCommand,L"Copy");AppendMenuW(menu,pasteFlags,PasteObjectCommand,target?L"Paste as Child":L"Paste");AppendMenuW(menu,objectFlags,DeleteObjectCommand,L"Delete");AppendMenuW(menu,objectFlags,RenameObjectCommand,L"Rename");
             AppendMenuW(menu,MF_SEPARATOR,0,nullptr);const UINT transformFlags=MF_STRING|((Playing()||!target||!CanEdit(target,true))?MF_GRAYED:0);
             AppendMenuW(menu,transformFlags,UnparentCommand,L"Move to Scene Root");
             AppendMenuW(menu,transformFlags|(!prefabLinks_.contains(target)?MF_GRAYED:0),RevertPrefabTransformCommand,L"Revert Prefab Transform Overrides");
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,screen.x,screen.y,0,window_,nullptr);DestroyMenu(menu);if(command)SendMessageW(window_,WM_COMMAND,command,0);return 0;
         }
         if (!PtInRect(&mediaLibrary_, point)) break;
+        const int assetIndex=AssetAt(point);selectedAsset_=assetIndex;InvalidateRect(window_,&mediaLibrary_,FALSE);
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
         AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),NewFolderCommand,L"New Folder...");
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0),NewSceneCommand,L"Create Scene (.zscene)");
+        if(assetIndex>=0){AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|((Playing()||assetLibrary::Type(assets_[assetIndex])==assetLibrary::Kind::Input)?MF_GRAYED:0),RenameAssetCommand,L"Rename");}
         const auto command=TrackPopupMenu(menu, TPM_RETURNCMD|TPM_RIGHTBUTTON, screen.x,screen.y,0,window_,nullptr);
         DestroyMenu(menu);
-        if (command == 1) OpenScript(CreateScriptAsset());
+        if (command == 1) CreateScriptAsset();
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
         if (command==NewSceneCommand) NewScene();
         if(command==NewFolderCommand)NewAssetFolderDialog();
+        if(command==RenameAssetCommand)BeginAssetRename(assets_[assetIndex]);
         return 0;
     }
     case WM_LBUTTONDBLCLK:
     {
         const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
-        const auto list=AssetListRectangle();
-        if (PtInRect(&list,point))
+        const auto index=AssetAt(point);
+        if(index>=0)
         {
-            const auto index=firstAsset_+(point.y-list.top)/28;
             if (index >= 0 && index < static_cast<LONG>(assets_.size()))
             {
                 const auto asset=assets_[index];
@@ -1527,7 +1548,8 @@ LRESULT EditorShell::HandleMessage(
                               std::abs(point.y - assetDragStart_.y) >= GetSystemMetrics(SM_CYDRAG);
             if (assetDragMoved_)
             {
-                const bool valid = !zengine::scenes::IsScene(assets_.at(draggedAsset_)) && (ScriptDropTarget(point) != 0 || (!zengine::scripts::IsScript(assets_.at(draggedAsset_)) && PtInRect(&viewportContent_,point)));
+                const int target=AssetAt(point);const bool folder=target>=0&&assetLibrary::Type(assets_[target])==assetLibrary::Kind::Folder&&target!=draggedAsset_;
+                const bool valid = folder || (!zengine::scenes::IsScene(assets_.at(draggedAsset_)) && (ScriptDropTarget(point) != 0 || (!zengine::scripts::IsScript(assets_.at(draggedAsset_)) && PtInRect(&viewportContent_,point))));
                 SetCursor(LoadCursorW(nullptr, valid ? IDC_HAND : IDC_NO));
             }
             return 0;
@@ -1570,9 +1592,8 @@ LRESULT EditorShell::HandleMessage(
         if (PtInRect(&mediaLibrary_, point) && draggedAsset_ < 0)
         {
             const RECT list = AssetListRectangle();
-            const int visibleRows = std::max(1, static_cast<int>(list.bottom - list.top) / 28);
-            firstAsset_ = std::clamp(firstAsset_ - GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 3,
-                                    0, std::max(0, static_cast<int>(assets_.size()) - visibleRows));
+            const int columns=AssetColumns(),visibleRows=std::max(1,static_cast<int>(list.bottom-list.top)/84);
+            firstAsset_=std::clamp(firstAsset_-GET_WHEEL_DELTA_WPARAM(wParam)/WHEEL_DELTA*columns,0,std::max(0,((static_cast<int>(assets_.size())-visibleRows*columns+columns-1)/columns)*columns));
             InvalidateRect(window_, &mediaLibrary_, FALSE);
         }
         return 0;

@@ -47,7 +47,9 @@ public:
     std::filesystem::path AssetFolder() const;
     void OpenAssetFolder(const std::filesystem::path&);
     std::filesystem::path CreateAssetFolder(const std::wstring&);
-    static constexpr int NewFolderCommand=3400,UpFolderCommand=3401;
+    void MoveAsset(const std::filesystem::path& source,const std::filesystem::path& folder);
+    void RenameAsset(const std::filesystem::path& source,const std::wstring& name);
+    static constexpr int NewFolderCommand=3400,UpFolderCommand=3401,RenameAssetCommand=3402,RenameObjectCommand=3403;
     static constexpr int BuildProjectCommand=3500;
     bool BuildProject(const std::filesystem::path& outputParent);
     bool Building() const {return buildWork_.valid();}
@@ -120,6 +122,10 @@ private:
     void EndDrag();
     [[nodiscard]] DragTarget HitTestSplitter(POINT position) const;
     RECT AssetListRectangle() const;
+    int AssetColumns() const;
+    int AssetAt(POINT) const;
+    RECT AssetCellRectangle(int index) const;
+    std::wstring AssetDisplayName(const std::filesystem::path&) const;
     void RefreshAssets();
     void NewAssetFolderDialog();
     void ChooseBuildFolder();
@@ -133,6 +139,10 @@ private:
     void PollAssetWork();
     void BeginAssetDrag(POINT point);
     void FinishAssetDrag(POINT point);
+    void BeginAssetRename(const std::filesystem::path&);
+    void BeginObjectRename(zengine::GameObjectId);
+    void FinishRename(bool cancel);
+    static LRESULT CALLBACK RenameProcedure(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR);
     void SelectGameObject(zengine::GameObjectId id);
     void OnObjectChanged();
     RECT CreateObjectRectangle() const;
@@ -268,6 +278,13 @@ private:
     int draggedAsset_ = -1;
     POINT assetDragStart_{};
     bool assetDragMoved_ = false;
+    enum class RenameTarget { None,Asset,Object };
+    RenameTarget renameTarget_=RenameTarget::None;
+    std::filesystem::path renameAsset_;
+    zengine::GameObjectId renameObject_=0;
+    std::string renameObjectOriginal_;
+    HWND renameEdit_=nullptr;
+    bool finishingRename_=false;
     ULONGLONG lastBusyPaint_ = 0;
     bool showFps_=true;
     unsigned currentFps_=0,framesSinceFps_=0;

@@ -1,8 +1,9 @@
 /build/
+/builds/debug/
+/tests/debug/
 /.vs/
 /out/
 *.user
 *.suo
 *.VC.db
 *.VC.opendb
-

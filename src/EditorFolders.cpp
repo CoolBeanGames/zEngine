@@ -1,29 +1,19 @@
 #include "EditorShell.h"
 #include "AssetLibrary.h"
-#include "EditorStyle.h"
 #include "Project.h"
+#include "SceneAssets.h"
+#include "PrefabAssets.h"
+#include "ScriptAssets.h"
+#include "ScriptEditor.h"
+#include <fstream>
+#include <cwctype>
 
 namespace {
-struct FolderPrompt { std::wstring name=L"New Folder"; };
-INT_PTR CALLBACK Prompt(HWND window,UINT message,WPARAM w,LPARAM l) {
-    auto* state=reinterpret_cast<FolderPrompt*>(GetWindowLongPtrW(window,DWLP_USER));
-    if(message==WM_CTLCOLORDLG||message==WM_CTLCOLORSTATIC||message==WM_CTLCOLOREDIT||message==WM_CTLCOLORBTN)return editorStyle::ControlColor(message,w);
-    if(message==WM_INITDIALOG) {
-        state=reinterpret_cast<FolderPrompt*>(l);SetWindowLongPtrW(window,DWLP_USER,l);SetWindowTextW(window,L"New Asset Folder");
-        SetWindowPos(window,nullptr,0,0,390,165,SWP_NOMOVE|SWP_NOZORDER);
-        auto add=[&](const wchar_t* type,const wchar_t* text,int id,int x,int y,int width,int height,DWORD style){auto h=CreateWindowExW(0,type,text,WS_CHILD|WS_VISIBLE|style,x,y,width,height,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);return h;};
-        add(L"STATIC",L"Folder name",-1,12,8,350,20,0);
-        auto edit=add(L"EDIT",state->name.c_str(),100,12,30,350,24,WS_BORDER|WS_TABSTOP|ES_AUTOHSCROLL);SendMessageW(edit,EM_SETLIMITTEXT,80,0);
-        add(L"BUTTON",L"Create",IDOK,174,75,90,26,WS_TABSTOP|BS_DEFPUSHBUTTON);add(L"BUTTON",L"Cancel",IDCANCEL,272,75,90,26,WS_TABSTOP);
-        editorStyle::AttachChildren(window);SetFocus(edit);SendMessageW(edit,EM_SETSEL,0,-1);return FALSE;
-    }
-    if(message==WM_CLOSE || (message==WM_COMMAND&&LOWORD(w)==IDCANCEL)){EndDialog(window,IDCANCEL);return TRUE;}
-    if(message==WM_COMMAND&&LOWORD(w)==IDOK) {
-        wchar_t name[81]{};GetDlgItemTextW(window,100,name,81);
-        try{zengine::projects::ValidateName(name);state->name=name;EndDialog(window,IDOK);}catch(const std::exception&){MessageBoxW(window,L"Use a nonempty folder name without path separators or reserved filename characters.",L"Invalid folder name",MB_OK|MB_ICONWARNING);}return TRUE;
-    }
-    return FALSE;
-}
+std::string RelativeAsset(const std::filesystem::path& path,const std::filesystem::path& assets){const auto value=std::filesystem::relative(path,assets).generic_u8string();return {reinterpret_cast<const char*>(value.data()),value.size()};}
+bool Rewrite(std::string& value,const std::string& from,const std::string& to){if(value==from){value=to;return true;}if(value.starts_with(from+"/")){value=to+value.substr(from.size());return true;}return false;}
+bool Rewrite(zengine::scenes::Document& document,const std::string& from,const std::string& to){bool changed=false;for(auto& object:document.objects){changed|=Rewrite(object.prefab,from,to);for(auto& behavior:object.behaviors){changed|=Rewrite(behavior.asset,from,to);for(auto& [name,value]:behavior.variables)if(auto* prefab=std::get_if<zengine::script::PrefabRef>(&value))changed|=Rewrite(prefab->asset,from,to);}}return changed;}
+bool Within(const std::filesystem::path& child,const std::filesystem::path& parent){const auto c=std::filesystem::weakly_canonical(child),p=std::filesystem::weakly_canonical(parent);auto ci=c.begin();for(auto pi=p.begin();pi!=p.end();++pi,++ci)if(ci==c.end()||_wcsicmp(pi->c_str(),ci->c_str()))return false;return true;}
+void ReplaceFile(const std::filesystem::path& path,std::string_view text){auto temp=path;temp+=L".move-save";{std::ofstream out(temp,std::ios::binary|std::ios::trunc);out.write(text.data(),static_cast<std::streamsize>(text.size()));out.flush();if(!out)throw std::runtime_error("Cannot update moved asset references.");}if(!MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){DeleteFileW(temp.c_str());throw std::runtime_error("Cannot replace an updated asset file.");}}
 }
 std::filesystem::path EditorShell::AssetFolder() const {return assetFolder_.empty()?assetsDirectory_:assetLibrary::Resolve(assetsDirectory_,assetFolder_);}
 void EditorShell::OpenAssetFolder(const std::filesystem::path& path) {
@@ -38,8 +28,42 @@ std::filesystem::path EditorShell::CreateAssetFolder(const std::wstring& name) {
     RefreshAssets();InvalidateRect(window_,nullptr,FALSE);return folder;
 }
 void EditorShell::NewAssetFolderDialog() {
-    RequireProject();FolderPrompt context;
-    struct Template {DLGTEMPLATE dialog;WORD menu=0,windowClass=0,title=0;} layout{};
-    layout.dialog.style=WS_POPUP|WS_CAPTION|WS_SYSMENU|DS_MODALFRAME|DS_CENTER;layout.dialog.cx=220;layout.dialog.cy=100;
-    if(DialogBoxIndirectParamW(instance_,&layout.dialog,window_,Prompt,reinterpret_cast<LPARAM>(&context))==IDOK)CreateAssetFolder(context.name);
+    RequireProject();std::wstring name=L"New Folder";for(unsigned suffix=1;std::filesystem::exists(AssetFolder()/name);++suffix)name=L"New Folder "+std::to_wstring(suffix);
+    BeginAssetRename(CreateAssetFolder(name));
+}
+void EditorShell::MoveAsset(const std::filesystem::path& asset,const std::filesystem::path& folder)
+{
+    RequireProject();if(Playing())throw std::runtime_error("Stop Play before moving assets.");
+    if(assetLibrary::Type(asset)==assetLibrary::Kind::Input)throw std::runtime_error("The project Input Map stays in the Assets root.");const auto source=assetLibrary::Storage(asset),destinationFolder=assetLibrary::Resolve(assetsDirectory_,folder);if(!std::filesystem::is_directory(destinationFolder)||assetLibrary::Package(destinationFolder))throw std::runtime_error("Drop onto an asset folder.");
+    const auto destination=assetLibrary::Resolve(assetsDirectory_,destinationFolder/source.filename());if(source==destination)return;if(std::filesystem::exists(destination))throw std::runtime_error("That folder already contains an asset with this name.");
+    for(const auto& editor:scriptEditors_)if(Within(editor->Path(),source))throw std::runtime_error("Close this script editor before moving or renaming its asset.");
+    const auto from=RelativeAsset(source,assetsDirectory_),to=RelativeAsset(destination,assetsDirectory_);
+    std::filesystem::rename(source,destination);
+    for(const auto& entry:std::filesystem::recursive_directory_iterator(assetsDirectory_))if(entry.is_regular_file()){
+        if(zengine::scenes::IsScene(entry.path())){const auto original=zengine::scenes::Load(entry.path());auto document=zengine::scenes::Decode(original);if(Rewrite(document,from,to))ReplaceFile(entry.path(),zengine::scenes::Encode(document));}
+        else if(zengine::prefabs::IsPrefab(entry.path())){const auto original=zengine::scenes::Load(entry.path());auto document=zengine::prefabs::Decode(original);if(Rewrite(document,from,to))ReplaceFile(entry.path(),zengine::prefabs::Encode(document));}
+    }
+    if(project_){const auto projectFrom="Assets/"+from,projectTo="Assets/"+to;for(auto& scene:project_->config.scenes)Rewrite(scene,projectFrom,projectTo);Rewrite(project_->config.lastScene,projectFrom,projectTo);zengine::projects::Save(*project_);}
+    if(sceneOpen_){const auto storageScene=assetLibrary::Storage(scenePath_);if(storageScene==source || RelativeAsset(storageScene,assetsDirectory_).starts_with(from+"/"))scenePath_=destination/std::filesystem::relative(storageScene,source);const auto sourceText=zengine::scenes::Load(scenePath_);ApplyScene(scenePath_,sourceText,zengine::scenes::Decode(sourceText));}
+    if(AssetFolder()==source || RelativeAsset(AssetFolder(),assetsDirectory_).starts_with(from+"/"))assetFolder_=destination/std::filesystem::relative(AssetFolder(),source);
+    RefreshAssets();status_=L"Moved asset to "+destinationFolder.filename().wstring();InvalidateRect(window_,nullptr,FALSE);
+}
+void EditorShell::RenameAsset(const std::filesystem::path& asset,const std::wstring& requested)
+{
+    if(assetLibrary::Type(asset)==assetLibrary::Kind::Input)throw std::runtime_error("The project Input Map cannot be renamed.");
+    auto source=assetLibrary::Storage(asset);for(const auto& editor:scriptEditors_)if(Within(editor->Path(),source))throw std::runtime_error("Close this script editor before moving or renaming its asset.");std::wstring name=requested;while(!name.empty()&&std::iswspace(name.back()))name.pop_back();while(!name.empty()&&std::iswspace(name.front()))name.erase(name.begin());
+    if(name.empty())throw std::runtime_error("Asset name cannot be empty.");
+    if(source.has_extension() && std::filesystem::path(name).extension().empty())name+=source.extension().wstring();zengine::projects::ValidateName(name);
+    const auto destination=source.parent_path()/name;if(_wcsicmp(source.c_str(),destination.c_str())==0)return;MoveAsset(asset,source.parent_path()); // Validates state; same-folder is intentionally a no-op.
+    if(std::filesystem::exists(destination))throw std::runtime_error("An asset with that name already exists.");
+    const auto temporary=source.parent_path()/(source.filename().wstring()+L".rename-temp");if(_wcsicmp(source.filename().c_str(),destination.filename().c_str())==0){std::filesystem::rename(source,temporary);std::filesystem::rename(temporary,destination);}else std::filesystem::rename(source,destination);
+    const auto from=RelativeAsset(source,assetsDirectory_),to=RelativeAsset(destination,assetsDirectory_);
+    for(const auto& entry:std::filesystem::recursive_directory_iterator(assetsDirectory_))if(entry.is_regular_file()){
+        if(zengine::scenes::IsScene(entry.path())){const auto original=zengine::scenes::Load(entry.path());auto document=zengine::scenes::Decode(original);if(Rewrite(document,from,to))ReplaceFile(entry.path(),zengine::scenes::Encode(document));}
+        else if(zengine::prefabs::IsPrefab(entry.path())){const auto original=zengine::scenes::Load(entry.path());auto document=zengine::prefabs::Decode(original);if(Rewrite(document,from,to))ReplaceFile(entry.path(),zengine::prefabs::Encode(document));}
+    }
+    if(project_){const auto a="Assets/"+from,b="Assets/"+to;for(auto& scene:project_->config.scenes)Rewrite(scene,a,b);Rewrite(project_->config.lastScene,a,b);zengine::projects::Save(*project_);}
+    if(sceneOpen_){if(Within(scenePath_,source))scenePath_=destination/std::filesystem::relative(scenePath_,source);const auto sourceText=zengine::scenes::Load(scenePath_);ApplyScene(scenePath_,sourceText,zengine::scenes::Decode(sourceText));}
+    if(Within(AssetFolder(),source))assetFolder_=destination/std::filesystem::relative(AssetFolder(),source);
+    RefreshAssets();status_=L"Renamed asset to "+destination.filename().wstring();InvalidateRect(window_,nullptr,FALSE);
 }

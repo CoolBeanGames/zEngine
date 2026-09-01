@@ -220,7 +220,7 @@ namespace
             pumpUntil([&]() { return std::filesystem::exists(package); });
             // The marker is written on the worker; let the UI consume the completed result.
             for (int frame = 0; frame < 20; ++frame) { editor.Render(); Sleep(5); }
-            const auto rowPoint = MAKELPARAM(350, client.bottom - 220);
+            const auto rowPoint = MAKELPARAM(50, client.bottom - 220);
             SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, rowPoint);
             SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(600, 200));
             SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(600, 200));
@@ -274,24 +274,26 @@ namespace
                 frame.meshes[1].transform.Rotation().y==35 && frame.meshes[1].transform.Scale().x==0.5f,"Object-local TRS submission failed");
             editor.Render();
             if (capture) CaptureWindow(window,"mesh-renderer-qa.bmp");
+            Require(editor.SelectedGameObject()->Id()==second.Id(),"Creating a mesh object did not keep it selected");
             SendMessageW(GetDlgItem(inspector,InspectorPanel::MeshEnabled),BM_CLICK,0,0);
-            Require(!second.GetBehavior<zengine::MeshRenderer>()->Enabled() && editor.BuildSceneFrame().meshes.size()==2,"Disabling mesh must hide only its owner");
+            Require(!second.GetBehavior<zengine::MeshRenderer>()->Enabled(),"Mesh enabled checkbox did not update its selected owner");
+            Require(editor.BuildSceneFrame().meshes.size()==2,"Disabling mesh did not hide exactly one owner");
             SendMessageW(GetDlgItem(inspector,InspectorPanel::MeshEnabled),BM_CLICK,0,0);
             SendMessageW(inspector,WM_COMMAND,InspectorPanel::ClearMeshButton,0);
             Require(second.BehaviorCount()==1 && second.GetBehavior<zengine::MeshRenderer>()->Asset().empty() && editor.BuildSceneFrame().meshes.size()==2,"Clear must remove model without removing component");
-            const auto pump = [&](const std::function<bool()>& predicate) {
+            const auto pump = [&](const std::function<bool()>& predicate,const char* failure) {
                 const auto deadline = GetTickCount64()+10000;
                 while (!predicate() && GetTickCount64()<deadline) { editor.Render(); Sleep(5); }
-                Require(predicate(),"Mesh assignment timed out");
+                Require(predicate(),failure);
             };
             // Capture target ID, then change selection before loading completes.
             editor.QueueModel(imported,first.Id());
             auto& empty = editor.CreateEmptyGameObject();
-            pump([&]() { return first.GetBehavior<zengine::MeshRenderer>()->Asset()!=zengine::MeshRenderer::CubeAsset; });
+            pump([&]() { return first.GetBehavior<zengine::MeshRenderer>()->Asset()!=zengine::MeshRenderer::CubeAsset; },"First asynchronous mesh assignment timed out");
             Require(editor.SelectedGameObject()->Id()==empty.Id() && empty.BehaviorCount()==0,"Async load followed selection instead of target");
             Require(first.Name()=="GameObject" && first.GetTransform().Position().x==-2,"Model assignment changed name/transform");
             editor.QueueModel(imported,second.Id());
-            pump([&]() { return !second.GetBehavior<zengine::MeshRenderer>()->Asset().empty(); });
+            pump([&]() { return !second.GetBehavior<zengine::MeshRenderer>()->Asset().empty(); },"Second asynchronous mesh assignment timed out");
             frame=editor.BuildSceneFrame();
             Require(frame.meshes.size()==3 && frame.meshes[1].mesh==frame.meshes[2].mesh,"Imported model resources were not shared");
             // Assigning cube after a queued request invalidates that request.
@@ -305,11 +307,11 @@ namespace
             Require(rejected,"Unimported external models must not be assigned");
             // Dropping on the viewport instantiates an additional object rather than replacing cube.
             RECT client{}; GetClientRect(window,&client);
-            const auto row=MAKELPARAM(350,client.bottom-220);
+            const auto row=MAKELPARAM(50,client.bottom-220);
             SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,row);
             SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(600,200));
             SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(600,200));
-            pump([&]() { return editor.GameObjects().Size()==5; });
+            pump([&]() { return editor.GameObjects().Size()==5; },"Viewport model instantiation timed out");
             Require(editor.GameObjects().Find(cubeId)->GetBehavior<zengine::MeshRenderer>()->Asset()==zengine::MeshRenderer::CubeAsset,"FBX scene placement replaced default cube");
             Require(editor.BuildSceneFrame().meshes.size()==4,"Multiple instantiated models missing from scene");
         }
@@ -387,7 +389,7 @@ namespace
             Require(std::filesystem::is_regular_file(script) && script.extension() == ".zsh", "Script asset was not saved");
             Require(GetDlgItem(inspector, InspectorPanel::AddScriptButton) != nullptr, "Add Script button missing");
             RECT client{}; GetClientRect(window, &client);
-            const auto rowPoint = MAKELPARAM(350, client.bottom - 220);
+            const auto rowPoint = MAKELPARAM(50, client.bottom - 220);
             SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, rowPoint);
             SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(50, 166));
             SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 166));
@@ -535,10 +537,14 @@ void SceneEditorTests(bool capture)
         Require(editor.SaveScene(),"Save active new scene failed");
         RECT client{}; GetClientRect(window,&client);
         // A.zscene sorts first. Opening it uses the same native double-click path as the library.
-        SendMessageW(window,WM_LBUTTONDBLCLK,MK_LBUTTON,MAKELPARAM(350,client.bottom-220));
+        SendMessageW(window,WM_LBUTTONDBLCLK,MK_LBUTTON,MAKELPARAM(50,client.bottom-220));
         Require(editor.ScenePath()==sceneA && editor.GameObjects().Size()==2,"Library double-click did not open scene");
         auto* cube=editor.GameObjects().Find(1);
-        Require(cube && cube->Name()=="Scene A Cube" && cube->HasTag("player") && editor.GameObjects().Find(emptyId)->Name()=="Scene A Empty","Scene identity/tree data lost");
+        Require(cube!=nullptr,"Scene cube identity lost");
+        Require(cube->Name()=="Scene A Cube",("Scene cube name changed to: "+cube->Name()).c_str());
+        Require(cube->HasTag("player"),"Scene cube tags were lost");
+        Require(editor.GameObjects().Find(emptyId)!=nullptr,"Scene empty object identity lost");
+        Require(editor.GameObjects().Find(emptyId)->Name()=="Scene A Empty",("Scene empty name changed to: "+editor.GameObjects().Find(emptyId)->Name()).c_str());
         Require(cube->GetTransform().Position().x==1.25f && cube->BehaviorAt(1).Priority()==1.5f,"Transform or behavior priority lost");
         wchar_t value[64]{}; GetWindowTextW(field(InspectorPanel::FirstBehaviorField+5),value,64);
         Require(std::wstring(value)==L"6" && editor.BuildSceneFrame().meshes.size()==1,"Script variable or mesh binding lost");
@@ -665,11 +671,14 @@ void FolderTests(bool capture) {
         const auto root=editor.AssetsDirectory(),actors=editor.CreateAssetFolder(L"Actors");
         editor.OpenAssetFolder(actors);const auto scripts=editor.CreateAssetFolder(L"Scripts");editor.OpenAssetFolder(scripts);
         const auto script=editor.CreateScriptAsset();Require(script.parent_path()==scripts,"Script ignored current folder");
+        Require(GetDlgItem(window,3900)!=nullptr,"New script did not enter rename mode");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);
         Require(editor.NewScene() && editor.ScenePath().parent_path()==scripts,"Scene ignored current folder");
-        auto& object=editor.CreateEmptyGameObject();editor.AssignCube(object.Id());
-        const auto prefab=editor.CreatePrefab(object.Id());Require(prefab.parent_path()==scripts,"Prefab ignored current folder");Require(editor.SaveScene(),"Save nested scene failed");
+        Require(GetDlgItem(window,3900)!=nullptr,"New scene did not enter rename mode");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);
+        auto& object=editor.CreateEmptyGameObject();Require(GetDlgItem(window,3900)!=nullptr,"New GameObject did not enter rename mode");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);editor.AssignCube(object.Id());
+        const auto prefab=editor.CreatePrefab(object.Id());Require(prefab.parent_path()==scripts,"Prefab ignored current folder");
+        Require(GetDlgItem(window,3900)!=nullptr,"New prefab did not enter rename mode");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);Require(editor.SaveScene(),"Save nested scene failed");
         std::vector<std::string> warnings;const auto model=FbxImporter::Import(CreateSource(test.path/L"source"),actors,warnings);
-        const auto id=editor.CreateEmptyGameObject().Id();editor.QueueModel(model,id);
+        const auto id=editor.CreateEmptyGameObject().Id();Require(GetDlgItem(window,3900)!=nullptr,"Created model GameObject did not enter rename mode");SetWindowTextW(GetDlgItem(window,3900),L"Grid Actor");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);Require(editor.GameObjects().Find(id)->Name()=="Grid Actor","Inline GameObject rename failed");editor.QueueModel(model,id);
         const auto deadline=GetTickCount64()+10000;while(editor.BuildSceneFrame().meshes.size()<2 && GetTickCount64()<deadline){editor.Render();Sleep(2);}
         Require(editor.BuildSceneFrame().meshes.size()==2,"Model in nested asset folder could not render");Require(editor.SaveScene(),"Save folder model failed");
         editor.OpenAssetFolder(root);const auto entries=assetLibrary::List(root,root);
@@ -678,14 +687,18 @@ void FolderTests(bool capture) {
         rejected=false;try{editor.CreateAssetFolder(L"../bad");}catch(...){rejected=true;}Require(rejected,"Folder name allowed traversal");
         rejected=false;try{editor.CreateAssetFolder(L"Actors");}catch(...){rejected=true;}Require(rejected,"Existing folder overwritten");
         RECT area{};GetClientRect(window,&area);
-        SendMessageW(window,WM_LBUTTONDBLCLK,MK_LBUTTON,MAKELPARAM(350,area.bottom-220));
+        SendMessageW(window,WM_LBUTTONDBLCLK,MK_LBUTTON,MAKELPARAM(50,area.bottom-220));
         Require(editor.AssetFolder()==actors,"Double-click did not open folder");
         SendMessageW(window,WM_COMMAND,EditorShell::UpFolderCommand,0);Require(editor.AssetFolder()==root,"Up navigation failed");
         editor.OpenAssetFolder(scripts);
         Require(assetLibrary::Type(script)==assetLibrary::Kind::Script && assetLibrary::Type(prefab)==assetLibrary::Kind::Prefab && assetLibrary::Type(editor.ScenePath())==assetLibrary::Kind::Scene && assetLibrary::Type(model)==assetLibrary::Kind::Model,"Asset icon classification failed");
+        const auto archive=editor.CreateAssetFolder(L"Archive");editor.MoveAsset(script,archive);const auto moved=archive/script.filename();
+        Require(!std::filesystem::exists(script)&&std::filesystem::exists(moved),"Moving an asset into a folder failed");
+        editor.RenameAsset(moved,L"Moved Script");const auto renamed=archive/L"Moved Script.zsh";
+        Require(!std::filesystem::exists(moved)&&std::filesystem::exists(renamed)&&assetLibrary::Type(renamed)==assetLibrary::Kind::Script,"Asset rename failed or lost its type");
         if(capture){editor.Render();CaptureWindow(window,L"asset-folders-qa.bmp");}
     }
-    CoUninitialize();std::cout<<"PASS: folder creation, scoped listing, navigation, nested script/scene/prefab/model assets, protected Input Map, path containment\n";
+    CoUninitialize();std::cout<<"PASS: asset grid navigation, automatic inline rename, moving and renaming assets, nested assets, protected Input Map, path containment\n";
 }
 void TextInspectorTests(bool capture) {
     TestDirectory test;Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");

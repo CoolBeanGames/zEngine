@@ -41,6 +41,7 @@ zengine::GameObject& EditorShell::CreateGameObject(ObjectPreset preset,zengine::
     else if(preset==ObjectPreset::Camera)rename("Camera");
     else if(preset!=ObjectPreset::Empty){rename(preset==ObjectPreset::RigidBody?"RigidBody":preset==ObjectPreset::KinematicBody?"KinematicBody":preset==ObjectPreset::StaticBody?"StaticBody":"Area");object.AddBehavior<zengine::physics::Collider>();if(preset==ObjectPreset::RigidBody)object.AddBehavior<zengine::physics::RigidBody>();else if(preset==ObjectPreset::KinematicBody)object.AddBehavior<zengine::physics::KinematicBody>();else if(preset==ObjectPreset::StaticBody)object.AddBehavior<zengine::physics::StaticBody>();else object.AddBehavior<zengine::physics::Area>();inspectorPanel_->RefreshBehaviors();OnObjectChanged();}
     status_=preset==ObjectPreset::Camera?L"Created Camera GameObject (camera rendering behavior will be added with the camera system)":L"Created GameObject";
+    BeginObjectRename(object.Id());
     return object;
 }
 void EditorShell::CopyGameObject(zengine::GameObjectId id) {

@@ -22,6 +22,7 @@ inline Kind Type(const std::filesystem::path& p) {
     if(ext==L".png"||ext==L".jpg"||ext==L".jpeg"||ext==L".bmp"||ext==L".tga"||ext==L".gif"||ext==L".dds"||ext==L".tif")return Kind::Image;
     return Kind::File;
 }
+inline std::filesystem::path Storage(const std::filesystem::path& asset){return Type(asset)==Kind::Model&&Package(asset.parent_path())?asset.parent_path():asset;}
 inline std::vector<std::filesystem::path> List(const std::filesystem::path& root,const std::filesystem::path& folder) {
     const auto directory=Resolve(root,folder);if(!std::filesystem::is_directory(directory)||Package(directory))throw std::runtime_error("Choose an asset folder, not a model package.");
     std::vector<std::filesystem::path> result;

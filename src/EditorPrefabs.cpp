@@ -103,7 +103,7 @@ std::filesystem::path EditorShell::CreatePrefab(zengine::GameObjectId id)
     reference.prefab=AssetReference(file,assetsDirectory_);
     std::set<zengine::GameObjectId> children; for (const auto& object:prefab.objects) if (object.id!=id) children.insert(object.id);
     *root=reference; std::erase_if(document.objects,[&](const auto& o) { return children.contains(o.id); });
-    RebuildDocument(document,id); MarkSceneDirty(); RefreshAssets();
+    RebuildDocument(document,id); MarkSceneDirty(); RefreshAssets();BeginAssetRename(file);
     status_=L"Created prefab and linked the scene object: "+file.filename().wstring(); InvalidateRect(window_,nullptr,FALSE);
     return file;
 }
