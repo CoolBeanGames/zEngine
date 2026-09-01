@@ -18,9 +18,12 @@ public:
     const std::string& Scene() const {return reference_;}
 private:
     void CheckErrors() const;
+    GameObjectId SpawnPrefab(std::string_view asset);
+    void PrepareObject(GameObject& object);
     scenes::Instance scene_;
     input::System input_;
     std::map<GameObjectId,std::filesystem::path> models_;
+    std::filesystem::path assets_;
     std::string reference_;
     std::unique_ptr<physics::World> physics_;
 };

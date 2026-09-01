@@ -38,7 +38,11 @@ struct ArrayRef {
     std::size_t id = 0;
     bool operator==(const ArrayRef&) const = default;
 };
-using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef, ArrayRef, char32_t>;
+struct PrefabRef {
+    std::string asset;
+    bool operator==(const PrefabRef&) const = default;
+};
+using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef, ArrayRef, char32_t, PrefabRef>;
 struct Diagnostic {
     std::string source;
     std::size_t line = 1;
@@ -115,6 +119,8 @@ public:
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
     ObjectRef Create(std::string_view className);
+    ObjectRef CreatePrefab(std::string asset);
+    std::string PrefabAsset(ObjectRef) const;
     Value Call(ObjectRef object, std::string_view method, const std::vector<Value>& arguments = {});
     Value Get(ObjectRef object, std::string_view field) const;
     void Set(ObjectRef object, std::string_view field, Value value, bool notify = true);
@@ -126,8 +132,10 @@ public:
     void SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup);
     using PhysicsBodyCall = std::function<Value(ObjectRef, std::string_view, const std::vector<Value>&)>;
     using PhysicsCastCall = std::function<std::vector<ObjectRef>(Vector3, Vector3, std::uint32_t)>;
+    using PrefabSpawnCall = std::function<ObjectRef(std::string_view)>;
     // Host-owned physics bridge. Scripts never see the backend physics API.
     void SetPhysicsCallbacks(PhysicsBodyCall bodyCall, PhysicsCastCall castCall);
+    void SetPrefabSpawnCallback(PrefabSpawnCall);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);

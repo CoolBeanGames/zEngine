@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 #include <map>
+#include <set>
 
 namespace zengine
 {
@@ -141,6 +142,8 @@ namespace zengine
         std::vector<GameObjectId> HierarchyOrder() const;
         GameObject& Create(std::string name = "GameObject");
         GameObject& Restore(GameObjectId id, std::string name);
+        // Atomically removes a known group; surviving children may not reference removed parents.
+        void Remove(const std::set<GameObjectId>& ids);
         GameObject* Find(GameObjectId id) noexcept;
         const GameObject* Find(GameObjectId id) const noexcept;
         std::size_t Size() const noexcept { return objects_.size(); }

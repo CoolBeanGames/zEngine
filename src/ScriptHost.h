@@ -19,7 +19,10 @@ namespace zengine
         std::string Error(const ScriptBehavior&) const;
         std::map<std::string,script::Value> AuthoredValues(const ScriptBehavior&) const;
         void RestoreValues(ScriptBehavior&, std::map<std::string,script::Value> values);
+        void Forget(ScriptBehavior& behavior) { if(playing_)throw std::logic_error("Stop before forgetting a script.");records_.erase(&behavior); }
         bool Play(ObjectStore&, physics::World* physicsWorld=nullptr);
+        using PrefabSpawner=std::function<GameObjectId(std::string_view)>;
+        void SetPrefabSpawner(PrefabSpawner spawner) { if(playing_)throw std::logic_error("Stop before changing the prefab spawner.");prefabSpawner_=std::move(spawner); }
         void DispatchPhysicsEvents(const std::vector<physics::ContactEvent>&);
         void Stop(ObjectStore&);
         void Tick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.Tick(objects, delta); }
@@ -42,5 +45,8 @@ namespace zengine
         BehaviorLifecycle lifecycle_;
         bool playing_ = false;
         script::InputFrame input_;
+        PrefabSpawner prefabSpawner_;
+        ObjectStore* playingObjects_=nullptr;
+        physics::World* playingPhysics_=nullptr;
     };
 }

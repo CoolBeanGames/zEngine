@@ -122,6 +122,12 @@ zengine::GameObject& zengine::ObjectStore::Restore(GameObjectId id, std::string 
     nextId_=std::max(nextId_,id+1);
     return result;
 }
+void zengine::ObjectStore::Remove(const std::set<GameObjectId>& ids)
+{
+    for(const auto id:ids)if(!Find(id))throw std::invalid_argument("Cannot remove a missing GameObject.");
+    for(const auto& object:objects_)if(object->Parent() && ids.contains(object->Parent()) && !ids.contains(object->Id()))throw std::invalid_argument("Cannot remove a parent without its children.");
+    std::erase_if(objects_,[&](const auto& object){return ids.contains(object->Id());});
+}
 zengine::GameObject* zengine::ObjectStore::Find(GameObjectId id) noexcept
 {
     for (const auto& object : objects_) if (object->Id() == id) return object.get();

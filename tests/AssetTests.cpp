@@ -9,6 +9,7 @@
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
 #include "SceneAssets.h"
+#include "PrefabAssets.h"
 #include "AssetLibrary.h"
 #include "runtime/GamePackage.h"
 #include "runtime/GameSession.h"
@@ -614,17 +615,19 @@ void BuildTests() {
     const auto inputSource=zengine::input::Load(assets);zengine::input::Save(assets,map,&inputSource);
     std::filesystem::create_directory(assets/L"Scripts");
     const auto script=zengine::scripts::Create(assets/L"Scripts","Spinner");const auto original=zengine::scripts::Load(script);
-    zengine::scripts::Save(assets,script,"class Spinner : gameObject { export float speed=60; export char suffix='?'; multiline export string note=\"a\\nb\"; func start(){parent=find(\"Root\");string word=\"ab\" & suffix;if(word[2]=='!' && note.truncate(1)==\"a\"){transform.position.x+=2;}Vector3 global=transform.global_position;if(global.x!=3){transform.position.x=999;}} func update(float dt){transform.rotation.y+=speed*dt; if(Input.is_action_just_pressed(\"move\")){transform.position.y+=3;}} }",&original);
+    zengine::scripts::Save(assets,script,"class Spinner : gameObject { export float speed=60; export char suffix='?'; multiline export string note=\"a\\nb\"; export prefab template; func start(){parent=find(\"Root\");gameObject made=template.spawn();made.transform.position.x=9;string word=\"ab\" & suffix;if(word[2]=='!' && note.truncate(1)==\"a\"){transform.position.x+=2;}Vector3 global=transform.global_position;if(global.x!=3){transform.position.x=999;}} func update(float dt){transform.rotation.y+=speed*dt; if(Input.is_action_just_pressed(\"move\")){transform.position.y+=3;}} }",&original);
+    zengine::scenes::Document prefabDocument;zengine::scenes::ObjectData prefabRoot;prefabRoot.id=1;prefabRoot.name="Spawned Cube";zengine::scenes::BehaviorData prefabMesh;prefabMesh.asset=zengine::MeshRenderer::CubeAsset;prefabRoot.behaviors.push_back(prefabMesh);prefabDocument.objects.push_back(prefabRoot);
+    const auto prefab=zengine::prefabs::Create(assets,prefabDocument);const auto prefabPath=std::filesystem::relative(prefab,assets).generic_u8string();const std::string prefabRef(reinterpret_cast<const char*>(prefabPath.data()),prefabPath.size());
     std::vector<std::string> warnings;const auto model=FbxImporter::Import(CreateSource(test.path/L"source"),assets/L"Models",warnings);
     zengine::scenes::Document scene;zengine::scenes::ObjectData object;object.id=1;object.name="Exported Actor";
     zengine::scenes::BehaviorData mesh;const auto modelRef=std::filesystem::relative(model,assets).generic_u8string();mesh.asset.assign(modelRef.begin(),modelRef.end());object.behaviors.push_back(mesh);
-    zengine::scenes::BehaviorData behavior;behavior.kind=zengine::scenes::BehaviorData::Kind::Script;behavior.asset="Scripts/Spinner.zsh";behavior.variables["speed"]=120.0;behavior.variables["suffix"]=U'!';object.behaviors.push_back(behavior);scene.objects.push_back(object);
+    zengine::scenes::BehaviorData behavior;behavior.kind=zengine::scenes::BehaviorData::Kind::Script;behavior.asset="Scripts/Spinner.zsh";behavior.variables["speed"]=120.0;behavior.variables["suffix"]=U'!';behavior.variables["template"]=zengine::script::PrefabRef{prefabRef};object.behaviors.push_back(behavior);scene.objects.push_back(object);
     zengine::scenes::ObjectData parent;parent.id=2;parent.name="Root";parent.transform.SetPosition({1,0,0});scene.objects.push_back(parent);
     const auto first=assets/L"First.zscene";zengine::scenes::Save(assets,first,zengine::scenes::Encode(scene));zengine::projects::TrackScene(project,first);
     scene.objects[0].name="Second Actor";scene.objects[0].behaviors[1].variables["speed"]=30.0;
     const auto second=assets/L"Second.zscene";zengine::scenes::Save(assets,second,zengine::scenes::Encode(scene));zengine::projects::TrackScene(project,second);zengine::projects::Save(project);
     {zengine::game::Session session(project,"Assets/First.zscene");session.Start();zengine::input::Hardware hardware;hardware.keys[VK_SPACE]=true;session.Tick(1.0f/60,hardware);session.Tick(1.0f/60,hardware);
-        Require(session.Objects().At(0).GetTransform().Position().y==3 && session.Objects().At(0).Parent()==2,"Standalone runtime input edge or parenting failed");}
+        Require(session.Objects().At(0).GetTransform().Position().y==3 && session.Objects().At(0).Parent()==2 && session.Objects().Size()==3 && session.Objects().At(2).GetTransform().Position().x==9,"Standalone runtime input, parenting, or prefab spawning failed");}
     unsigned progress=0;const auto executable=zengine::game::Export(project,first,{},output,zengine::game::ExecutableDirectory(),[&](unsigned value,const std::string&){Require(value>=progress,"Build progress regressed");progress=value;});
     Require(progress==100 && std::filesystem::exists(executable) && !std::filesystem::exists(executable.parent_path()/L"zEngine.exe"),"Export did not produce an editor-independent executable");
     Require(std::filesystem::exists(executable.parent_path()/L"Data"/L"Assets"/std::filesystem::relative(model,assets)),"Packaged model missing");
@@ -647,7 +650,7 @@ void BuildTests() {
     std::filesystem::rename(test.path/L"source",test.path/L"Original import moved");
     const auto report=test.path/L"player-report.txt";run(L"--report \""+report.wstring()+L"\"",0);
     std::ifstream in(report);std::string text{std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>()};
-    Require(text.find("meshes 1")!=text.npos && text.find("position 2 0 0 rotation 0 6 0")!=text.npos,"Packaged game did not render model and execute exported script values");
+    Require(text.find("meshes 2")!=text.npos && text.find("position 2 0 0 rotation 0 6 0")!=text.npos && text.find("Spawned Cube")!=text.npos && text.find("position 9 0 0")!=text.npos,"Packaged game did not render/spawn prefab and execute exported script values");
     Require(text.find("parent 2")!=text.npos,"Standalone executable did not apply scripted parenting");
     run(L"--scene Assets/Second.zscene --report \""+report.wstring()+L"\"",0);std::ifstream secondReport(report);text.assign(std::istreambuf_iterator<char>(secondReport),{});
     Require(text.find("Second Actor")!=text.npos && text.find("rotation 0 1.5 0")!=text.npos,"Packaged scenes lost independent variables");

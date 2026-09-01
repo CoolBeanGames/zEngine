@@ -31,7 +31,7 @@ std::vector<ClassRange> Classes(const std::vector<Token>& t) {
 }
 Index::Index() {
     auto add=[&](const wchar_t* type,const wchar_t* name,const wchar_t* result,bool function=false){types_[type].members[name]={name,result,function};};
-    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"gameObject",L"GameObject",L"Transform",L"PhysicsBody"})types_[type];
+    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"prefab",L"gameObject",L"GameObject",L"Transform",L"PhysicsBody"})types_[type];
     types_[L"GameObject"].base=L"gameObject";
     add(L"gameObject",L"transform",L"Transform");
     add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);
@@ -43,6 +43,7 @@ Index::Index() {
     for(const auto name:{L"was_moved",L"was_rotated",L"was_scaled"})add(L"Transform",name,L"signal");
     for(const auto name:{L"x",L"y",L"z"})add(L"Vector3",name,L"float");
     add(L"array",L"append",L"void",true);add(L"array",L"erase",L"void",true);add(L"array",L"size",L"int",true);
+    add(L"prefab",L"spawn",L"gameObject",true);
     for(const auto name:{L"connect",L"disconnect",L"emit"})add(L"signal",name,L"void",true);
     add(L"signal",L"is_connected",L"bool",true);
     for(const auto name:{L"is_action_pressed",L"is_action_just_pressed",L"is_action_just_released"})add(L"Input",name,L"bool",true);

@@ -18,7 +18,7 @@ namespace
         if (!valid(v.x) || !valid(v.y) || !valid(v.z)) throw std::runtime_error("Script transform exceeds native float range.");
         return {static_cast<float>(v.x),static_cast<float>(v.y),static_cast<float>(v.z)};
     }
-    bool Editable(const std::string& type) { return type=="char" || type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3"; }
+    bool Editable(const std::string& type) { return type=="char" || type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3" || type=="prefab"; }
     std::string Format(const Value& value)
     {
         std::ostringstream text; text.imbue(std::locale::classic()); text<<std::setprecision(17);
@@ -29,6 +29,7 @@ namespace
         else if(const auto* v=std::get_if<char32_t>(&value))return *v?script::text::Encode(*v):"\\0";
         else if (const auto* v=std::get_if<Vector3>(&value)) text<<v->x<<", "<<v->y<<", "<<v->z;
         else if (std::holds_alternative<ArrayRef>(value)) return "(array - read only)";
+        else if(const auto* v=std::get_if<PrefabRef>(&value))return v->asset;
         else return "(object reference - read only)";
         return text.str();
     }
@@ -36,6 +37,7 @@ namespace
     {
         if (type=="string") return text;
         if(type=="char")return text=="\\0"?char32_t{}:script::text::Character(text);
+        if(type=="prefab")return PrefabRef{text};
         if (type=="bool") { if (text=="true") return true; if (text=="false") return false; throw std::invalid_argument("Use true or false."); }
         std::istringstream stream(text); stream.imbue(std::locale::classic());
         Value value;
@@ -56,11 +58,11 @@ namespace
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
               draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),scene(objects)
         {
-            runtime.SetInput(input,false);for(const auto& [field,value]:overrides)runtime.Set(object,field,value);
+            runtime.SetInput(input,false);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
             proxies.emplace(owner,object);
             runtime.SetObjectLookup([this](std::string_view name){
                 GameObjectId id=0;for(std::size_t i=0;i<scene.Size();++i)if(scene.At(i).Name()==name){if(id)throw std::runtime_error("Ambiguous object name; give scene objects unique names for find().");id=scene.At(i).Id();}
@@ -74,6 +76,7 @@ namespace
                     if(method=="add_force")physicsWorld->AddForce(id,value);else if(method=="add_impulse")physicsWorld->AddImpulse(id,value);else if(method=="add_torque")physicsWorld->AddTorque(id,value);else if(method=="add_angular_impulse")physicsWorld->AddAngularImpulse(id,value);else if(method=="set_velocity")physicsWorld->SetVelocity(id,value);else if(method=="set_angular_velocity")physicsWorld->SetAngularVelocity(id,value);else throw std::runtime_error("Unknown physics body command.");return {};
                 },
                 [this,physicsWorld](Vector3 from,Vector3 to,std::uint32_t mask){std::vector<ObjectRef> result;for(const auto& hit:physicsWorld->Cast(ToNative(from),ToNative(to),mask))result.push_back(Proxy(hit.object));return result;});
+            if(prefabSpawner)runtime.SetPrefabSpawnCallback([this,prefabSpawner](std::string_view asset){return Proxy(prefabSpawner(asset));});
         }
         bool HasStart() const noexcept override { return true; }
         // Synchronize native transform signals even for a listener with no update body.
@@ -142,7 +145,7 @@ namespace
 }
 bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::string className)
 {
-    if (playing_) throw std::logic_error("Stop before rebuilding scripts.");
+    if (playing_ && behavior.HasInstance()) throw std::logic_error("A running script is already prepared.");
     auto& record=records_[&behavior];
     if (record.program && record.source==source && record.className==className) return record.error.empty();
     auto previousValues=AuthoredValues(behavior);
@@ -161,11 +164,12 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
             if (entry.kind==script::InspectorEntry::Kind::Field && Editable(entry.type))
                 if (auto it=record.overrides.find(entry.name); it!=record.overrides.end())
                 {
-                    try { preview->Set(ref,entry.name,it->second); kept.emplace(entry.name,preview->Get(ref,entry.name)); }
+                    try { const auto value=std::holds_alternative<script::PrefabRef>(it->second)?script::Value{preview->CreatePrefab(std::get<script::PrefabRef>(it->second).asset)}:it->second;preview->Set(ref,entry.name,value);kept.emplace(entry.name,entry.type=="prefab"?script::Value{script::PrefabRef{preview->PrefabAsset(std::get<script::ObjectRef>(preview->Get(ref,entry.name)))}}:preview->Get(ref,entry.name)); }
                     catch (const script::ScriptError&) {} // Changed field type: use its new default.
                 }
         record.overrides=std::move(kept); record.object=ref;
         record.preview=std::move(preview); record.program=compiled.program;
+        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,input_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_));}
         return true;
     }
     catch (const std::exception& e) { record.overrides=std::move(previousValues); record.error=e.what(); return false; }
@@ -180,7 +184,7 @@ std::vector<ScriptHost::Field> ScriptHost::Fields(ScriptBehavior& behavior)
     for (const auto& entry:r.program->InspectorLayout(r.className))
     {
         if (entry.kind==script::InspectorEntry::Kind::Label) result.push_back({{},{},entry.text,{},false});
-        else result.push_back({entry.name,entry.type,{},Format(live ? live->runtime.Get(live->object,entry.name) : r.preview->Get(r.object,entry.name)),Editable(entry.type),entry.multiline});
+        else {auto& runtime=live?live->runtime:*r.preview;const auto object=live?live->object:r.object;auto value=runtime.Get(object,entry.name);if(entry.type=="prefab")value=script::PrefabRef{runtime.PrefabAsset(std::get<script::ObjectRef>(value))};result.push_back({entry.name,entry.type,{},Format(value),Editable(entry.type),entry.multiline});}
     }
     return result;
 }
@@ -190,8 +194,8 @@ void ScriptHost::SetField(ScriptBehavior& behavior, const std::string& name, con
     for (const auto& field:Fields(behavior)) if (field.name==name && field.editable)
     {
         const auto value=Parse(field.type,text);
-        if (auto* live=dynamic_cast<BoundScript*>(behavior.Instance())) live->runtime.Set(live->object,name,value);
-        else { r.preview->Set(r.object,name,value); r.overrides[name]=value; }
+        if (auto* live=dynamic_cast<BoundScript*>(behavior.Instance())) live->runtime.Set(live->object,name,std::holds_alternative<script::PrefabRef>(value)?script::Value{live->runtime.CreatePrefab(std::get<script::PrefabRef>(value).asset)}:value);
+        else { r.preview->Set(r.object,name,std::holds_alternative<script::PrefabRef>(value)?script::Value{r.preview->CreatePrefab(std::get<script::PrefabRef>(value).asset)}:value); r.overrides[name]=value; }
         return;
     }
     throw std::invalid_argument("Field is not exported/editable.");
@@ -211,7 +215,7 @@ std::map<std::string,script::Value> ScriptHost::AuthoredValues(const ScriptBehav
     std::map<std::string,script::Value> values;
     for (const auto& entry:r.program->InspectorLayout(r.className))
         if (entry.kind==script::InspectorEntry::Kind::Field && Editable(entry.type))
-            values.emplace(entry.name,r.preview->Get(r.object,entry.name));
+            if(entry.type=="prefab")values.emplace(entry.name,script::PrefabRef{r.preview->PrefabAsset(std::get<script::ObjectRef>(r.preview->Get(r.object,entry.name)))});else values.emplace(entry.name,r.preview->Get(r.object,entry.name));
     return values;
 }
 void ScriptHost::RestoreValues(ScriptBehavior& behavior, std::map<std::string,script::Value> values)
@@ -230,14 +234,14 @@ bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,input_,objects,script->Owner().Id(),physicsWorld)); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,input_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_)); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();
     parents_.clear();
     for (std::size_t i=0;i<objects.Size();++i) transforms_.emplace(objects.At(i).Id(),objects.At(i).GetTransform());
     for (std::size_t i=0;i<objects.Size();++i) parents_.emplace(objects.At(i).Id(),objects.At(i).Parent());
-    playing_=true;
+    playing_=true;playingObjects_=&objects;playingPhysics_=physicsWorld;
     for (auto& [behavior,instance]:ready) behavior->BindInstance(std::move(instance));
     return true;
 }
@@ -257,6 +261,6 @@ void ScriptHost::Stop(ObjectStore& objects)
             if (auto* script=dynamic_cast<ScriptBehavior*>(&object.BehaviorAt(j))) script->BindInstance(nullptr);
         if (auto it=transforms_.find(object.Id()); it!=transforms_.end()) object.GetTransform()=it->second;
     }
-    objects.SetParents(parents_);parents_.clear();transforms_.clear(); playing_=false;
+    objects.SetParents(parents_);parents_.clear();transforms_.clear(); playing_=false;playingObjects_=nullptr;playingPhysics_=nullptr;
 }
 }

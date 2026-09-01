@@ -139,6 +139,8 @@ private:
     RECT ObjectListRectangle() const;
     zengine::GameObjectId ScriptDropTarget(POINT point) const;
     void ChooseScript();
+    std::optional<std::string> ChoosePrefabReference(const std::string& current);
+    zengine::GameObjectId SpawnPrefab(std::string_view asset);
     void ChooseModel();
     std::filesystem::path ResolveModel(const std::filesystem::path& path) const;
     bool ConfirmScriptClose();
@@ -244,6 +246,7 @@ private:
     std::string sceneSource_, sceneBaseline_;
     bool sceneDirty_ = false;
     std::optional<zengine::scenes::Document> playScene_;
+    std::set<zengine::GameObjectId> playObjects_;
     std::wstring status_ = L"Create or open a project from the File menu";
     zengine::ObjectStore objects_;
     zengine::ScriptHost scriptHost_;

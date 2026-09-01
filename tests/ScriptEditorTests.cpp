@@ -52,6 +52,7 @@ int main(int argc, char**)
             Check(has(complete(L"class A : gameObject { func physics"),L"physicsUpdate"),"Physics lifecycle completion missing");
             Check(has(complete(L"class A : gameObject { func f(){ transform.global_"),L"global_position"),"Global transform completion missing");
             Check(has(complete(L"class A { func f(){ string s; s."),L"truncate"),"String method completion missing");
+            Check(has(complete(L"class A { func f(){ prefab p; p."),L"spawn"),"Prefab spawn completion missing");
             Check(complete(L"class A { char c='a").items.empty(),"String suggestions leaked into character literal");
             Check(has(complete(L"class A : gameObject { func f(){ parent."),L"transform"),"Parent member completion missing");
             Check(has(complete(L"class A : gameObject { func f(){ find(\"Root\")."),L"parent"),"Object lookup return completion missing");

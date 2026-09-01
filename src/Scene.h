@@ -41,4 +41,6 @@ namespace zengine::scenes
     Document Decode(std::string_view text);
     struct Instance { ObjectStore objects; ScriptHost scripts; };
     Instance Instantiate(const Document&);
+    // Adds a resolved scene/prefab document to an existing live world and returns its first root.
+    GameObjectId Append(const Document&,ObjectStore&,ScriptHost&,GameObjectId parent=0);
 }

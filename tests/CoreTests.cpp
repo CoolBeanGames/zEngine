@@ -78,6 +78,9 @@ int main()
         zengine::ObjectStore deep;auto previous=deep.Create().Id();
         for(int i=0;i<64;++i){auto& next=deep.Create();next.SetParent(previous);previous=next.Id();}
         auto& tooDeep=deep.Create();rejects([&]{tooDeep.SetParent(previous);});
+        zengine::ObjectStore removable;auto& kept=removable.Create("Kept");auto& removedRoot=removable.Create("Runtime root");auto& removedChild=removable.Create("Runtime child");removedChild.SetParent(removedRoot.Id());
+        rejects([&]{removable.Remove({removedRoot.Id()});});Check(removable.Size()==3,"Failed group removal was not atomic");
+        const auto* stable=&kept;removable.Remove({removedRoot.Id(),removedChild.Id()});Check(removable.Size()==1 && removable.Find(kept.Id())==stable,"Group removal invalidated surviving GameObjects");
         std::cout << "PASS: platform-independent GameObject defaults, stable IDs, tags, transforms, behavior ownership\n";
         return 0;
     }

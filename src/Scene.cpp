@@ -48,6 +48,7 @@ namespace
         else if(const auto* v=std::get_if<char32_t>(&value)){Require(script::text::Scalar(*v),"Invalid character.");out<<"char "<<static_cast<std::uint32_t>(*v);}
         else if (const auto* v=std::get_if<script::Vector3>(&value))
         { Require(std::isfinite(v->x)&&std::isfinite(v->y)&&std::isfinite(v->z),"Invalid script vector."); out<<"Vector3 "<<v->x<<' '<<v->y<<' '<<v->z; }
+        else if(const auto* v=std::get_if<script::PrefabRef>(&value)){if(!v->asset.empty()){Asset(v->asset,false);Require(v->asset.ends_with(".zprefab"),"Expected prefab script field asset.");}out<<"prefab "<<std::quoted(v->asset);}
         else throw std::runtime_error("Cannot persist a runtime object reference.");
     }
     script::Value ReadValue(std::istream& in)
@@ -59,6 +60,7 @@ namespace
         if (type=="string") return Text(in);
         if(type=="char"){std::uint32_t value;Require(static_cast<bool>(in>>value) && script::text::Scalar(static_cast<char32_t>(value)),"Invalid character.");return static_cast<char32_t>(value);}
         if (type=="Vector3") { const double x=Number(in),y=Number(in),z=Number(in); return script::Vector3{x,y,z}; }
+        if(type=="prefab"){auto asset=Text(in);if(!asset.empty()){Asset(asset,false);Require(asset.ends_with(".zprefab"),"Expected prefab script field asset.");}return script::PrefabRef{std::move(asset)};}
         throw std::runtime_error("Unsupported scene variable type.");
     }
 }
@@ -202,5 +204,36 @@ Instance Instantiate(const Document& scene)
     }
     std::map<GameObjectId,GameObjectId> parents;for(const auto& data:scene.objects)parents[data.id]=data.parent;instance.objects.SetParents(parents);
     return instance;
+}
+GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scripts,GameObjectId parent)
+{
+    Require(!scene.objects.empty(),"Cannot spawn an empty prefab.");
+    Require(objects.Size()+scene.objects.size()<=10000,"The live scene object limit was exceeded.");
+    if(parent)Require(objects.Find(parent)!=nullptr,"Cannot spawn under a missing parent.");
+    std::map<GameObjectId,GameObjectId> remap;
+    GameObjectId root=0;
+    for(const auto& data:scene.objects)
+    {
+        Require(data.prefab.empty(),"Resolve prefab references before spawning scene data.");
+        auto& object=objects.Create(data.name);object.SetTags(data.tags);object.GetTransform()=data.transform;
+        remap.emplace(data.id,object.Id());
+        if(!data.parent && !root)root=object.Id();
+        for(const auto& b:data.behaviors)
+        {
+            Behavior* behavior=nullptr;
+            if(b.kind==BehaviorData::Kind::Mesh)behavior=&object.AddBehavior<MeshRenderer>(b.asset);
+            else if(b.kind==BehaviorData::Kind::Script){auto& value=object.AddBehavior<ScriptBehavior>(b.asset);scripts.RestoreValues(value,b.variables);behavior=&value;}
+            else if(b.kind==BehaviorData::Kind::Collider){auto& value=object.AddBehavior<physics::Collider>();value.SetShape(b.shape);value.SetOffset(b.colliderOffset);value.SetSize(b.colliderSize);behavior=&value;}
+            else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& value=object.AddBehavior<physics::RigidBody>();value.SetMass(b.mass);value.SetGravityScale(b.gravityScale);body=&value;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
+            behavior->SetEnabled(b.enabled);behavior->SetPriority(b.priority);
+        }
+    }
+    for(const auto& data:scene.objects)
+    {
+        const auto child=remap.at(data.id);
+        const auto target=data.parent?remap.at(data.parent):parent;
+        if(target)objects.Find(child)->SetParent(target);
+    }
+    return root;
 }
 }

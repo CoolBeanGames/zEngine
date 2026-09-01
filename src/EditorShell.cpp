@@ -197,6 +197,10 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
         }
         catch (const std::exception& error) { status_ = L"Mesh operation failed: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
     });
+    inspectorPanel_->SetPrefabHandler([this](const std::string& current) {
+        try{return ChoosePrefabReference(current);}
+        catch(const std::exception& error){status_=L"Cannot assign prefab: "+WideText(error.what());InvalidateRect(window_,&statusBar_,FALSE);return std::optional<std::string>{};}
+    });
     // Explicit directories support embedding/legacy projects; normal startup uses the recent-project config.
     if (!projectDirectory.empty())
     {
@@ -331,8 +335,9 @@ bool EditorShell::Play()
     { status_=L"Save your script edits (Ctrl+S) before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     SetFocus(window_); // Finish Inspector edits before snapshotting values/transforms.
     if (!PrepareScripts()) { ReportScriptErrors(); return false; }
-    auto authored=zengine::scenes::Capture(objects_,scriptHost_);
+    auto authored=zengine::scenes::Capture(objects_,scriptHost_);playObjects_.clear();for(std::size_t i=0;i<objects_.Size();++i)playObjects_.insert(objects_.At(i).Id());
     physicsWorld_=std::make_unique<zengine::physics::World>();try{physicsWorld_->Build(objects_);}catch(const std::exception& e){physicsWorld_.reset();status_=L"Physics: "+WideText(e.what());InvalidateRect(window_,nullptr,FALSE);return false;}
+    scriptHost_.SetPrefabSpawner([this](std::string_view asset){return SpawnPrefab(asset);});
     if (!scriptHost_.Play(objects_,physicsWorld_.get())) { physicsWorld_.reset();ReportScriptErrors(); return false; }
     playScene_=std::move(authored);
     paused_=false; stepDraw_=false; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
@@ -345,16 +350,15 @@ void EditorShell::Stop()
 {
     SetFocus(window_);
     scriptHost_.Stop(objects_);physicsWorld_.reset(); paused_=false; stepDraw_=false; tickAccumulator_=0;
-    if (playScene_)
-        for (const auto& saved:playScene_->objects)
-            if (auto* object=objects_.Find(saved.id))
-            {
-                object->SetName(saved.name); object->SetTags(saved.tags); object->GetTransform()=saved.transform;
-                for (std::size_t i=0;i<saved.behaviors.size();++i)
-                { object->BehaviorAt(i).SetPriority(saved.behaviors[i].priority); object->BehaviorAt(i).SetEnabled(saved.behaviors[i].enabled); }
-            }
-    playScene_.reset();
-    status_=L"Stopped - scene transforms restored";
+    std::set<zengine::GameObjectId> spawned;for(std::size_t i=0;i<objects_.Size();++i)if(!playObjects_.contains(objects_.At(i).Id()))spawned.insert(objects_.At(i).Id());
+    for(const auto id:spawned)if(auto* object=objects_.Find(id))for(std::size_t i=0;i<object->BehaviorCount();++i)if(auto* script=dynamic_cast<zengine::ScriptBehavior*>(&object->BehaviorAt(i)))scriptHost_.Forget(*script);
+    if(!spawned.empty()){objects_.Remove(spawned);for(const auto id:spawned){meshBindings_.erase(id);meshRevisions_.erase(id);}if(spawned.contains(selectedObject_)){selectedObject_=0;inspectorPanel_->Bind(nullptr);}}
+    if(playScene_)for(const auto& saved:playScene_->objects)if(auto* object=objects_.Find(saved.id)){
+        object->SetName(saved.name);object->SetTags(saved.tags);object->GetTransform()=saved.transform;
+        for(std::size_t i=0;i<saved.behaviors.size()&&i<object->BehaviorCount();++i){object->BehaviorAt(i).SetPriority(saved.behaviors[i].priority);object->BehaviorAt(i).SetEnabled(saved.behaviors[i].enabled);}
+    }
+    playScene_.reset();playObjects_.clear();
+    status_=L"Stopped - authored scene state restored";
     PrepareScripts(); inspectorPanel_->RefreshLiveValues();
     if (const auto* selected=SelectedGameObject()) SelectGameObject(selected->Id());
     InvalidateRect(window_,nullptr,FALSE);
@@ -879,6 +883,10 @@ void EditorShell::FinishAssetDrag(POINT point)
     if(path.extension()==L".zinput")return;
     if (zengine::prefabs::IsPrefab(path))
     {
+        POINT screen=point;ClientToScreen(window_,&screen);
+        const auto relative=std::filesystem::relative(path,assetsDirectory_).generic_u8string();
+        const std::string asset(reinterpret_cast<const char*>(relative.data()),relative.size());
+        if(inspectorPanel_->AssignPrefabAt(screen,asset))return;
         const auto parent=ScriptDropTarget(point);
         if (parent || PtInRect(&viewportContent_,point) || PtInRect(&sceneBrowser_,point)) InstantiatePrefab(path,parent);
         return;
@@ -1146,6 +1154,38 @@ void EditorShell::ChooseScript()
     dialog.lpstrInitialDir=initial.c_str(); dialog.lpstrTitle=L"Attach a script from this project's Assets directory";
     dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
     if (GetOpenFileNameW(&dialog)) AttachScript(selectedObject_, std::filesystem::path(filename.data()));
+}
+std::optional<std::string> EditorShell::ChoosePrefabReference(const std::string& current)
+{
+    RequireProject();
+    std::array<wchar_t,32768> filename{};
+    if(!current.empty())try{const auto initial=zengine::prefabs::Resolve(assetsDirectory_,std::filesystem::path(std::u8string(current.begin(),current.end()))).wstring();wcsncpy_s(filename.data(),filename.size(),initial.c_str(),_TRUNCATE);}catch(const std::exception&){}
+    const auto folder=AssetFolder().wstring();OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=window_;
+    dialog.lpstrFilter=L"zEngine prefabs (*.zprefab)\0*.zprefab\0\0";dialog.lpstrFile=filename.data();dialog.nMaxFile=static_cast<DWORD>(filename.size());
+    dialog.lpstrInitialDir=folder.c_str();dialog.lpstrTitle=L"Assign a prefab from this project's Assets directory";dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
+    if(!GetOpenFileNameW(&dialog))return std::nullopt;
+    const auto file=zengine::prefabs::Resolve(assetsDirectory_,filename.data());const auto relative=std::filesystem::relative(file,assetsDirectory_).generic_u8string();
+    return std::string(reinterpret_cast<const char*>(relative.data()),relative.size());
+}
+zengine::GameObjectId EditorShell::SpawnPrefab(std::string_view asset)
+{
+    if(!Playing())throw std::runtime_error("Prefabs can only be spawned while a scene is playing.");
+    const auto file=zengine::prefabs::Resolve(assetsDirectory_,std::filesystem::path(std::u8string(asset.begin(),asset.end())));
+    const auto expanded=zengine::prefabs::ResolveScene(assetsDirectory_,zengine::prefabs::Load(assetsDirectory_,file));
+    const auto first=objects_.Size();const auto root=zengine::scenes::Append(expanded.scene,objects_,scriptHost_);
+    for(std::size_t i=first;i<objects_.Size();++i)
+    {
+        auto& object=objects_.At(i);
+        if(const auto* mesh=object.GetBehavior<zengine::MeshRenderer>();mesh&&!mesh->Asset().empty()){
+            if(mesh->Asset()==zengine::MeshRenderer::CubeAsset){if(renderer_)meshBindings_[object.Id()]={mesh->Asset(),renderer_->Cube()};}
+            else {const auto& value=mesh->Asset();const auto model=ResolveModel(std::filesystem::path(std::u8string(value.begin(),value.end())));assetJobs_.push_back({model,true,object.Id(),++meshRevisions_[object.Id()],sceneGeneration_,true});}
+        }
+        for(std::size_t j=0;j<object.BehaviorCount();++j)if(auto* behavior=dynamic_cast<zengine::ScriptBehavior*>(&object.BehaviorAt(j))){
+            const auto& value=behavior->Asset();const auto script=zengine::scripts::Resolve(assetsDirectory_,std::filesystem::path(std::u8string(value.begin(),value.end())));
+            if(!scriptHost_.Prepare(*behavior,zengine::scripts::Load(script),Utf8Text(script.stem().wstring())))throw std::runtime_error(scriptHost_.Error(*behavior));
+        }
+    }
+    status_=L"Spawned prefab: "+file.filename().wstring();InvalidateRect(window_,&sceneBrowser_,FALSE);return root;
 }
 bool EditorShell::AddMeshRenderer(zengine::GameObjectId id)
 {

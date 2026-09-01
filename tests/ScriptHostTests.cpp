@@ -141,7 +141,13 @@ int main()
         Check(Value(globalsHost,reader,"position").starts_with("11, 2,"),"Same-callback reparent/global transform read stale");
         Check(Value(globalsHost,reader,"rotation")=="0, -0, 90" || Value(globalsHost,reader,"rotation")=="0, 0, 90","Global rotation mismatch");
         Check(Value(globalsHost,reader,"scale")=="2, 3, 4","Global scale mismatch");globalsHost.Stop(globals);
-        std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, script global transforms and text metadata\n";
+        ObjectStore spawning;ScriptHost spawningHost;auto& spawner=spawning.Create("Spawner");auto& spawnScript=spawner.AddBehavior<ScriptBehavior>("Spawner.zsh");
+        Check(spawningHost.Prepare(spawnScript,R"(class Spawner : gameObject {export prefab template;export bool returned=false;func start(){gameObject made=template.spawn();made.transform.position.x=7;returned=made!=null;}})","Spawner"),"Prefab spawner compile");
+        spawningHost.SetField(spawnScript,"template","Prefabs/Crate.zprefab");std::string requested;
+        spawningHost.SetPrefabSpawner([&](std::string_view asset){requested=asset;return spawning.Create("Crate").Id();});
+        Check(spawningHost.Play(spawning) && !spawnScript.Faulted(),"Prefab spawn failed during Start");
+        Check(requested=="Prefabs/Crate.zprefab" && spawning.Size()==2 && spawning.At(1).GetTransform().Position().x==7 && Value(spawningHost,spawnScript,"returned")=="true","Prefab spawn did not return/control the new native object");spawningHost.Stop(spawning);
+        std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;
     }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }

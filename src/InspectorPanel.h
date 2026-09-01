@@ -7,6 +7,7 @@
 #include <commctrl.h>
 #include <array>
 #include <functional>
+#include <optional>
 #include <string>
 
 // Native editor widget, independent of renderer/importer and reusable for other inspector hosts.
@@ -30,6 +31,8 @@ public:
     void RefreshLiveValues();
     void SetAddScriptHandler(std::function<void()> handler) { addScript_ = std::move(handler); }
     void SetMeshHandler(std::function<void(MeshAction)> handler) { meshAction_ = std::move(handler); }
+    void SetPrefabHandler(std::function<std::optional<std::string>(const std::string&)> handler) { choosePrefab_ = std::move(handler); }
+    bool AssignPrefabAt(POINT screenPoint,const std::string& asset);
     HWND Window() const noexcept { return window_; }
 private:
     bool editData_=true,editTransform_=true;
@@ -58,6 +61,7 @@ private:
         bool priority = false;
         bool multiline = false;
         bool combo = false;
+        bool prefab = false;
         int axis = -1; // Three consecutive fields share one Vector3 row.
         Style style = Style::Normal;
     };
@@ -84,6 +88,7 @@ private:
     HWND addScriptButton_ = nullptr;
     HWND addBehaviorButton_ = nullptr, meshEnabled_ = nullptr, chooseMesh_ = nullptr, cubeMesh_ = nullptr, clearMesh_ = nullptr;
     std::function<void(MeshAction)> meshAction_;
+    std::function<std::optional<std::string>(const std::string&)> choosePrefab_;
     bool updating_ = false;
     int scroll_ = 0;
     int pressed_ = -1;

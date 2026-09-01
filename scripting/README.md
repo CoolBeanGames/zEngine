@@ -50,6 +50,23 @@ Use `multiline export string` or `export multiline string` for a wrapping multil
 
 The built-in `gameObject` has a writable `parent : gameObject`, null by default. In an engine behavior, use `parent = find("Platform");`, `this.parent = null;`, or `someObject.parent = otherObject;`. `find` resolves an exact, unique scene object name; no match returns null and duplicate names are an error. Local transforms remain unchanged by reparenting. Do not construct a new `gameObject()` as a native parent: script-created objects are not scene objects. Cycles and hierarchies deeper than 64 parent links are rejected before native changes are applied. Play/Stop restores authored parenting and transforms.
 
+### Prefab references and spawning
+
+`prefab` is an engine-provided asset-reference type. Export it to get a prefab picker in the Inspector; the editor also accepts dropping a `.zprefab` directly onto that field. It cannot be constructed in script.
+
+```cpp
+class CrateSpawner : gameObject {
+    export prefab crate;
+    func start() {
+        gameObject made = crate.spawn();
+        made.transform.position = transform.position;
+        made.parent = this;
+    }
+}
+```
+
+`spawn()` takes no arguments, instantiates the complete resolved prefab hierarchy in the active scene, and returns its root `gameObject`. Calling it with an unassigned reference or in a VM host without a prefab-spawn callback is a runtime error. The editor removes runtime-spawned objects on Stop; standalone games use the same packaged prefab loader.
+
 The standalone VM has no scene dependency: embedders supply `Runtime::SetObjectLookup` returning same-runtime object references. Without a callback `find` returns null. The engine host creates scene proxies lazily, synchronizes them at behavior callbacks, and validates native parent and transform changes together. Reentrant proxy construction shares the active script's instruction budget. Scene objects' attached scripts are independent VMs; scene proxies expose native `transform`, `parent`, and `find`, not arbitrary attached script members.
 
 See `examples/SignalBehavior.zsh` for a custom signal and transform listener you can attach and test in Play.
@@ -98,7 +115,7 @@ class Mover : gameObject
 }
 ```
 
-- Types: signed 64-bit `int`, 64-bit `float`, `bool`, UTF-8 byte `string`, value-type `Vector3`, heterogeneous `array`, and class reference types. `void` is only a return type. Integer to float widening is implicit; narrowing is rejected.
+- Types: signed 64-bit `int`, 64-bit `float`, `bool`, UTF-8 `string`, Unicode `char`, value-type `Vector3`, heterogeneous `array`, engine `prefab` references, and class reference types. `void` is only a return type. Integer to float widening is implicit; narrowing is rejected.
 - Fields, locals, and parameters use `type name`; initializers use `= value`. Statements end with `;`; bodies use braces. Uninitialized scalar/vector fields and locals are zero/false/empty, and class references are `null`.
 - Classes introduce type names and support single inheritance. All members are public. Overrides must preserve the full signature and dispatch through the actual object type, including through base references. No overloads, constructors with parameters, access modifiers, or `super` yet.
 - Construct objects with `ClassName()`. Construct vectors with `Vector3()` or `Vector3(x, y, z)`. Vectors copy by value; class variables share object references. `this` names the current instance.

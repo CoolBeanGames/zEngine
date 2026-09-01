@@ -392,9 +392,18 @@ void TextAndGlobalTransforms() {
     Error([&]{r.Set(a,"description",std::string("\xc0\xaf"));},"UTF-8");
     RuntimeLimits limits;limits.stringBytes=12;Runtime limited(p,limits);auto small=limited.Create("A");Error([&]{limited.Call(small,"concatenate");},"String size limit");
 }
+void PrefabReferences() {
+    auto program=Compile(R"(class Spawner : gameObject { export prefab template; gameObject made; func start(){made=template.spawn();} func result():gameObject{return made;} })");
+    Runtime runtime(program);const auto spawner=runtime.Create("Spawner");
+    Check(std::get<ObjectRef>(runtime.Get(spawner,"template"))==ObjectRef{},"Prefab field did not default to null");
+    runtime.Set(spawner,"template",runtime.CreatePrefab("Props/Crate.zprefab"));
+    std::string requested;const auto spawned=runtime.Create("gameObject");runtime.SetPrefabSpawnCallback([&](std::string_view asset){requested=asset;return spawned;});
+    runtime.Start(spawner);Check(requested=="Props/Crate.zprefab" && std::get<ObjectRef>(runtime.Call(spawner,"result"))==spawned,"Prefab spawn did not return the created GameObject");
+    Error([&]{Compile("class Invalid { prefab p=prefab(); }");},"supplied by the host");
+}
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"text and global transforms", TextAndGlobalTransforms},
+        {"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},

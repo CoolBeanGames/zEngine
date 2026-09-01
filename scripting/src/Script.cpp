@@ -25,7 +25,7 @@ bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
 bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
-    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "is" || words.contains(s);
+    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
     if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
@@ -305,6 +305,7 @@ Value DefaultValue(const std::string& t) {
     if (t == "char") return char32_t{};
     if (t == "void") return {};
     if (t == "Vector3") return Vector3{};
+    if (t == "prefab") return ObjectRef{};
     return ObjectRef{};
 }
 }
@@ -427,7 +428,7 @@ class BytecodeCompiler {
                 Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
-                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "PhysicsBody",t,"Native service objects are supplied by the host");
+                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "PhysicsBody" && callee.token.text != "prefab",t,"Native service objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
@@ -631,6 +632,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     physicsBody.signals={"collision_entered","collision_stayed","collision_exited","area_entered","area_stayed","area_exited"};
     for(const auto& name:{"add_force","add_impulse","add_torque","add_angular_impulse"}){Function f;f.params={"Vector3"};physicsBody.methods.emplace(name,std::move(f));}
     program.classes.emplace(physicsBody.name,std::move(physicsBody));
+    Class prefab;prefab.name="prefab";Function spawn;spawn.result="gameObject";prefab.methods.emplace("spawn",std::move(spawn));program.classes.emplace(prefab.name,std::move(prefab));
     Class transform; transform.name = "Transform";
     transform.signals = {"was_moved", "was_rotated", "was_scaled"};
     for (const auto& name : {"position", "rotation", "scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
@@ -651,13 +653,13 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     }
     std::map<std::string, int> state;
     auto build = [&](auto&& self, const std::string& name, std::size_t depth) -> void {
-        if (name == "gameObject" || name == "Transform" || name == "InputService" || name == "InputAction" || name == "PhysicsService" || name == "PhysicsBody" || state[name] == 2) return;
+        if (name == "gameObject" || name == "Transform" || name == "InputService" || name == "InputAction" || name == "PhysicsService" || name == "PhysicsBody" || name=="prefab" || state[name] == 2) return;
         const auto& ast = *byName.at(name); auto& c = program.classes.at(name);
         if (state[name] == 1) Fail(program.source, ast.name, "Inheritance cycle");
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
-            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="PhysicsBody")Fail(program.source,ast.name,"Cannot inherit native service types");
+            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="PhysicsBody" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -736,7 +738,7 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
                 for (const auto& [methodName, f] : current->methods) if (seen.insert(methodName).second && !f.code.empty()) active = true;
                 current = current->base.empty() ? nullptr : &p->classes.at(current->base);
             }
-            if (name != "gameObject" && name != "Transform" && name != "InputService" && name != "InputAction" && name != "PhysicsService" && name != "PhysicsBody" && active) ++p->stats.executableClasses;
+            if (name != "gameObject" && name != "Transform" && name != "InputService" && name != "InputAction" && name != "PhysicsService" && name != "PhysicsBody" && name!="prefab" && active) ++p->stats.executableClasses;
         }
         return {std::shared_ptr<const Program>(new Program(std::move(p))), {}};
     } catch (const ScriptError& error) { return {nullptr, {error.Detail()}}; }
@@ -745,6 +747,7 @@ struct Runtime::Impl {
     struct Object {
         ObjectRef transformOwner;
         ObjectRef physicsOwner;
+        std::string prefabAsset;
         const Class* type = nullptr;
         std::vector<Value> fields;
         std::map<std::string, std::vector<CallableRef>> connections;
@@ -766,6 +769,7 @@ struct Runtime::Impl {
     std::function<ObjectRef(std::string_view)> objectLookup;
     Runtime::PhysicsBodyCall physicsBodyCall;
     Runtime::PhysicsCastCall physicsCastCall;
+    Runtime::PrefabSpawnCall prefabSpawnCall;
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
     [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
@@ -810,7 +814,7 @@ struct Runtime::Impl {
         case 3: return "bool"; case 4: return "string"; case 6: return "Vector3";
         case 7: return "signal"; case 8: return "callable";
         case 9: ArrayId(value, t); return "array";
-        case 10: return "char";
+        case 10: return "char"; case 11:return "prefab";
         default: { auto ref = std::get<ObjectRef>(value); if (ref.id == 0 && ref.runtime == 0) return "null"; return Resolve(ref, t).type->name; }
         }
     }
@@ -1037,6 +1041,7 @@ struct Runtime::Impl {
     }
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
+        if(object.type->name=="prefab") {if(name!="spawn"||!args.empty())Error(t,"prefab.spawn takes no arguments");if(object.prefabAsset.empty())Error(t,"Assign a prefab asset before calling spawn");if(!prefabSpawnCall)Error(t,"Prefab spawning is not available in this runtime");return prefabSpawnCall(object.prefabAsset);}
         if(object.type->name=="PhysicsBody") {
             if(!physicsBodyCall)Error(t,"Physics is not available in this runtime");
             if(args.size()!=1)Error(t,"Physics body force methods take one Vector3");
@@ -1227,6 +1232,8 @@ Runtime::Runtime(std::shared_ptr<const Program> program, RuntimeLimits limits) {
 }
 Runtime::~Runtime() = default;
 ObjectRef Runtime::Create(std::string_view className) { if(!impl_->depth)impl_->Reset(); return impl_->Create(Canonical(std::string(className)), {}); }
+ObjectRef Runtime::CreatePrefab(std::string asset) {if(asset.empty())return {};auto ref=Create("prefab");impl_->Resolve(ref).prefabAsset=std::move(asset);return ref;}
+std::string Runtime::PrefabAsset(ObjectRef ref) const {if(!ref.id)return {};const auto& object=impl_->Resolve(ref);if(object.type->name!="prefab")throw std::invalid_argument("Object is not a prefab reference");return object.prefabAsset;}
 Value Runtime::Call(ObjectRef object, std::string_view method, const std::vector<Value>& arguments) {
     impl_->Reset(); return impl_->Invoke(object, std::string(method), arguments, {});
 }
@@ -1234,6 +1241,7 @@ Value Runtime::Get(ObjectRef object, std::string_view field) const { return impl
 void Runtime::Set(ObjectRef object, std::string_view field, Value value, bool notify) { if(!impl_->depth)impl_->Reset(); impl_->Set(object, std::string(field), std::move(value), {}, notify); }
 void Runtime::SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->objectLookup=std::move(lookup);}
 void Runtime::SetPhysicsCallbacks(PhysicsBodyCall bodyCall,PhysicsCastCall castCall){impl_->physicsBodyCall=std::move(bodyCall);impl_->physicsCastCall=std::move(castCall);}
+void Runtime::SetPrefabSpawnCallback(PrefabSpawnCall callback){impl_->prefabSpawnCall=std::move(callback);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}
