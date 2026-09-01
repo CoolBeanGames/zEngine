@@ -62,7 +62,7 @@ namespace
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
               draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),scene(objects)
         {
-            runtime.SetInput(input,false);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
+            runtime.SetInput(input,false);BindNative(owner,object);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
             proxies.emplace(owner,object);
             runtime.SetObjectLookup([this](std::string_view name){
                 GameObjectId id=0;for(std::size_t i=0;i<scene.Size();++i)if(scene.At(i).Name()==name){if(id)throw std::runtime_error("Ambiguous object name; give scene objects unique names for find().");id=scene.At(i).Id();}
@@ -98,7 +98,15 @@ namespace
             if(!id)return {};
             if(auto it=proxies.find(id);it!=proxies.end())return it->second;
             if(!scene.Find(id))throw std::runtime_error("Scene object no longer exists.");
-            const auto ref=runtime.Create("gameObject");proxies.emplace(id,ref);Synchronize(id,ref);return ref;
+            const auto ref=runtime.Create("gameObject");proxies.emplace(id,ref);BindNative(id,ref);Synchronize(id,ref);return ref;
+        }
+        void BindNative(GameObjectId id,ObjectRef ref) {
+            const auto* native=scene.Find(id);if(!native)throw std::runtime_error("Scene object no longer exists.");
+            if(native->GetBehavior<physics::RigidBody>())runtime.BindNativeBehavior(ref,"RigidBody");
+            else if(native->GetBehavior<physics::KinematicBody>())runtime.BindNativeBehavior(ref,"KinematicBody");
+            else if(native->GetBehavior<physics::StaticBody>())runtime.BindNativeBehavior(ref,"StaticBody");
+            else if(native->GetBehavior<physics::Area>())runtime.BindNativeBehavior(ref,"Area");
+            if(native->GetBehavior<physics::Collider>())runtime.BindNativeBehavior(ref,"Collider");
         }
         GameObjectId NativeId(ObjectRef ref) const {
             if(!ref.id)return 0;

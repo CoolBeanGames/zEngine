@@ -55,6 +55,7 @@ int main(int argc, char**)
             Check(has(complete(L"class A { func f(){ prefab p; p."),L"spawn"),"Prefab spawn completion missing");
             Check(complete(L"class A { char c='a").items.empty(),"String suggestions leaked into character literal");
             Check(has(complete(L"class A : gameObject { func f(){ parent."),L"transform"),"Parent member completion missing");
+            Check(has(complete(L"class A : RigidBody { func f(){ rigidbody."),L"add_impulse"),"RigidBody reference completion missing");
             Check(has(complete(L"class A : gameObject { func f(){ find(\"Root\")."),L"parent"),"Object lookup return completion missing");
             Check(has(complete(L"class A { func f() { Other obj; obj."),L"speed"),"Typed member completion missing");
             Check(has(complete(L"class A { func f() { Other obj; obj."),L"ping"),"Inherited signal missing");
@@ -143,6 +144,9 @@ int main(int argc, char**)
             Check(std::wstring(typed).find(L"{\r\n        \r\n    }")!=std::wstring::npos,"Native function typing did not create body");
             SendMessageW(control,EM_UNDO,0,0);GetWindowTextW(control,typed,200);
             Check(std::wstring(typed).find(L"delta)")==std::wstring::npos,"Auto-inserted body was not one undo operation");
+            SetWindowTextW(control,L"class Folded {\r\n    func work()\r\n    {\r\n        int value=1;\r\n    }\r\n}");SendMessageW(control,EM_SETSEL,0,0);SendMessageW(editor.Window(),WM_COMMAND,ScriptEditor::FoldCommand,0);
+            SendMessageW(control,EM_SETSEL,14,15);CHARFORMAT2W folded{};folded.cbSize=sizeof(folded);SendMessageW(control,EM_GETCHARFORMAT,SCF_SELECTION,reinterpret_cast<LPARAM>(&folded));Check((folded.dwEffects&CFE_HIDDEN)!=0,"Class block did not collapse");
+            SendMessageW(editor.Window(),WM_COMMAND,ScriptEditor::ExpandCommand,0);SendMessageW(control,EM_GETCHARFORMAT,SCF_SELECTION,reinterpret_cast<LPARAM>(&folded));Check((folded.dwEffects&CFE_HIDDEN)==0,"Expand all left code hidden");
             SetWindowTextW(control,L"class Edited : gameObject\r\n{\r\n    int value = 3;\r\n}\r\n");
             SendMessageW(editor.Window(),WM_TIMER,1,0);
             // Timer-based syntax formatting must preserve selection and undo history.

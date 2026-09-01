@@ -297,6 +297,8 @@ bool Numeric(const std::string& t) { return t == "int" || t == "float"; }
 bool TextType(const std::string& t) { return t=="string" || t=="char"; }
 bool GlobalField(const std::string& name) {return name=="global_position" || name=="global_rotation" || name=="global_scale";}
 bool DirectionField(const std::string& name) {return name=="forward" || name=="up" || name=="right";}
+bool NativeBehavior(const std::string& name){return name=="Behavior"||name=="PhysicsBody"||name=="RigidBody"||name=="KinematicBody"||name=="StaticBody"||name=="Area"||name=="Collider";}
+bool NativeClass(const std::string& name){return name=="gameObject"||name=="Transform"||name=="InputService"||name=="InputAction"||name=="PhysicsService"||name=="prefab"||NativeBehavior(name);}
 Value DefaultValue(const std::string& t) {
     if (t == "int") return std::int64_t{0};
     if (t == "float") return 0.0;
@@ -428,7 +430,7 @@ class BytecodeCompiler {
                 Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
-                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "PhysicsBody" && callee.token.text != "prefab",t,"Native service objects are supplied by the host");
+                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
@@ -509,6 +511,7 @@ class BytecodeCompiler {
         if ((op == "+" || op=="&") && TextType(left) && TextType(right)) return "string";
         Require(op!="&",t,"Concatenation operands must be strings or characters");
         if ((op == "+" || op == "-") && left == "Vector3" && right == "Vector3") return "Vector3";
+        if (op == "*" && left == "Vector3" && right == "Vector3") return "Vector3";
         if ((op == "*" || op == "/") && left == "Vector3" && Numeric(right)) return "Vector3";
         if (op == "*" && Numeric(left) && right == "Vector3") return "Vector3";
         Require(Numeric(left) && Numeric(right), t, "Arithmetic operands must be numeric or compatible Vector3 values");
@@ -526,7 +529,7 @@ class BytecodeCompiler {
         auto receiver = Expression(*e.children[0]);
         Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
         Require(receiver != "InputAction",e.token,"Input state is read-only");
-        Require(!(program.Assignable("gameObject",receiver) && e.token.text=="physics"),e.token,"The physics component reference is read-only");
+        Require(!(program.Assignable("gameObject",receiver) && (e.token.text=="physics"||e.token.text=="rigidbody"||e.token.text=="kinematic_body"||e.token.text=="static_body"||e.token.text=="area"||e.token.text=="collider")),e.token,"Native behavior references are read-only");
         Require(!(program.Assignable("Transform",receiver) && (GlobalField(e.token.text)||DirectionField(e.token.text))),e.token,"Global transform directions are read-only");
         return {FieldType(receiver, e.token), true, 0, e.token.text};
     }
@@ -643,8 +646,17 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     gameObject.fields.push_back({Token{Token::Identifier, "transform"}, "Transform"});
     gameObject.fields.push_back({Token{Token::Identifier, "parent"}, "gameObject"});
     gameObject.fields.push_back({Token{Token::Identifier, "physics"}, "PhysicsBody"});
+    gameObject.fields.push_back({Token{Token::Identifier,"rigidbody"},"RigidBody"});
+    gameObject.fields.push_back({Token{Token::Identifier,"kinematic_body"},"KinematicBody"});
+    gameObject.fields.push_back({Token{Token::Identifier,"static_body"},"StaticBody"});
+    gameObject.fields.push_back({Token{Token::Identifier,"area"},"Area"});
+    gameObject.fields.push_back({Token{Token::Identifier,"collider"},"Collider"});
     Function find;find.params={"string"};find.result="gameObject";gameObject.methods.emplace("find",std::move(find));
     program.classes.emplace("gameObject", std::move(gameObject));
+    Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
+    auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());
+    for(const auto& name:{"RigidBody","KinematicBody","StaticBody","Area"}){Class body;body.name=name;body.base="PhysicsBody";body.fields=nativePhysics.fields;body.signals=nativePhysics.signals;program.classes.emplace(body.name,std::move(body));}
+    Class collider;collider.name="Collider";collider.base="Behavior";collider.fields=program.classes.at("gameObject").fields;program.classes.emplace(collider.name,std::move(collider));
     std::map<std::string, const ClassAst*> byName;
     for (const auto& ast : asts) {
         if (program.classes.contains(ast.name.text)) Fail(program.source, ast.name, "Duplicate class '" + ast.name.text + "'");
@@ -653,13 +665,13 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     }
     std::map<std::string, int> state;
     auto build = [&](auto&& self, const std::string& name, std::size_t depth) -> void {
-        if (name == "gameObject" || name == "Transform" || name == "InputService" || name == "InputAction" || name == "PhysicsService" || name == "PhysicsBody" || name=="prefab" || state[name] == 2) return;
+        if (NativeClass(name) || state[name] == 2) return;
         const auto& ast = *byName.at(name); auto& c = program.classes.at(name);
         if (state[name] == 1) Fail(program.source, ast.name, "Inheritance cycle");
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
-            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="PhysicsBody" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
+            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -738,7 +750,7 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
                 for (const auto& [methodName, f] : current->methods) if (seen.insert(methodName).second && !f.code.empty()) active = true;
                 current = current->base.empty() ? nullptr : &p->classes.at(current->base);
             }
-            if (name != "gameObject" && name != "Transform" && name != "InputService" && name != "InputAction" && name != "PhysicsService" && name != "PhysicsBody" && name!="prefab" && active) ++p->stats.executableClasses;
+            if (!NativeClass(name) && active) ++p->stats.executableClasses;
         }
         return {std::shared_ptr<const Program>(new Program(std::move(p))), {}};
     } catch (const ScriptError& error) { return {nullptr, {error.Detail()}}; }
@@ -850,7 +862,7 @@ struct Runtime::Impl {
     Value Get(ObjectRef ref, const std::string& name, const Token& t = {}) const {
         auto& o = Resolve(ref, t); std::size_t index = 0;
         if(program->Assignable("Transform",o.type->name) && (GlobalField(name)||DirectionField(name)))return Global(ref,name,t);
-        if(o.type->name=="PhysicsBody" && (name=="velocity"||name=="angular_velocity") && physicsBodyCall)return Coerce(physicsBodyCall(o.physicsOwner,name=="velocity"?"get_velocity":"get_angular_velocity",{}),"Vector3",t);
+        if(program->Assignable("PhysicsBody",o.type->name) && (name=="velocity"||name=="angular_velocity") && physicsBodyCall)return Coerce(physicsBodyCall(o.physicsOwner,name=="velocity"?"get_velocity":"get_angular_velocity",{}),"Vector3",t);
         if (o.type->signals.contains(name)) return SignalRef{ref, name};
         if (program->Method(o.type->name, name)) return CallableRef{ref, name};
         if (!program->FindField(o.type->name, name, &index)) Error(t, "Unknown field '" + name + "'");
@@ -863,7 +875,7 @@ struct Runtime::Impl {
         if(o.type->name=="InputAction")Error(t,"Input state is read-only");
         if(program->Assignable("Transform",o.type->name) && (GlobalField(name)||DirectionField(name)))Error(t,"Global transform directions are read-only");
         value = Coerce(std::move(value), field->type, t);
-        if(o.type->name=="PhysicsBody" && (name=="velocity"||name=="angular_velocity") && physicsBodyCall){physicsBodyCall(o.physicsOwner,name=="velocity"?"set_velocity":"set_angular_velocity",{value});}
+        if(program->Assignable("PhysicsBody",o.type->name) && (name=="velocity"||name=="angular_velocity") && physicsBodyCall){physicsBodyCall(o.physicsOwner,name=="velocity"?"set_velocity":"set_angular_velocity",{value});}
         if(name=="transform" && program->Assignable("gameObject",o.type->name)){
             const auto next=std::get<ObjectRef>(value),previous=std::get<ObjectRef>(o.fields[index]);
             if(next.id){auto& target=Resolve(next,t);if(target.transformOwner.id && target.transformOwner!=ref)Error(t,"A Transform cannot belong to two GameObjects");target.transformOwner=ref;}
@@ -892,7 +904,7 @@ struct Runtime::Impl {
                 if (args.size() != 1) Error(t, "Transform signals require one Vector3 argument");
                 Coerce(args[0], "Vector3", t);
             }
-            if(owner.type->name=="PhysicsBody"){if(args.size()!=1)Error(t,"Physics signals require one GameObject argument");Coerce(args[0],"gameObject",t);}
+            if(program->Assignable("PhysicsBody",owner.type->name)){if(args.size()!=1)Error(t,"Physics signals require one GameObject argument");Coerce(args[0],"gameObject",t);}
             // Snapshot permits safe connect/disconnect during a callback. New listeners wait until next emission.
             const auto snapshot = connections;
             // Validate every recipient before invoking any, avoiding partial dispatch on signature mistakes.
@@ -912,7 +924,7 @@ struct Runtime::Impl {
         const auto* f = program->Method(Resolve(callback.owner, t).type->name, callback.name);
         if (!f || f->result != "void") Error(t, "Signal callback must be a void function");
         if(owner.type->name=="InputAction" && !f->params.empty())Error(t,"Input signal callbacks take no arguments");
-        if(owner.type->name=="PhysicsBody" && f->params!=std::vector<std::string>{"gameObject"})Error(t,"Physics signal callback must take one gameObject");
+        if(program->Assignable("PhysicsBody",owner.type->name) && f->params!=std::vector<std::string>{"gameObject"})Error(t,"Physics signal callback must take one gameObject");
         if (program->Assignable("Transform", owner.type->name) &&
             (signal.name == "was_moved" || signal.name == "was_rotated" || signal.name == "was_scaled") && f->params != std::vector<std::string>{"Vector3"})
             Error(t, "Transform signal callback must take one Vector3");
@@ -941,10 +953,29 @@ struct Runtime::Impl {
         while (c) { bases.push_back(c); c = c->base.empty() ? nullptr : &program->classes.at(c->base); }
         try {
                         if (program->Assignable("Transform", name)) Set(ref, "scale", Vector3{1, 1, 1}, t);
-            if (program->Assignable("gameObject", name)) {const auto transform=Create("Transform",t);Resolve(transform,t).transformOwner=ref;Set(ref,"transform",transform,t);const auto physics=Create("PhysicsBody",t);Resolve(physics,t).physicsOwner=ref;Set(ref,"physics",physics,t);}
+            if (program->Assignable("gameObject", name)) {
+                const auto transform=Create("Transform",t);Resolve(transform,t).transformOwner=ref;Set(ref,"transform",transform,t);
+                if(program->Assignable("PhysicsBody",name)){
+                    Resolve(ref,t).physicsOwner=ref;Set(ref,"physics",ref,t);
+                    if(program->Assignable("RigidBody",name))Set(ref,"rigidbody",ref,t);
+                    else if(program->Assignable("KinematicBody",name))Set(ref,"kinematic_body",ref,t);
+                    else if(program->Assignable("StaticBody",name))Set(ref,"static_body",ref,t);
+                    else if(program->Assignable("Area",name))Set(ref,"area",ref,t);
+                } else {
+                    const auto physics=Create("PhysicsBody",t);Resolve(physics,t).physicsOwner=ref;Set(ref,"physics",physics,t);
+                    if(program->Assignable("Collider",name))Set(ref,"collider",ref,t);
+                }
+            }
             for (auto it = bases.rbegin(); it != bases.rend(); ++it) Execute(ref, (*it)->initializer, {}, t);
         } catch (...) { objects[ref.id - 1]->failed = true; throw; }
         return ref;
+    }
+    void BindNativeBehavior(ObjectRef ownerRef,const std::string& type,const Token& t={}) {
+        auto& owner=Resolve(ownerRef,t);if(!program->Assignable("gameObject",owner.type->name))Error(t,"Native behaviors require a gameObject owner");
+        const bool body=type=="RigidBody"||type=="KinematicBody"||type=="StaticBody"||type=="Area";if(!body&&type!="Collider")Error(t,"Unknown native behavior type '"+type+"'");
+        ObjectRef behavior=program->Assignable(type,owner.type->name)?ownerRef:Create(type,t);
+        if(body){Resolve(behavior,t).physicsOwner=ownerRef;Set(ownerRef,"physics",behavior,t,false);const auto field=type=="RigidBody"?"rigidbody":type=="KinematicBody"?"kinematic_body":type=="StaticBody"?"static_body":"area";Set(ownerRef,field,behavior,t,false);}
+        else Set(ownerRef,"collider",behavior,t,false);
     }
     static double Number(const Value& v) { if (auto i = std::get_if<std::int64_t>(&v)) return static_cast<double>(*i); return std::get<double>(v); }
     static bool IsText(const Value& value){return std::holds_alternative<std::string>(value) || std::holds_alternative<char32_t>(value);}
@@ -973,13 +1004,14 @@ struct Runtime::Impl {
         const bool valid = (Numeric(aType) && Numeric(bType)) ||
             (op == Op::Add && aType == "string" && bType == "string") ||
             ((op == Op::Add || op == Op::Subtract) && aType == "Vector3" && bType == "Vector3") ||
+            (op == Op::Multiply && aType == "Vector3" && bType == "Vector3") ||
             ((op == Op::Multiply || op == Op::Divide) && aType == "Vector3" && Numeric(bType)) ||
             (op == Op::Multiply && Numeric(aType) && bType == "Vector3");
         if (!valid) Error(t, "Incompatible arithmetic operands");
         if (std::holds_alternative<Vector3>(left) || std::holds_alternative<Vector3>(right)) {
             Vector3 result;
             if (auto a = std::get_if<Vector3>(&left)) {
-                if (auto b = std::get_if<Vector3>(&right)) result = op == Op::Add ? Vector3{a->x + b->x, a->y + b->y, a->z + b->z} : Vector3{a->x - b->x, a->y - b->y, a->z - b->z};
+                if (auto b = std::get_if<Vector3>(&right)) result = op == Op::Add ? Vector3{a->x + b->x, a->y + b->y, a->z + b->z} : op==Op::Subtract ? Vector3{a->x - b->x, a->y - b->y, a->z - b->z} : Vector3{a->x*b->x,a->y*b->y,a->z*b->z};
                 else {
                     auto scalar = Number(right); if (op == Op::Divide && scalar == 0) Error(t, "Division by zero");
                     result = op == Op::Divide ? Vector3{a->x / scalar, a->y / scalar, a->z / scalar} : Vector3{a->x * scalar, a->y * scalar, a->z * scalar};
@@ -1042,7 +1074,7 @@ struct Runtime::Impl {
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
         if(object.type->name=="prefab") {if(name!="spawn"||!args.empty())Error(t,"prefab.spawn takes no arguments");if(object.prefabAsset.empty())Error(t,"Assign a prefab asset before calling spawn");if(!prefabSpawnCall)Error(t,"Prefab spawning is not available in this runtime");return prefabSpawnCall(object.prefabAsset);}
-        if(object.type->name=="PhysicsBody") {
+        if(program->Assignable("PhysicsBody",object.type->name) && (name=="add_force"||name=="add_impulse"||name=="add_torque"||name=="add_angular_impulse")) {
             if(!physicsBodyCall)Error(t,"Physics is not available in this runtime");
             if(args.size()!=1)Error(t,"Physics body force methods take one Vector3");
             return physicsBodyCall(object.physicsOwner,name,{Coerce(args[0],"Vector3",t)});
@@ -1241,6 +1273,7 @@ Value Runtime::Get(ObjectRef object, std::string_view field) const { return impl
 void Runtime::Set(ObjectRef object, std::string_view field, Value value, bool notify) { if(!impl_->depth)impl_->Reset(); impl_->Set(object, std::string(field), std::move(value), {}, notify); }
 void Runtime::SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->objectLookup=std::move(lookup);}
 void Runtime::SetPhysicsCallbacks(PhysicsBodyCall bodyCall,PhysicsCastCall castCall){impl_->physicsBodyCall=std::move(bodyCall);impl_->physicsCastCall=std::move(castCall);}
+void Runtime::BindNativeBehavior(ObjectRef owner,std::string_view behaviorType){impl_->Reset();impl_->BindNativeBehavior(owner,std::string(behaviorType));}
 void Runtime::SetPrefabSpawnCallback(PrefabSpawnCall callback){impl_->prefabSpawnCall=std::move(callback);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }

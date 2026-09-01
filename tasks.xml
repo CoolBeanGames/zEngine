@@ -84,42 +84,42 @@ if else and loops should also auto insert brackets (and parenthesis)</prompt>
     <prompt>collapse (and expand) brackets funcs and classes</prompt>
     <requirements>code collapse and expand implemented</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <error>false</error>
     <errorMessage></errorMessage>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Added non-destructive brace-block folding for classes, functions, and nested blocks using RichEdit hidden formatting. The toolbar and Ctrl shortcuts toggle the current block or expand all without altering saved source or undo history. Focused tests pass.</notes>
+    <filesChanged>src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-8">
     <prompt>bug in scripting:
 i tried making a new vector3 and multiplying it by the forward vector from transform but it said "Line 15, column 9: Arithmetic   operands must be numeric or compatible Vector3 values"</prompt>
     <requirements>fixed bug</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <error>false</error>
     <errorMessage></errorMessage>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Added component-wise Vector3 multiplication in both compile-time type checking and runtime evaluation. Vector3 values can now multiply transform.forward/up/right directly; regression coverage verifies the reported forward-vector case.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-9">
     <prompt>scripting runtime:
 I need a way to be able to pass behaviors (and inherit from them), i for instance tried to pass my rigidbody to my script, but i  cant, I also tried to inherit from rigidbody so i could do it directly and i cant, so theres no possible way at present to actually  control my rigidbody at all, this needs fixed. (basically it does not identify rigidbody as a type at all)</prompt>
     <requirements>ability to reference behaviors</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <error>false</error>
     <errorMessage></errorMessage>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Added native Behavior, PhysicsBody, RigidBody, KinematicBody, StaticBody, Area, and Collider script types. They support references, parameters, inheritance, type checks, completion, and typed read-only GameObject component fields. The host binds attached native components to those references; RigidBody-derived scripts can directly control native physics. All 27 tests pass and builds/debug was refreshed.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/PhysicsTests.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-10">
     <prompt>ts add the following methods to a new mathf class:

@@ -31,11 +31,13 @@ std::vector<ClassRange> Classes(const std::vector<Token>& t) {
 }
 Index::Index() {
     auto add=[&](const wchar_t* type,const wchar_t* name,const wchar_t* result,bool function=false){types_[type].members[name]={name,result,function};};
-    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"prefab",L"gameObject",L"GameObject",L"Transform",L"PhysicsBody"})types_[type];
+    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"prefab",L"gameObject",L"GameObject",L"Transform",L"Behavior",L"PhysicsBody",L"RigidBody",L"KinematicBody",L"StaticBody",L"Area",L"Collider"})types_[type];
     types_[L"GameObject"].base=L"gameObject";
+    types_[L"Behavior"].base=L"gameObject";types_[L"PhysicsBody"].base=L"Behavior";for(const auto type:{L"RigidBody",L"KinematicBody",L"StaticBody",L"Area"})types_[type].base=L"PhysicsBody";types_[L"Collider"].base=L"Behavior";
     add(L"gameObject",L"transform",L"Transform");
     add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);
     add(L"gameObject",L"physics",L"PhysicsBody");
+    add(L"gameObject",L"rigidbody",L"RigidBody");add(L"gameObject",L"kinematic_body",L"KinematicBody");add(L"gameObject",L"static_body",L"StaticBody");add(L"gameObject",L"area",L"Area");add(L"gameObject",L"collider",L"Collider");
     for(const auto name:{L"position",L"rotation",L"scale"})add(L"Transform",name,L"Vector3");
     for(const auto name:{L"global_position",L"global_rotation",L"global_scale"})add(L"Transform",name,L"Vector3");
     for(const auto name:{L"forward",L"up",L"right"})add(L"Transform",name,L"Vector3");

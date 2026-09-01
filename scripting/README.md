@@ -71,6 +71,24 @@ The standalone VM has no scene dependency: embedders supply `Runtime::SetObjectL
 
 See `examples/SignalBehavior.zsh` for a custom signal and transform listener you can attach and test in Play.
 
+### Native behavior references
+
+Native physics components are script types: `Behavior`, `PhysicsBody`, `RigidBody`, `KinematicBody`, `StaticBody`, `Area`, and `Collider`. A GameObject exposes read-only `physics` plus the typed references `rigidbody`, `kinematic_body`, `static_body`, `area`, and `collider`; a reference is `null` when that component is not attached. These types can be used for fields, locals, parameters, return values, inheritance, and `is` checks. Native instances are supplied by the engine and cannot be constructed directly.
+
+```cpp
+class BallController : RigidBody {
+    func start() {
+        launch(rigidbody);
+    }
+    func launch(RigidBody body) {
+        body.velocity = transform.forward * 5;
+        body.add_impulse(transform.up * 2);
+    }
+}
+```
+
+Deriving from a native behavior still produces a normal GameObject lifecycle script. Attach the matching native component to the same GameObject; otherwise using its native methods reports that no active physics body exists. `PhysicsBody` remains useful when code accepts any body type.
+
 ## Build and test
 
 From this directory in a Visual Studio Developer PowerShell:
@@ -119,7 +137,7 @@ class Mover : gameObject
 - Fields, locals, and parameters use `type name`; initializers use `= value`. Statements end with `;`; bodies use braces. Uninitialized scalar/vector fields and locals are zero/false/empty, and class references are `null`.
 - Classes introduce type names and support single inheritance. All members are public. Overrides must preserve the full signature and dispatch through the actual object type, including through base references. No overloads, constructors with parameters, access modifiers, or `super` yet.
 - Construct objects with `ClassName()`. Construct vectors with `Vector3()` or `Vector3(x, y, z)`. Vectors copy by value; class variables share object references. `this` names the current instance.
-- Member access and assignment use `.`. Compound `+=`, `-=`, `*=`, `/=` evaluate the destination receiver once. Vectors support addition/subtraction, negation, scalar multiply/divide, equality, and readable/writable `x`, `y`, `z` components.
+- Member access and assignment use `.`. Compound `+=`, `-=`, `*=`, `/=` evaluate the destination receiver once. Vectors support addition/subtraction, negation, scalar multiply/divide, component-wise Vector3 multiplication, equality, and readable/writable `x`, `y`, `z` components.
 - Arithmetic, comparisons, short-circuit `&&`/`||`, unary `!`, `if`/`else`, `while`, lexical local scopes, and `return` are supported. Conditions require `bool`. Integer division truncates toward zero.
 - `func name(params) : return_type` declares a result; omitting the suffix means `void`. Non-void functions must return on every path; an empty non-void function is an error.
 - `//` line comments and `/* ... */` non-nested block comments are ignored outside string literals. Unterminated block comments are diagnosed. Strings support escaped quotes, backslashes, newline, carriage-return, and tab escapes.

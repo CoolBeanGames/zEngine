@@ -135,6 +135,8 @@ public:
     using PrefabSpawnCall = std::function<ObjectRef(std::string_view)>;
     // Host-owned physics bridge. Scripts never see the backend physics API.
     void SetPhysicsCallbacks(PhysicsBodyCall bodyCall, PhysicsCastCall castCall);
+    // Binds a host-owned native component to a typed, read-only script reference.
+    void BindNativeBehavior(ObjectRef owner,std::string_view behaviorType);
     void SetPrefabSpawnCallback(PrefabSpawnCall);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);

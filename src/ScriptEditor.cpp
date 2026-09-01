@@ -60,8 +60,9 @@ ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, cons
         save_ = button(L"Save (Ctrl+S)", SaveCommand);
         reload_ = button(L"Reload (Ctrl+R)", ReloadCommand);
         jump_ = button(L"Go to first error", ErrorCommand);
+        fold_ = button(L"Toggle block",FoldCommand);expand_=button(L"Expand all",ExpandCommand);
         editorStyle::AttachChildren(window_);
-        if (!source_ || !errors_ || !save_ || !reload_ || !jump_) throw std::runtime_error("Cannot create script editor controls.");
+        if (!source_ || !errors_ || !save_ || !reload_ || !jump_ || !fold_ || !expand_) throw std::runtime_error("Cannot create script editor controls.");
         SendMessageW(source_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
         SendMessageW(errors_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
         SendMessageW(source_, EM_SETBKGNDCOLOR, 0, RGB(30,32,36));
@@ -236,7 +237,7 @@ void ScriptEditor::Layout()
 {
     RECT r{}; GetClientRect(window_, &r);
     const int bottom = std::max(120L, r.bottom - 145);
-    MoveWindow(save_, 8, 6, 125, 28, TRUE); MoveWindow(reload_, 140, 6, 135, 28, TRUE); MoveWindow(jump_, 282, 6, 140, 28, TRUE);
+    MoveWindow(save_, 8, 6, 125, 28, TRUE); MoveWindow(reload_, 140, 6, 135, 28, TRUE); MoveWindow(jump_, 282, 6, 140, 28, TRUE);MoveWindow(fold_,429,6,120,28,TRUE);MoveWindow(expand_,556,6,110,28,TRUE);
     MoveWindow(source_, 8, 42, std::max(1L,r.right-16), bottom-42, TRUE);
     MoveWindow(errors_, 8, bottom+8, std::max(1L,r.right-16), std::max(1L,r.bottom-bottom-16), TRUE);
 }
@@ -268,6 +269,8 @@ LRESULT ScriptEditor::HandleMessage(UINT message, WPARAM w, LPARAM l)
         if (LOWORD(w) == SourceControl && HIWORD(w) == EN_CHANGE && !formatting_)
         { dirty_ = true; Title(); SetTimer(window_, 1, 250, nullptr); return 0; }
         if (LOWORD(w) == SaveCommand) { Save(); return 0; }
+        if(LOWORD(w)==FoldCommand){ToggleFold();return 0;}
+        if(LOWORD(w)==ExpandCommand){ExpandAll();return 0;}
         if (LOWORD(w) == ReloadCommand)
         {
             if (!dirty_ || MessageBoxW(window_, L"Discard unsaved edits and reload from disk?", L"Reload script", MB_YESNO|MB_ICONWARNING) == IDYES) Reload();
@@ -308,6 +311,8 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
     {
         if (w == 'S' || w == 'R') { SendMessageW(self->window_, WM_COMMAND, w == 'S' ? SaveCommand : ReloadCommand, 0); return 0; }
         if (w == 'A') { SendMessageW(window, EM_SETSEL, 0, -1); return 0; }
+        if(w==VK_OEM_MINUS){self->ToggleFold();return 0;}
+        if(w==VK_OEM_PLUS){self->ExpandAll();return 0;}
     }
     if (message == WM_CHAR && (w == 19 || w == 18 || w == 1)) return 0;
     if (message == WM_CHAR && w == VK_TAB) {
@@ -331,6 +336,19 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
     else if(message==WM_CHAR && w==VK_BACK)self->UpdateCompletion();
     return result;
 }
+
+void ScriptEditor::SetHidden(std::size_t start,std::size_t end,bool hidden) {
+    if(start>=end)return;CHARRANGE selection{};SendMessageW(source_,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&selection));
+    IRichEditOle* ole=nullptr;ITextDocument* document=nullptr;long unused=0;SendMessageW(source_,EM_GETOLEINTERFACE,0,reinterpret_cast<LPARAM>(&ole));if(ole){ole->QueryInterface(__uuidof(ITextDocument),reinterpret_cast<void**>(&document));ole->Release();}if(document)document->Undo(tomSuspend,&unused);
+    CHARRANGE range{static_cast<LONG>(start),static_cast<LONG>(end)};SendMessageW(source_,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&range));CHARFORMAT2W format{};format.cbSize=sizeof(format);format.dwMask=CFM_HIDDEN;format.dwEffects=hidden?CFE_HIDDEN:0;SendMessageW(source_,EM_SETCHARFORMAT,SCF_SELECTION,reinterpret_cast<LPARAM>(&format));SendMessageW(source_,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&selection));if(document){document->Undo(tomResume,&unused);document->Release();}InvalidateRect(source_,nullptr,FALSE);
+}
+bool ScriptEditor::ToggleFold() {
+    const auto source=Text(),code=scriptTyping::Code(source);CHARRANGE selection{};SendMessageW(source_,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&selection));const auto caret=static_cast<std::size_t>(std::max<LONG>(0,selection.cpMin));
+    std::vector<std::size_t> stack;for(std::size_t i=0;i<std::min(caret+1,code.size());++i){if(code[i]==L'{')stack.push_back(i);else if(code[i]==L'}'&&!stack.empty())stack.pop_back();}
+    std::size_t open=stack.empty()?code.find(L'{',std::min(caret,code.size())):stack.back();if(open==code.npos)return false;int depth=1;std::size_t close=open+1;for(;close<code.size()&&depth;++close){if(code[close]==L'{')++depth;else if(code[close]==L'}')--depth;}if(depth||close<=open+2)return false;--close;
+    CHARRANGE probe{static_cast<LONG>(open+1),static_cast<LONG>(open+2)};SendMessageW(source_,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&probe));CHARFORMAT2W format{};format.cbSize=sizeof(format);SendMessageW(source_,EM_GETCHARFORMAT,SCF_SELECTION,reinterpret_cast<LPARAM>(&format));SendMessageW(source_,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&selection));SetHidden(open+1,close,(format.dwEffects&CFE_HIDDEN)==0);return true;
+}
+void ScriptEditor::ExpandAll(){SetHidden(0,Text().size(),false);}
 
 void ScriptEditor::RefreshCompletionIndex() {
     completionIndex_=scriptCompletion::Index{};std::size_t bytes=0,count=0;

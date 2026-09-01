@@ -46,6 +46,7 @@ void Movement() {
         func edit() { Vector3 v = Vector3(1, 2, 3); Vector3 copy = v; v.x = 7; v.y *= 2; v.z /= 3; transform.position = v + copy; }
         func arithmetic() : Vector3 { return -(Vector3(1, 2, 3) * 2 - Vector3(1, 1, 1)) / 2; }
         func scaleVector() : Vector3 { return 2 * Vector3(1, 2, 3); }
+        func forwardMask() : Vector3 { return Vector3(2, 3, 4) * transform.forward; }
     })");
     Runtime r(p); auto mover = r.Create("Mover"), object = r.Create("GameObject"); auto transform = TransformOf(r, object);
     Check(std::get<Vector3>(r.Get(transform, "scale")) == Vector3{1, 1, 1}, "Default scale");
@@ -56,6 +57,7 @@ void Movement() {
     r.Call(mover, "edit"); Check(std::get<Vector3>(r.Get(TransformOf(r, mover), "position")) == Vector3{8, 6, 4}, "Vector value semantics");
     Check(std::get<Vector3>(r.Call(mover, "arithmetic")) == Vector3{-0.5, -1.5, -2.5}, "Vector operators");
     Check(std::get<Vector3>(r.Call(mover, "scaleVector")) == Vector3{2, 4, 6}, "Scalar vector multiply");
+    Check(std::get<Vector3>(r.Call(mover,"forwardMask"))==Vector3{0,0,4},"Vector3 multiply by transform.forward");
     Check(p->HasClass("GameObject") && p->HasClass("gameObject"), "GameObject aliases");
     Error([&] { Compile("class A { func f(GameObject obj) { Obj.transform.position = Vector3(); } }"); }, "Unknown field");
 }
@@ -76,6 +78,8 @@ void LifecycleAndInheritance() {
     auto driver = r.Create("Driver"); r.Call(driver, "run", {0.5}); auto target = std::get<ObjectRef>(r.Get(driver, "target"));
     Check(Float(r.Get(target, "elapsed")) == 2, "Virtual dispatch through base reference");
     r.Set(a, "elapsed", std::int64_t{9}); Check(Float(r.Get(a, "elapsed")) == 9, "Host widening");
+    auto native=Compile("class NativeMover : RigidBody { RigidBody saved; func take(RigidBody body){saved=body;} }");Runtime nativeRuntime(native);auto nativeMover=nativeRuntime.Create("NativeMover");nativeRuntime.Call(nativeMover,"take",{nativeMover});
+    Check(std::get<ObjectRef>(nativeRuntime.Get(nativeMover,"physics"))==nativeMover&&std::get<ObjectRef>(nativeRuntime.Get(nativeMover,"rigidbody"))==nativeMover&&std::get<ObjectRef>(nativeRuntime.Get(nativeMover,"saved"))==nativeMover,"Native behavior inheritance/reference typing");
 }
 void ValuesAndControlFlow() {
     auto p = Compile(R"(class Math { int calls; string text = "hi";

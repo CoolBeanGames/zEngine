@@ -9,7 +9,7 @@
 class ScriptEditor final
 {
 public:
-    static constexpr int SourceControl = 2100, SaveCommand = 2101, ReloadCommand = 2102, ErrorCommand = 2103;
+    static constexpr int SourceControl = 2100, SaveCommand = 2101, ReloadCommand = 2102, ErrorCommand = 2103,FoldCommand=2104,ExpandCommand=2105;
     ScriptEditor(HWND owner, const std::filesystem::path& assets, const std::filesystem::path& path);
     ~ScriptEditor();
     void Show();
@@ -34,6 +34,7 @@ private:
     void HideCompletion();
     bool AcceptCompletion();
     void PaintCompletion(HWND);
+    bool ToggleFold(); void ExpandAll(); void SetHidden(std::size_t start,std::size_t end,bool hidden);
     static LRESULT CALLBACK CompletionProcedure(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR);
     scriptCompletion::Index completionIndex_;
     scriptCompletion::Result completion_;
@@ -44,7 +45,7 @@ private:
     std::filesystem::path assets_, path_;
     std::string loaded_;
     HWND window_ = nullptr, source_ = nullptr, errors_ = nullptr;
-    HWND save_ = nullptr, reload_ = nullptr, jump_ = nullptr;
+    HWND save_ = nullptr, reload_ = nullptr, jump_ = nullptr,fold_ = nullptr,expand_ = nullptr;
     HMODULE richEdit_ = nullptr;
     HFONT font_ = nullptr;
     bool dirty_ = false, formatting_ = false;
