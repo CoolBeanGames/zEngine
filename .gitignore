@@ -1,5 +1,6 @@
 /build/
 /builds/debug/
+/builds/test/
 /tests/debug/
 /.vs/
 /out/

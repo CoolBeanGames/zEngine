@@ -32,6 +32,30 @@ inline std::optional<Edit> OnCharacter(std::wstring_view source, std::size_t sta
     int depth=0;
     for(std::size_t i=0;i<start;++i) {if(code[i]==L'{')++depth;else if(code[i]==L'}')depth=std::max(0,depth-1);}
     const auto indent=[&](int level){return std::wstring(static_cast<std::size_t>(std::clamp(level,0,128))*4,L' ');};
+    if(character==L' ') {
+        auto tokenStart=start;while(tokenStart && (std::iswalnum(code[tokenStart-1]) || code[tokenStart-1]==L'_'))--tokenStart;
+        const auto token=code.substr(tokenStart,start-tokenStart);
+        const bool conditional=token==L"if" || token==L"while" || token==L"for";
+        if(!conditional && token!=L"else")return {};
+        if(tokenStart && (std::iswalnum(code[tokenStart-1]) || code[tokenStart-1]==L'_'))return {};
+        auto probe=std::wstring(source);probe.insert(start,1,L' ');if(Code(probe)[start]!=L' ')return {};
+        auto next=end;while(next<code.size() && std::iswspace(code[next]))++next;
+        if(next<code.size() && (code[next]==L'(' || code[next]==L'{'))return {};
+        if(conditional) {
+            std::wstring text=L" (";const auto caret=text.size();text+=L")\r"+indent(depth)+L"{\r"+indent(depth+1)+L"\r"+indent(depth)+L"}";
+            return Edit{start,end,text,caret};
+        }
+        std::wstring text=L"\r"+indent(depth)+L"{\r"+indent(depth+1);const auto caret=text.size();text+=L"\r"+indent(depth)+L"}";
+        return Edit{start,end,text,caret};
+    }
+    if(character==L'(' || character==L'[' || character==L'{') {
+        auto probe=std::wstring(source);probe.replace(start,end-start,1,character);if(Code(probe)[start]!=character)return {};
+        const wchar_t close=character==L'('?L')':character==L'['?L']':L'}';
+        std::wstring text;text+=character;text+=source.substr(start,end-start);text+=close;
+        return Edit{start,end,std::move(text),1+(end-start)};
+    }
+    if((character==L')' || character==L']' || character==L'}') && start==end && start<source.size() && source[start]==character)
+        return Edit{start,start,L"",1};
     if(character==L'\r') {
         std::size_t next=end;while(next<source.size() && (source[next]==L' ' || source[next]==L'\t'))++next;
         auto text=L"\r"+indent(depth);const auto caret=text.size();

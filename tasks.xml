@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="utf-8"?>
+<tasks project="zEngine" nextIndex="16">
+  <task id="ZE-1">
+    <prompt>input map:
+when making a new input it automatically jumps to the name section so it can be renamed immediatly, the entire default name is hilighted so it can be replaced easily</prompt>
+    <requirements>renaming for inputs is automatic</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes>New actions now focus the action-name field and select the complete generated name for immediate replacement. Added focused UI coverage and verified zEngineInputTests.</notes>
+    <filesChanged>src/input/InputMapEditor.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-2">
+    <prompt>a 2d axis should return a Vector3, the X vector should be set to x, and the y vector to y. right now it returns a float</prompt>
+    <requirements>2D input axis are fixed</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes>InputAction.axis now has the Vector3 script type and receives X/Y values for 2D button and analog actions. Input.get_axis remains the explicit scalar API. Completion metadata and runtime tests were updated and verified.</notes>
+    <filesChanged>scripting/src/Script.cpp; src/ScriptCompletion.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-3">
+    <prompt>add an option to "listen" for inputs when you press a button while creating a new action so it will auto assign</prompt>
+    <requirements>input map listen for input button added</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes>Added Listen controls for button bindings. Listening detects newly pressed keyboard, mouse, or selected-controller buttons, ignores already-held inputs, assigns the matching binding, and supports Escape cancellation. Focused tests pass.</notes>
+    <filesChanged>src/input/InputMap.h; src/input/InputMap.cpp; src/input/InputMapEditor.h; src/input/InputMapEditor.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-4">
+    <prompt>script editor:
+if else and loops should also auto insert brackets (and parenthesis)</prompt>
+    <requirements>auto brackets expanded</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes>Typing a space after if, else, while, or for now inserts the appropriate parentheses and indented brace block, places the caret at the condition/body edit point, and ignores comments or existing delimiters. Focused tests pass.</notes>
+    <filesChanged>src/ScriptTyping.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-5">
+    <prompt>if i manually type a bracket that should also auto complete</prompt>
+    <requirements>auto brackets on manual insertion</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes>Manual opening parentheses, square brackets, and braces now insert matching closers, wrap selected text, ignore comments/strings, and allow typing an existing closer to advance over it. Focused tests pass.</notes>
+    <filesChanged>src/ScriptTyping.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-6">
+    <prompt>if i am using auto complete and i press enter (for new line) the autocomplete should end</prompt>
+    <requirements>autocomplete ended on new line</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <notes>Pressing Enter now dismisses both inline and member-list autocomplete before inserting the new line, so a following Tab indents instead of accepting a stale suggestion. All 27 tests pass and the Debug editor was rebuilt in builds/debug.</notes>
+    <filesChanged>src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-7">
+    <prompt>collapse (and expand) brackets funcs and classes</prompt>
+    <requirements>code collapse and expand implemented</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+  <task id="ZE-8">
+    <prompt>bug in scripting:
+i tried making a new vector3 and multiplying it by the forward vector from transform but it said "Line 15, column 9: Arithmetic   operands must be numeric or compatible Vector3 values"</prompt>
+    <requirements>fixed bug</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+  <task id="ZE-9">
+    <prompt>scripting runtime:
+I need a way to be able to pass behaviors (and inherit from them), i for instance tried to pass my rigidbody to my script, but i  cant, I also tried to inherit from rigidbody so i could do it directly and i cant, so theres no possible way at present to actually  control my rigidbody at all, this needs fixed. (basically it does not identify rigidbody as a type at all)</prompt>
+    <requirements>ability to reference behaviors</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+  <task id="ZE-10">
+    <prompt>ts add the following methods to a new mathf class:
+  -lerp
+  -sin
+  -cos
+  -tan
+  -sqrt
+  -dot
+  -cross
+  -exp
+  -round</prompt>
+    <requirements>new math helper functions implemented</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>true</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+  <task id="ZE-11">
+    <prompt>timer:
+add a timer the idea is we would deifine it as below and it would create an invisible gameObject which the deletes after its done
+  -make_timer(time_float_in_seconds).finished.connect(function_to_run)
+  -finished is just a regular signal</prompt>
+    <requirements>timer is added</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+  <task id="ZE-12">
+    <prompt>if we dont already then add a not keyworld (not, and, or, nor and ! or !=)
+(this should just modify any expression)</prompt>
+    <requirements>verified modifier keywords</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+  <task id="ZE-13">
+    <prompt>for loops make sure we have them being conditional (while x=true)</prompt>
+    <requirements>for loops are conditional</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+  <task id="ZE-14">
+    <prompt>inspector:
+lets add a border or something around each behavior in the inspector so its easier to see where one ends and another begins</prompt>
+    <requirements>inspector borders</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+  <task id="ZE-15">
+    <prompt>lets also throw a border around the entire "behaviors attached section"</prompt>
+    <requirements>border around all behaviors</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <notes></notes>
+    <filesChanged></filesChanged>
+  </task>
+</tasks>

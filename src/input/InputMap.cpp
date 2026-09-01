@@ -24,6 +24,11 @@ const std::vector<std::string>& ButtonNames() {
     static const auto names=[] { std::vector<std::string> n{""}; for(char c='A';c<='Z';++c) n.emplace_back(1,c); for(char c='0';c<='9';++c)n.emplace_back(1,c); for(const auto& [k,v]:keys)n.push_back(k); for(const auto& [k,v]:padButtons)n.push_back(k); return n; }();
     return names;
 }
+std::optional<std::string> FirstPressedButton(const Hardware& current,const Hardware& previous,int controller) {
+    if(controller<0 || controller>=4)throw std::runtime_error("Controller must be 1-4.");
+    for(const auto& name:ButtonNames())if(!name.empty() && Down(name,current,controller) && !Down(name,previous,controller))return name;
+    return std::nullopt;
+}
 void Validate(const Map& map) {
     Require(map.size()<=256,"Input Map allows at most 256 actions."); std::set<std::string> names;
     for(const auto& a:map) {

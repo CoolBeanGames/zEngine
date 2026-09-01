@@ -296,6 +296,7 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
     if(message==WM_KILLFOCUS || message==WM_LBUTTONDOWN || message==WM_VSCROLL || message==WM_HSCROLL || message==WM_MOUSEWHEEL)self->HideCompletion();
     if(message==WM_KEYDOWN) {
         if(w==VK_ESCAPE && !self->completion_.items.empty()){self->HideCompletion();return 0;}
+        if(w==VK_RETURN)self->HideCompletion();
         if((w==VK_UP || w==VK_DOWN) && !self->completion_.items.empty() && self->completion_.members) {
             self->completionSelection_=(self->completionSelection_+(w==VK_DOWN?1:static_cast<int>(self->completion_.items.size())-1))%self->completion_.items.size();
             SendMessageW(self->completions_,LB_SETCURSEL,self->completionSelection_,0);InvalidateRect(window,nullptr,FALSE);return 0;
@@ -313,7 +314,7 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
         if(self->AcceptCompletion())return 0;
         SendMessageW(window, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"    ")); return 0;
     }
-    if (message == WM_CHAR && (w == VK_RETURN || w == ')' || w == '}')) {
+    if (message == WM_CHAR && (w == VK_RETURN || w == '(' || w == ')' || w == '[' || w == ']' || w == '{' || w == '}' || w == ' ')) {
         CHARRANGE range{}; SendMessageW(window,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&range));
         if (const auto edit=scriptTyping::OnCharacter(self->Text(),range.cpMin,range.cpMax,static_cast<wchar_t>(w))) {
             range={static_cast<LONG>(edit->start),static_cast<LONG>(edit->end)};

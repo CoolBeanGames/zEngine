@@ -22,6 +22,7 @@ int main(int argc,char**){try{
     states=system.Tick(h);Check(!states.at("jump").justPressed && states.at("jump").pressed,"Held transition");
     h.keys[32]=false;states=system.Tick(h);Check(states.at("jump").justReleased && !states.at("jump").pressed,"Release transition");
     h.keys['A']=true;h.keys['D']=true;states=system.Tick(h);Check(states.at("move").x==0,"Opposing keys");
+    input::Hardware previous,current;current.keys['Q']=true;Check(input::FirstPressedButton(current,previous)=="Q","Keyboard listen binding");previous=current;Check(!input::FirstPressedButton(current,previous),"Held input was reported as a new listen binding");current.keys['Q']=false;current.pads[1].connected=true;current.pads[1].buttons=4096;Check(input::FirstPressedButton(current,previous,1)=="Pad A","Controller listen binding");
     h.keys['A']=false;h.keys['W']=true;states=system.Tick(h);Check(std::abs(states.at("move").x-0.70710678f)<0.0001f && states.at("move").y>0,"Normalized diagonal");
     h.keys[37]=true;states=system.Tick(h);Check(states.at("horizontal").x==-1,"1D button axis");
     h.pads[0].connected=true;h.pads[0].axes[0]=0.1f;states=system.Tick(h);Check(states.at("stick").x==0,"Analog deadzone");
@@ -29,16 +30,16 @@ int main(int argc,char**){try{
     h.pads[0].connected=false;states=system.Tick(h);Check(states.at("stick").justReleased,"Controller disconnect release");
     states=system.Tick({});Check(states.at("move").justReleased,"Focus release");
     auto compiled=script::Compiler::Compile(R"(class Test : gameObject {
-        export int presses; export int releases; export int held; export bool polled; export Vector3 movement;
+        export int presses; export int releases; export int held; export bool polled; export Vector3 movement; export Vector3 action_axis;
         func start(){Input.action("jump").just_pressed.connect(press);Input.action("jump").just_released.connect(release);Input.action("jump").is_pressed.connect(holding);}
         func press(){presses+=1;transform.position.y+=1;polled=Input.is_action_just_pressed("jump");}
         func release(){releases+=1;}func holding(){held+=1;}
-        func update(float dt){movement=Input.get_vector("move");}
+        func update(float dt){movement=Input.get_vector("move");action_axis=Input.action("move").axis;}
     })");Check(static_cast<bool>(compiled),compiled.diagnostics.empty()?"Input compile":compiled.diagnostics[0].message.c_str());
     script::Runtime vm(compiled.program);auto object=vm.Create("Test");script::InputFrame frame{{"jump",{}},{"move",{}}};vm.SetInput(frame,false);vm.Start(object);
     frame["jump"]={1,0,true,true,false};frame["move"]={0.5,0.5,true,true,false};vm.SetInput(frame);vm.Update(object,0.1);
     Check(std::get<std::int64_t>(vm.Get(object,"presses"))==1 && std::get<bool>(vm.Get(object,"polled")),"Input signals/poll disagree");
-    Check(std::get<script::Vector3>(vm.Get(object,"movement")).y==0.5,"Input vector");
+    Check(std::get<script::Vector3>(vm.Get(object,"movement")).y==0.5,"Input vector");Check(std::get<script::Vector3>(vm.Get(object,"action_axis")).x==0.5&&std::get<script::Vector3>(vm.Get(object,"action_axis")).y==0.5,"2D InputAction axis must be a Vector3");
     frame["jump"].justPressed=false;vm.SetInput(frame);Check(std::get<std::int64_t>(vm.Get(object,"held"))==2,"Held signal each tick");
     frame["jump"]={0,0,false,false,true};vm.SetInput(frame);Check(std::get<std::int64_t>(vm.Get(object,"releases"))==1,"Release signal");
     ObjectStore objects;ScriptHost host;auto& owner=objects.Create();auto& behavior=owner.AddBehavior<ScriptBehavior>("InputMover.zsh");
@@ -50,6 +51,6 @@ int main(int argc,char**){try{
     auto dir=std::filesystem::temp_directory_path()/(L"zEngineInputTest-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));Check(std::filesystem::create_directory(dir),"Cannot create isolated input test directory");
     struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code e;std::filesystem::remove_all(p,e);}} cleanup{dir};
     input::Ensure(dir);auto old=input::Load(dir);input::Save(dir,map,&old);Check(input::Decode(input::Load(dir)).size()==5,"Input persistence");Reject([&]{input::Save(dir,{},&old);});input::Ensure(dir);Check(input::Decode(input::Load(dir)).size()==5,"Ensure overwrote map");
-    {InputMapEditor editor(nullptr,dir);auto window=editor.Window();Check(GetDlgItem(window,InputMapEditor::Save)!=nullptr,"Input editor controls");SendMessageW(window,WM_COMMAND,InputMapEditor::Add,0);Check(editor.Dirty(),"Add action UI");SetDlgItemTextW(window,InputMapEditor::Name,L"ui_action");SendMessageW(window,WM_COMMAND,InputMapEditor::Save,0);Check(!editor.Dirty() && input::Decode(input::Load(dir)).back().name=="ui_action","Input editor save");SendMessageW(window,WM_COMMAND,InputMapEditor::Remove,0);SendMessageW(window,WM_COMMAND,InputMapEditor::Save,0);Check(input::Decode(input::Load(dir)).size()==5,"Remove action UI");if(argc>1)CaptureWindow(window,L"input-map-qa.bmp");}
+    {InputMapEditor editor(nullptr,dir);auto window=editor.Window();Check(GetDlgItem(window,InputMapEditor::Save)!=nullptr&&GetDlgItem(window,InputMapEditor::Listen0)!=nullptr,"Input editor controls");SendMessageW(window,WM_COMMAND,InputMapEditor::Add,0);DWORD start=0,end=0;SendDlgItemMessageW(window,InputMapEditor::Name,EM_GETSEL,reinterpret_cast<WPARAM>(&start),reinterpret_cast<LPARAM>(&end));Check(editor.Dirty()&&GetFocus()==GetDlgItem(window,InputMapEditor::Name)&&start==0&&end==GetWindowTextLengthW(GetDlgItem(window,InputMapEditor::Name)),"Add action did not select its default name");SetDlgItemTextW(window,InputMapEditor::Name,L"ui_action");SendMessageW(window,WM_COMMAND,MAKEWPARAM(InputMapEditor::Listen0,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(window,InputMapEditor::Listen0)));Check(GetWindowTextLengthW(GetDlgItem(window,InputMapEditor::Listen0))>6,"Listen mode did not start");SendMessageW(window,WM_KEYDOWN,VK_ESCAPE,0);SetDlgItemTextW(window,InputMapEditor::Name,L"ui_action");SendMessageW(window,WM_COMMAND,InputMapEditor::Save,0);Check(!editor.Dirty() && input::Decode(input::Load(dir)).back().name=="ui_action","Input editor save");SendMessageW(window,WM_COMMAND,InputMapEditor::Remove,0);SendMessageW(window,WM_COMMAND,InputMapEditor::Save,0);Check(input::Decode(input::Load(dir)).size()==5,"Remove action UI");if(argc>1)CaptureWindow(window,L"input-map-qa.bmp");}
     std::cout<<"PASS Input Map, axes, signals, persistence and editor\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

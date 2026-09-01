@@ -49,7 +49,7 @@ Index::Index() {
     for(const auto name:{L"is_action_pressed",L"is_action_just_pressed",L"is_action_just_released"})add(L"Input",name,L"bool",true);
     add(L"Input",L"action",L"InputAction",true);add(L"Input",L"get_axis",L"float",true);add(L"Input",L"get_vector",L"Vector3",true);
     for(const auto name:{L"just_pressed",L"just_released",L"is_pressed",L"was_just_pressed",L"was_just_released"})add(L"InputAction",name,L"signal");
-    add(L"InputAction",L"pressed",L"bool");add(L"InputAction",L"axis",L"float");add(L"InputAction",L"value",L"Vector3");
+    add(L"InputAction",L"pressed",L"bool");add(L"InputAction",L"axis",L"Vector3");add(L"InputAction",L"value",L"Vector3");
     add(L"Physics",L"cast",L"gameObject",true);add(L"Physics",L"cast_all",L"array",true);
     add(L"PhysicsBody",L"velocity",L"Vector3");add(L"PhysicsBody",L"angular_velocity",L"Vector3");
     for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})add(L"PhysicsBody",name,L"void",true);

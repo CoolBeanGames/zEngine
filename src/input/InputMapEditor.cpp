@@ -21,6 +21,7 @@ InputMapEditor::InputMapEditor(HWND owner,std::filesystem::path assets):assets_(
     auto combo=[&](int id){return control(L"COMBOBOX",L"",id,CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP);};
     Combo(combo(Type),{"Button","Button Axis 1D","Button Axis 2D","Analog Axis 1D","Analog Axis 2D"});
     for(int i=0;i<4;++i)Combo(combo(Binding0+i),zengine::input::ButtonNames());
+    for(int i=0;i<4;++i)control(L"BUTTON",L"Listen",Listen0+i,WS_TABSTOP);
     Combo(combo(Controller),{"1","2","3","4"});
     Combo(combo(Analog),{"Left X / Left Stick","Left Y / Right Stick","Right X","Right Y","Left Trigger","Right Trigger"});
     control(L"EDIT",L"0.2",Deadzone,ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP);SendDlgItemMessageW(window_,Deadzone,EM_SETLIMITTEXT,16,0);
@@ -34,18 +35,21 @@ void InputMapEditor::Title(){SetWindowTextW(window_,(std::wstring(dirty_?L"* ":L
 void InputMapEditor::Show(){if(!dirty_)Load();ShowWindow(window_,SW_SHOWNORMAL);SetForegroundWindow(window_);}
 void InputMapEditor::Layout(){if(!list_)return;RECT r;GetClientRect(window_,&r);const int width=std::max(620L,r.right);MoveWindow(list_,12,48,220,std::max(1L,r.bottom-103),TRUE);MoveWindow(GetDlgItem(window_,Add),12,12,94,26,TRUE);MoveWindow(GetDlgItem(window_,Remove),112,12,120,26,TRUE);MoveWindow(GetDlgItem(window_,Save),width-178,12,76,26,TRUE);MoveWindow(GetDlgItem(window_,Reload),width-94,12,76,26,TRUE);
     const int ids[]={Name,Type,Binding0,Binding0+1,Binding0+2,Binding0+3,Controller,Analog,Deadzone};
-    for(int i=0;i<9;++i){MoveWindow(GetDlgItem(window_,4200+i),250,52+i*40,175,24,TRUE);MoveWindow(GetDlgItem(window_,ids[i]),430,48+i*40,width-448,i==0||i==8?26:240,TRUE);}
+    for(int i=0;i<9;++i){MoveWindow(GetDlgItem(window_,4200+i),250,52+i*40,175,24,TRUE);const bool binding=i>=2&&i<6;MoveWindow(GetDlgItem(window_,ids[i]),430,48+i*40,width-448-(binding?82:0),i==0||i==8?26:240,TRUE);if(binding)MoveWindow(GetDlgItem(window_,Listen0+i-2),width-94,48+i*40,76,26,TRUE);}
     MoveWindow(GetDlgItem(window_,Apply),430,412,150,27,TRUE);MoveWindow(status_,12,std::max(445L,r.bottom-42),width-24,36,TRUE);
 }
 void InputMapEditor::Populate(){SendMessageW(list_,LB_RESETCONTENT,0,0);for(const auto& a:map_)SendMessageW(list_,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(Wide(a.name).c_str()));}
 void InputMapEditor::TypeControls(){
     const int kind=static_cast<int>(SendDlgItemMessageW(window_,Type,CB_GETCURSEL,0,0));
-    for(int i=0;i<4;++i)EnableWindow(GetDlgItem(window_,Binding0+i),selected_>=0 && kind<3 && i<(kind==0?1:kind==1?2:4));
+    for(int i=0;i<4;++i){const bool enabled=selected_>=0 && kind<3 && i<(kind==0?1:kind==1?2:4);EnableWindow(GetDlgItem(window_,Binding0+i),enabled);EnableWindow(GetDlgItem(window_,Listen0+i),enabled);ShowWindow(GetDlgItem(window_,Listen0+i),kind<3?SW_SHOW:SW_HIDE);}
     EnableWindow(GetDlgItem(window_,Analog),selected_>=0 && kind>=3);EnableWindow(GetDlgItem(window_,Deadzone),selected_>=0 && kind>=3);
     const auto analog=GetDlgItem(window_,Analog);const int old=static_cast<int>(SendMessageW(analog,CB_GETCURSEL,0,0));SendMessageW(analog,CB_RESETCONTENT,0,0);
     if(kind==4)Combo(analog,{"Left Stick","Right Stick"});else Combo(analog,{"Left Stick X","Left Stick Y","Right Stick X","Right Stick Y","Left Trigger","Right Trigger"});
     SendMessageW(analog,CB_SETCURSEL,std::clamp(old,0,kind==4?1:5),0);
 }
+void InputMapEditor::BeginListen(int binding){if(binding<0||binding>=4||!IsWindowEnabled(GetDlgItem(window_,Binding0+binding)))return;listening_=binding;listenBaseline_=zengine::input::PollWindows(true);SetTimer(window_,1,30,nullptr);SetWindowTextW(status_,L"Listening... press a keyboard, mouse, or controller button. Escape cancels.");for(int i=0;i<4;++i)SetWindowTextW(GetDlgItem(window_,Listen0+i),i==binding?L"Listening...":L"Listen");}
+void InputMapEditor::StopListen(const wchar_t* message){if(listening_<0)return;KillTimer(window_,1);listening_=-1;for(int i=0;i<4;++i)SetWindowTextW(GetDlgItem(window_,Listen0+i),L"Listen");if(message)SetWindowTextW(status_,message);}
+void InputMapEditor::PollListen(){if(listening_<0)return;const auto current=zengine::input::PollWindows(true);const int controller=std::max(0,static_cast<int>(SendDlgItemMessageW(window_,Controller,CB_GETCURSEL,0,0)));if(const auto pressed=zengine::input::FirstPressedButton(current,listenBaseline_,controller)){const auto& names=zengine::input::ButtonNames();const auto found=std::find(names.begin(),names.end(),*pressed);SendDlgItemMessageW(window_,Binding0+listening_,CB_SETCURSEL,static_cast<WPARAM>(found-names.begin()),0);dirty_=true;Title();const auto text=L"Assigned "+Wide(*pressed)+L".";StopListen(text.c_str());return;}listenBaseline_=current;}
 void InputMapEditor::Select(int index){loading_=true;selected_=index;SendMessageW(list_,LB_SETCURSEL,index,0);const zengine::input::Action empty;const auto& a=index>=0?map_.at(index):empty;
     SetDlgItemTextW(window_,Name,Wide(a.name).c_str());SendDlgItemMessageW(window_,Type,CB_SETCURSEL,static_cast<int>(a.kind),0);TypeControls();
     for(int i=0;i<4;++i){const auto& names=zengine::input::ButtonNames();SendDlgItemMessageW(window_,Binding0+i,CB_SETCURSEL,std::find(names.begin(),names.end(),a.buttons[i])-names.begin(),0);}
@@ -66,6 +70,8 @@ LRESULT CALLBACK InputMapEditor::Procedure(HWND w,UINT m,WPARAM wp,LPARAM lp){au
         if(m==WM_CTLCOLORSTATIC || m==WM_CTLCOLOREDIT || m==WM_CTLCOLORLISTBOX || m==WM_CTLCOLORBTN)return editorStyle::ControlColor(m,wp);
         if(m==WM_GETMINMAXINFO){auto* info=reinterpret_cast<MINMAXINFO*>(lp);info->ptMinTrackSize={680,555};return 0;}
         if(m==WM_SIZE){self->Layout();return 0;}
+        if(m==WM_TIMER && wp==1){self->PollListen();return 0;}
+        if(m==WM_KEYDOWN && wp==VK_ESCAPE && self->listening_>=0){self->StopListen(L"Input listening cancelled.");return 0;}
         if(m==WM_CLOSE){if(self->ConfirmClose())ShowWindow(w,SW_HIDE);return 0;}
         if(m==WM_COMMAND && !self->loading_){const int id=LOWORD(wp),event=HIWORD(wp);
             if((event==EN_CHANGE && (id==Name || id==Deadzone)) || (event==CBN_SELCHANGE && (id==Type || (id>=Binding0 && id<Binding0+4) || id==Controller || id==Analog))){if(id==Type)self->TypeControls();self->dirty_=true;self->Title();return 0;}
@@ -73,7 +79,8 @@ LRESULT CALLBACK InputMapEditor::Procedure(HWND w,UINT m,WPARAM wp,LPARAM lp){au
             if(id==Apply)self->ApplyFields();
             if(id==Save)self->SaveFile();
             if(id==Reload && (!self->dirty_ || MessageBoxW(w,L"Discard unsaved Input Map edits and reload?",L"Reload Input Map",MB_YESNO|MB_ICONQUESTION)==IDYES))self->Load();
-            if(id==Add){self->ApplyFields();auto next=self->map_;zengine::input::Action a;unsigned n=1;do{a.name="action_"+std::to_string(n++);}while(std::any_of(next.begin(),next.end(),[&](const auto& v){return v.name==a.name;}));next.push_back(a);zengine::input::Validate(next);self->map_=std::move(next);self->dirty_=true;self->Populate();self->Select(static_cast<int>(self->map_.size()-1));self->Title();}
+            if(id>=Listen0 && id<Listen0+4 && event==BN_CLICKED)self->BeginListen(id-Listen0);
+            if(id==Add){self->ApplyFields();auto next=self->map_;zengine::input::Action a;unsigned n=1;do{a.name="action_"+std::to_string(n++);}while(std::any_of(next.begin(),next.end(),[&](const auto& v){return v.name==a.name;}));next.push_back(a);zengine::input::Validate(next);self->map_=std::move(next);self->dirty_=true;self->Populate();self->Select(static_cast<int>(self->map_.size()-1));self->Title();const auto name=GetDlgItem(w,Name);SetFocus(name);SendMessageW(name,EM_SETSEL,0,-1);}
             if(id==Remove && self->selected_>=0){self->map_.erase(self->map_.begin()+self->selected_);self->dirty_=true;self->Populate();self->Select(self->map_.empty()?-1:0);self->Title();}
             return 0;
         }

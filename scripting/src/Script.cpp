@@ -622,7 +622,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     }
     program.classes.emplace(input.name,std::move(input));
     Class action;action.name="InputAction";action.signals={"just_pressed","just_released","is_pressed","was_just_pressed","was_just_released"};
-    action.fields={{{Token::Identifier,"pressed"},"bool"},{{Token::Identifier,"axis"},"float"},{{Token::Identifier,"value"},"Vector3"}};
+    action.fields={{{Token::Identifier,"pressed"},"bool"},{{Token::Identifier,"axis"},"Vector3"},{{Token::Identifier,"value"},"Vector3"}};
     program.classes.emplace(action.name,std::move(action));
     Class physicsService;physicsService.name="PhysicsService";
     for(const auto& name:{"cast","cast_all"}){Function f;f.params={"Vector3","Vector3","int"};f.result=std::string(name)=="cast"?"gameObject":"array";physicsService.methods.emplace(name,std::move(f));}
@@ -1196,9 +1196,9 @@ struct Runtime::Impl {
         inputFrame=frame;
         for(const auto& [name,s]:frame) {
             if(!inputActions.contains(name))inputActions.emplace(name,Create("InputAction",{}));
-            auto& fields=Resolve(inputActions.at(name)).fields;fields[0]=s.pressed;fields[1]=s.x;fields[2]=Vector3{s.x,s.y,0};
+            auto& fields=Resolve(inputActions.at(name)).fields;fields[0]=s.pressed;fields[1]=Vector3{s.x,s.y,0};fields[2]=Vector3{s.x,s.y,0};
         }
-        for(const auto& [name,ref]:inputActions)if(!frame.contains(name)){auto& f=Resolve(ref).fields;f[0]=false;f[1]=0.0;f[2]=Vector3{};}
+        for(const auto& [name,ref]:inputActions)if(!frame.contains(name)){auto& f=Resolve(ref).fields;f[0]=false;f[1]=Vector3{};f[2]=Vector3{};}
         if(emitEvents)for(const auto& [name,s]:frame) {
             const auto ref=inputActions.at(name);
             if(s.justPressed){Signal({ref,"just_pressed"},"emit",{},{});Signal({ref,"was_just_pressed"},"emit",{},{});}

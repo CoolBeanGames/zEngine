@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -22,6 +23,7 @@ struct Hardware { std::array<bool,256> keys{}; std::array<Pad,4> pads{}; };
 struct State { float x=0,y=0; bool pressed=false,justPressed=false,justReleased=false; };
 using States = std::map<std::string,State>;
 const std::vector<std::string>& ButtonNames();
+std::optional<std::string> FirstPressedButton(const Hardware& current,const Hardware& previous,int controller=0);
 void Validate(const Map&);
 std::string Encode(const Map&);
 Map Decode(const std::string&);
