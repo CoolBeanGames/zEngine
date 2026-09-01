@@ -14,6 +14,7 @@
 #include <cmath>
 #include <limits>
 #include <sstream>
+#include <cstring>
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -325,6 +326,7 @@ void Renderer::CreateEditorGuides()
     handles.ByteWidth=1024*sizeof(Vertex); handles.Usage=D3D11_USAGE_DYNAMIC;
     handles.BindFlags=D3D11_BIND_VERTEX_BUFFER; handles.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
     ThrowIfFailed(device_->CreateBuffer(&handles,nullptr,&axesBuffer_),"Create transform handle buffer");
+    handles.ByteWidth=65536*sizeof(Vertex);ThrowIfFailed(device_->CreateBuffer(&handles,nullptr,&colliderBuffer_),"Create collider guide buffer");
     D3D11_DEPTH_STENCIL_DESC depth{};
     depth.DepthEnable = FALSE;
     ThrowIfFailed(device_->CreateDepthStencilState(&depth, &overlayDepth_), "Create editor overlay depth state");
@@ -504,6 +506,15 @@ void Renderer::Render(const ViewportFrame& frame)
         }
         ++lastMeshCount_;
     }
+    if(frame.showEditorGuides && !frame.colliders.empty()) {
+        std::vector<Vertex> vertices;vertices.reserve(frame.colliders.size()*160);const auto segment=[&](Float3 a,Float3 b,Float3 color){vertices.push_back({a,{0,1,0},color});vertices.push_back({b,{0,1,0},color});};
+        for(const auto& draw:frame.colliders){const Float3 color=draw.selected?Float3{1,.8f,.15f}:Float3{.2f,.85f,.65f};const auto transform=TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity());
+            const auto point=[&](float x,float y,float z){XMFLOAT3 out;XMStoreFloat3(&out,XMVector3TransformCoord(XMVectorSet(x,y,z,1),transform));return Float3{out.x,out.y,out.z};};
+            if(draw.shape==zengine::physics::ColliderShape::Box){const int edges[][2]={{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};Float3 p[8];for(int i=0;i<8;++i)p[i]=point((i&1)?.5f:-.5f,(i&4)?.5f:-.5f,(i&2)?.5f:-.5f);for(auto edge:edges)segment(p[edge[0]],p[edge[1]],color);}
+            else {constexpr int slices=24;const float radius=.5f;const float half=draw.shape==zengine::physics::ColliderShape::Sphere?0:.5f;for(int plane=0;plane<3;++plane)for(int i=0;i<slices;++i){const float a=2*3.14159265f*i/slices,b=2*3.14159265f*(i+1)/slices;auto circle=[&](float angle){const float c=std::cos(angle)*radius,s=std::sin(angle)*radius;if(draw.shape==zengine::physics::ColliderShape::Sphere)return plane==0?point(c,s,0):plane==1?point(c,0,s):point(0,c,s);return plane==0?point(c,s+(s>=0?half:-half),0):point(c,s>=0?half:-half,s);};segment(circle(a),circle(b),color);} }
+        }
+        if(vertices.size()>65536)throw std::runtime_error("Collider guide buffer overflow.");D3D11_MAPPED_SUBRESOURCE mapped{};ThrowIfFailed(context_->Map(colliderBuffer_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"Map collider guides");std::memcpy(mapped.pData,vertices.data(),vertices.size()*sizeof(Vertex));context_->Unmap(colliderBuffer_.Get(),0);drawLines(colliderBuffer_.Get(),static_cast<UINT>(vertices.size()),XMMatrixIdentity());
+    }
     if (frame.showEditorGuides && frame.selectionTransform)
     {
         const auto parent=frame.selectionParent?XMLoadFloat4x4(&*frame.selectionParent):XMMatrixIdentity();
@@ -523,6 +534,12 @@ void Renderer::Render(const ViewportFrame& frame)
         axesVertexCount_=static_cast<UINT>(shape.lines.size()*2);
         context_->OMSetDepthStencilState(overlayDepth_.Get(), 0);
         drawLines(axesBuffer_.Get(), axesVertexCount_, parent);
+    }
+    if(frame.fps) {
+        const auto glyph=[](char c)->std::string_view{switch(c){case 'F':return "11111100001000011110100001000010000";case 'P':return "11110100011000111110100001000010000";case 'S':return "01111100001000001110000010000111110";case '0':return "01110100011001110101110011000101110";case '1':return "00100011000010000100001000010001110";case '2':return "01110100010000100010001000100011111";case '3':return "11110000010000101110000010000111110";case '4':return "00010001100101010010111110001000010";case '5':return "11111100001000011110000010000111110";case '6':return "01110100001000011110100011000101110";case '7':return "11111000010001000100010000100001000";case '8':return "01110100011000101110100011000101110";case '9':return "01110100011000101111000010000101110";default:return "00000000000000000000000000000000000";}};
+        const auto label=std::string("FPS ")+std::to_string(*frame.fps);std::vector<Vertex> text;const float cellX=.012f,cellY=.027f;const float left=std::max(-.95f,.96f-static_cast<float>(label.size()*6)*cellX),top=.94f;
+        for(std::size_t character=0;character<label.size();++character){const auto bits=glyph(label[character]);for(int row=0;row<7;++row)for(int column=0;column<5;++column)if(bits[row*5+column]=='1'){const float x=left+(character*6+column)*cellX,y=top-row*cellY;text.push_back({{x,y,0},{0,1,0},{.92f,.95f,1}});text.push_back({{x+cellX*.8f,y,0},{0,1,0},{.92f,.95f,1}});}}
+        if(text.size()<=1024){D3D11_MAPPED_SUBRESOURCE mapped{};ThrowIfFailed(context_->Map(axesBuffer_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"Map FPS overlay");std::memcpy(mapped.pData,text.data(),text.size()*sizeof(Vertex));context_->Unmap(axesBuffer_.Get(),0);SceneConstants constants{};XMStoreFloat4x4(&constants.worldViewProjection,XMMatrixIdentity());XMStoreFloat4x4(&constants.normalWorld,XMMatrixIdentity());constants.lightDirection=XMFLOAT4{0,0,1,1};ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"Map FPS constants");*static_cast<SceneConstants*>(mapped.pData)=constants;context_->Unmap(sceneConstantBuffer_.Get(),0);ID3D11Buffer* buffer=axesBuffer_.Get();context_->IASetVertexBuffers(0,1,&buffer,&stride,&offset);context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);context_->OMSetDepthStencilState(overlayDepth_.Get(),0);context_->PSSetShaderResources(0,1,whiteTexture_.GetAddressOf());context_->Draw(static_cast<UINT>(text.size()),0);}
     }
 
     // Do not let pipeline bindings keep an otherwise released model alive in an empty scene.

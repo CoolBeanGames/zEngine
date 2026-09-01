@@ -2,6 +2,7 @@
 #include "EditorStyle.h"
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
+#include "physics/PhysicsBehavior.h"
 #include <windowsx.h>
 #include <algorithm>
 #include <cerrno>
@@ -153,14 +154,26 @@ void InspectorPanel::RefreshBehaviors()
         }
         behaviorFields_.push_back(std::move(entry));
     };
+    const auto addShape = [&](zengine::physics::Collider* collider) {
+        BehaviorField entry;entry.behavior=collider;entry.name="shape";entry.label=L"Shape";entry.combo=true;
+        const auto id=FirstBehaviorField+behaviorFields_.size();entry.field.window=CreateWindowExW(0,L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
+        if(!entry.field.window)throw std::runtime_error("Cannot create collider shape control.");SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+        for(const auto* value:{L"Box",L"Sphere",L"Capsule"})SendMessageW(entry.field.window,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(value));behaviorFields_.push_back(std::move(entry));
+    };
     if (object_) for (std::size_t i=0;i<object_->BehaviorCount();++i)
     {
         auto& behavior=object_->BehaviorAt(i);
         auto* script=dynamic_cast<zengine::ScriptBehavior*>(&behavior);
         const auto name=script ? std::filesystem::path(Wide(script->Asset())).stem().wstring() :
-            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" : L"Native Behavior";
+            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
         add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
+        if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior))addShape(collider);
+        if(auto* body=dynamic_cast<zengine::physics::Body*>(&behavior)) {
+            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"layer",L"Collision layer bits"},{"mask",L"Collision mask bits"},{"friction",L"Friction"},{"bounciness",L"Bounciness (0 - 1)"}})add(&behavior,key,label,false,true,true);
+            if(dynamic_cast<zengine::physics::RigidBody*>(body)){add(&behavior,"mass",L"Mass",false,true,true);add(&behavior,"gravity",L"Gravity scale",false,true,true);}
+            if(dynamic_cast<zengine::physics::MovingBody*>(body))for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"velocity",L"Velocity"},{"angular_velocity",L"Angular velocity"},{"constant_force",L"Constant force"},{"constant_torque",L"Constant torque"}})for(int axis=0;axis<3;++axis){add(&behavior,key,label,false,true,true);behaviorFields_.back().axis=axis;}
+        }
         if (script && scriptHost_)
         {
             const auto error=scriptHost_->Error(*script);
@@ -182,7 +195,8 @@ void InspectorPanel::RefreshBehaviors()
     for (std::size_t i=0;i<behaviorFields_.size();++i) if (auto control=behaviorFields_[i].field.window)
     {
         const auto value=BehaviorValue(i);
-        SetWindowTextW(control,value.c_str()); behaviorFields_[i].field.focusText=value;
+        if(behaviorFields_[i].combo)SendMessageW(control,CB_SETCURSEL,dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)?static_cast<int>(dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)->Shape()):0,0);
+        else SetWindowTextW(control,value.c_str()); behaviorFields_[i].field.focusText=value;
     }
     updating_=false;
     EnableWindow(addScriptButton_, object_ != nullptr && editData_);
@@ -207,6 +221,7 @@ int InspectorPanel::RowHeight(const BehaviorField& entry) const
 std::wstring InspectorPanel::BehaviorValue(std::size_t index)
 {
     const auto& entry=behaviorFields_.at(index);
+    if(entry.combo)return {};
     if (entry.priority) { std::wostringstream out; out<<std::setprecision(9)<<entry.behavior->Priority(); return out.str(); }
     if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
         for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name) {
@@ -216,6 +231,13 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
             for(int axis=0;axis<=entry.axis;++axis)input>>v;
             std::wostringstream out;out<<std::setprecision(9)<<v;return out.str();
         }
+    if(auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior)) {
+        std::wostringstream out;out<<std::setprecision(9);
+        if(entry.name=="layer")out<<body->Layer();else if(entry.name=="mask")out<<body->Mask();else if(entry.name=="friction")out<<body->Friction();else if(entry.name=="bounciness")out<<body->Bounciness();
+        else if(auto* rigid=dynamic_cast<zengine::physics::RigidBody*>(body);rigid&&(entry.name=="mass"||entry.name=="gravity"))out<<(entry.name=="mass"?rigid->Mass():rigid->GravityScale());
+        else if(auto* moving=dynamic_cast<zengine::physics::MovingBody*>(body)){const auto value=entry.name=="velocity"?moving->Velocity():entry.name=="angular_velocity"?moving->AngularVelocity():entry.name=="constant_force"?moving->ConstantForce():moving->ConstantTorque();out<<(entry.axis==0?value.x:entry.axis==1?value.y:value.z);}
+        return out.str();
+    }
     return {};
 }
 void InspectorPanel::ChangeBehaviorField(std::size_t index)
@@ -224,6 +246,7 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
     auto& entry=behaviorFields_.at(index);
     try
     {
+        if(entry.combo){auto* collider=dynamic_cast<zengine::physics::Collider*>(entry.behavior);const auto selected=SendMessageW(entry.field.window,CB_GETCURSEL,0,0);if(!collider||selected<0||selected>2)throw std::invalid_argument("Invalid collider shape");collider->SetShape(static_cast<zengine::physics::ColliderShape>(selected));entry.field.valid=true;if(changed_)changed_();return;}
         const auto text=ReadText(entry.field.window);
         if (entry.priority)
         {
@@ -248,6 +271,11 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
                 scriptHost_->SetField(*script,entry.name,Utf8(combined));
             }
         }
+        else if(auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior)) {
+            if(entry.name=="layer"||entry.name=="mask"){wchar_t* end=nullptr;errno=0;const auto value=std::wcstoull(text.c_str(),&end,0);while(end&&*end&&std::iswspace(*end))++end;if(!end||end==text.c_str()||*end||errno==ERANGE||value>0xffffffffull)throw std::invalid_argument("Invalid collision bits");if(entry.name=="layer")body->SetLayer(static_cast<std::uint32_t>(value));else body->SetMask(static_cast<std::uint32_t>(value));}
+            else if(entry.axis<0){float value;if(!ParseNumber(text,value))throw std::invalid_argument("Invalid physics number");if(entry.name=="friction")body->SetFriction(value);else if(entry.name=="bounciness")body->SetBounciness(value);else if(auto* rigid=dynamic_cast<zengine::physics::RigidBody*>(body);entry.name=="mass")rigid->SetMass(value);else if(rigid)rigid->SetGravityScale(value);}
+            else {float value;if(!ParseNumber(text,value))throw std::invalid_argument("Invalid physics vector");const auto base=index-entry.axis;zengine::Vec3 vector{};float* parts[]={&vector.x,&vector.y,&vector.z};for(int axis=0;axis<3;++axis){if(axis==entry.axis)*parts[axis]=value;else if(!ParseNumber(BehaviorValue(base+axis),*parts[axis]))throw std::invalid_argument("Invalid physics vector");}auto* moving=dynamic_cast<zengine::physics::MovingBody*>(body);if(entry.name=="velocity")moving->SetVelocity(vector);else if(entry.name=="angular_velocity")moving->SetAngularVelocity(vector);else if(entry.name=="constant_force")moving->SetConstantForce(vector);else moving->SetConstantTorque(vector);}
+        }
         entry.field.valid=true;
         if (changed_) changed_();
     }
@@ -257,6 +285,7 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
 void InspectorPanel::FinishBehaviorField(std::size_t index, bool cancel)
 {
     auto& entry=behaviorFields_.at(index);
+    if(entry.combo)return;
     if (cancel) { updating_=true; SetWindowTextW(entry.field.window,entry.field.focusText.c_str()); updating_=false; ChangeBehaviorField(index); }
     const auto value=BehaviorValue(index);
     updating_=true; SetWindowTextW(entry.field.window,value.c_str()); updating_=false;
@@ -268,7 +297,7 @@ void InspectorPanel::RefreshLiveValues()
         if (GetFocus()!=fields_[i].window && pressed_!=i) SetText(i,FieldValue(i));
     updating_=true;
     for (std::size_t i=0;i<behaviorFields_.size();++i)
-        if (const auto control=behaviorFields_[i].field.window; control && GetFocus()!=control)
+        if (const auto control=behaviorFields_[i].field.window; control && GetFocus()!=control && !behaviorFields_[i].combo)
         { SetWindowTextW(control,BehaviorValue(i).c_str()); behaviorFields_[i].field.valid=true; }
     updating_=false;
 }
@@ -492,11 +521,12 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_ERASEBKGND: return 1;
     case WM_COMMAND:
     {
-        if (!editData_ && (LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddScriptCommand)) return 0;
+        if (!editData_ && (LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddAreaCommand)) return 0;
         const int dynamicIndex=LOWORD(w)-FirstBehaviorField;
         if (dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()))
         {
             if (!updating_ && HIWORD(w)==EN_CHANGE) ChangeBehaviorField(dynamicIndex);
+            if (!updating_ && HIWORD(w)==CBN_SELCHANGE) ChangeBehaviorField(dynamicIndex);
             if (!updating_ && HIWORD(w)==EN_SETFOCUS) behaviorFields_[dynamicIndex].field.focusText=BehaviorValue(dynamicIndex);
             if (!updating_ && HIWORD(w)==EN_KILLFOCUS) FinishBehaviorField(dynamicIndex,false);
             return 0;
@@ -506,6 +536,9 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             const auto menu = CreatePopupMenu();
             AppendMenuW(menu,MF_STRING | (object_->GetBehavior<zengine::MeshRenderer>() ? MF_GRAYED : 0),AddMeshCommand,L"Mesh Renderer");
             AppendMenuW(menu,MF_STRING,AddScriptCommand,L"Script...");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|(object_->GetBehavior<zengine::physics::Collider>()?MF_GRAYED:0),AddColliderCommand,L"Collider");
+            const bool hasBody=object_->GetBehavior<zengine::physics::RigidBody>()||object_->GetBehavior<zengine::physics::KinematicBody>()||object_->GetBehavior<zengine::physics::StaticBody>()||object_->GetBehavior<zengine::physics::Area>();const UINT bodyFlags=MF_STRING|(hasBody?MF_GRAYED:0);
+            AppendMenuW(menu,bodyFlags,AddRigidBodyCommand,L"Rigid Body");AppendMenuW(menu,bodyFlags,AddKinematicBodyCommand,L"Kinematic Body");AppendMenuW(menu,bodyFlags,AddStaticBodyCommand,L"Static Body");AppendMenuW(menu,bodyFlags,AddAreaCommand,L"Area");
             RECT button{}; GetWindowRect(addBehaviorButton_,&button);
             const auto command = TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,button.left,button.bottom,0,window_,nullptr);
             DestroyMenu(menu);
@@ -513,6 +546,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             return 0;
         }
         if (LOWORD(w) == AddScriptCommand) { if (object_ && addScript_) addScript_(); return 0; }
+        if(LOWORD(w)>=AddColliderCommand&&LOWORD(w)<=AddAreaCommand&&object_){if(LOWORD(w)==AddColliderCommand)object_->AddBehavior<zengine::physics::Collider>();else if(LOWORD(w)==AddRigidBodyCommand)object_->AddBehavior<zengine::physics::RigidBody>();else if(LOWORD(w)==AddKinematicBodyCommand)object_->AddBehavior<zengine::physics::KinematicBody>();else if(LOWORD(w)==AddStaticBodyCommand)object_->AddBehavior<zengine::physics::StaticBody>();else object_->AddBehavior<zengine::physics::Area>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if (LOWORD(w) == AddMeshCommand || LOWORD(w) == ChooseMeshButton || LOWORD(w) == CubeMeshButton || LOWORD(w) == ClearMeshButton)
         {
             if (object_ && meshAction_) meshAction_(LOWORD(w) == AddMeshCommand ? MeshAction::Add : LOWORD(w) == ChooseMeshButton ? MeshAction::Choose : LOWORD(w) == CubeMeshButton ? MeshAction::Cube : MeshAction::Clear);

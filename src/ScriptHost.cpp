@@ -56,7 +56,7 @@ namespace
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
               draw(program->HasCode(name,"draw")), input(inputFrame),scene(objects)
         {
@@ -66,6 +66,14 @@ namespace
                 GameObjectId id=0;for(std::size_t i=0;i<scene.Size();++i)if(scene.At(i).Name()==name){if(id)throw std::runtime_error("Ambiguous object name; give scene objects unique names for find().");id=scene.At(i).Id();}
                 return Proxy(id);
             });
+            if(physicsWorld)runtime.SetPhysicsCallbacks(
+                [this,physicsWorld](ObjectRef ownerRef,std::string_view method,const std::vector<Value>& arguments)->Value{
+                    const auto id=NativeId(ownerRef);if(!physicsWorld->Contains(id))throw std::runtime_error("GameObject has no active physics body.");
+                    if(method=="get_velocity")return ToScript(physicsWorld->Velocity(id));if(method=="get_angular_velocity")return ToScript(physicsWorld->AngularVelocity(id));
+                    if(arguments.size()!=1 || !std::holds_alternative<Vector3>(arguments[0]))throw std::runtime_error("Physics body method requires one Vector3.");const auto value=ToNative(std::get<Vector3>(arguments[0]));
+                    if(method=="add_force")physicsWorld->AddForce(id,value);else if(method=="add_impulse")physicsWorld->AddImpulse(id,value);else if(method=="add_torque")physicsWorld->AddTorque(id,value);else if(method=="add_angular_impulse")physicsWorld->AddAngularImpulse(id,value);else if(method=="set_velocity")physicsWorld->SetVelocity(id,value);else if(method=="set_angular_velocity")physicsWorld->SetAngularVelocity(id,value);else throw std::runtime_error("Unknown physics body command.");return {};
+                },
+                [this,physicsWorld](Vector3 from,Vector3 to,std::uint32_t mask){std::vector<ObjectRef> result;for(const auto& hit:physicsWorld->Cast(ToNative(from),ToNative(to),mask))result.push_back(Proxy(hit.object));return result;});
         }
         bool HasStart() const noexcept override { return true; }
         // Synchronize native transform signals even for a listener with no update body.
@@ -74,6 +82,9 @@ namespace
         void Start(GameObject& owner) override { Invoke(owner,[&] { runtime.Start(object); }); }
         void Update(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.SetInput(input); runtime.Update(object,delta); }); }
         void Draw(GameObject& owner) override { Invoke(owner,[&] { runtime.Draw(object); }); }
+        void PhysicsEvent(GameObject& owner,const physics::ContactEvent& event) {
+            Invoke(owner,[&]{const auto body=std::get<ObjectRef>(runtime.Get(object,"physics"));const char* phase=event.phase==physics::ContactPhase::Entered?"entered":event.phase==physics::ContactPhase::Stayed?"stayed":"exited";runtime.Emit({body,std::string(event.area?"area_":"collision_")+phase},{Proxy(event.other)});});
+        }
         std::shared_ptr<const Program> program;
         Runtime runtime;
         ObjectRef object;
@@ -206,7 +217,7 @@ void ScriptHost::RestoreValues(ScriptBehavior& behavior, std::map<std::string,sc
     if (playing_ || records_[&behavior].program) throw std::logic_error("Restore scene variables before compiling or playing.");
     records_[&behavior].overrides=std::move(values);
 }
-bool ScriptHost::Play(ObjectStore& objects)
+bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
 {
     if (playing_) return true;
     // Construct every VM before Start. A compile/initializer error cannot partially start a scene.
@@ -217,7 +228,7 @@ bool ScriptHost::Play(ObjectStore& objects)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,input_,objects,script->Owner().Id())); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,input_,objects,script->Owner().Id(),physicsWorld)); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();
@@ -227,6 +238,12 @@ bool ScriptHost::Play(ObjectStore& objects)
     playing_=true;
     for (auto& [behavior,instance]:ready) behavior->BindInstance(std::move(instance));
     return true;
+}
+void ScriptHost::DispatchPhysicsEvents(const std::vector<physics::ContactEvent>& events)
+{
+    if(!playing_)return;
+    for(const auto& event:events)for(const auto& [behavior,_]:records_)if(behavior->Owner().Id()==event.receiver)
+        if(auto* live=dynamic_cast<BoundScript*>(const_cast<ScriptBehavior*>(behavior)->Instance()))live->PhysicsEvent(const_cast<GameObject&>(behavior->Owner()),event);
 }
 void ScriptHost::Stop(ObjectStore& objects)
 {

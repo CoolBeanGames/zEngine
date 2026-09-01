@@ -19,6 +19,28 @@ target_link_libraries(zEngineGizmos PUBLIC zEngineCore)
 target_compile_features(zEngineCore PUBLIC cxx_std_20)
 target_include_directories(zEngineCore PUBLIC src)
 
+# Jolt is an implementation detail of zEnginePhysics. Keep the public engine API
+# small and portable, and target SSE2 so games still run on older/low-spec PCs.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(CPP_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
+set(CPP_RTTI_ENABLED OFF CACHE BOOL "" FORCE)
+set(USE_SSE4_1 OFF CACHE BOOL "" FORCE)
+set(USE_SSE4_2 OFF CACHE BOOL "" FORCE)
+set(USE_AVX OFF CACHE BOOL "" FORCE)
+set(USE_AVX2 OFF CACHE BOOL "" FORCE)
+set(USE_LZCNT OFF CACHE BOOL "" FORCE)
+set(USE_TZCNT OFF CACHE BOOL "" FORCE)
+set(USE_F16C OFF CACHE BOOL "" FORCE)
+set(USE_FMADD OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/JoltPhysics/Build EXCLUDE_FROM_ALL)
+add_library(zEnginePhysics STATIC src/physics/PhysicsBehavior.cpp src/physics/PhysicsWorld.cpp)
+target_compile_features(zEnginePhysics PUBLIC cxx_std_20)
+target_include_directories(zEnginePhysics PUBLIC src)
+target_link_libraries(zEnginePhysics PUBLIC zEngineCore PRIVATE Jolt)
+
 add_library(ufbx STATIC third_party/ufbx/ufbx.c)
 target_include_directories(ufbx PUBLIC third_party/ufbx)
 
@@ -35,10 +57,10 @@ target_link_libraries(zEngineScriptTools PRIVATE comctl32 ole32)
 target_link_libraries(zEngineScriptTools PRIVATE zEngineScripting)
 target_compile_definitions(zEngineScriptTools PRIVATE ZENGINE_SCRIPT_COMPILER)
 add_library(zEngineScriptHost STATIC src/ScriptHost.cpp)
-target_link_libraries(zEngineScriptHost PUBLIC zEngineCore zEngineScripting)
+target_link_libraries(zEngineScriptHost PUBLIC zEngineCore zEngineScripting zEnginePhysics)
 target_compile_features(zEngineScriptHost PUBLIC cxx_std_20)
 add_library(zEngineScenes STATIC src/Scene.cpp)
-target_link_libraries(zEngineScenes PUBLIC zEngineCore zEngineScriptHost)
+target_link_libraries(zEngineScenes PUBLIC zEngineCore zEngineScriptHost zEnginePhysics)
 add_library(zEngineSceneAssets STATIC src/SceneAssets.cpp)
 target_link_libraries(zEngineSceneAssets PUBLIC zEngineScenes)
 target_compile_definitions(zEngineSceneAssets PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -64,6 +86,8 @@ add_custom_command(TARGET zPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:zPlayer>/shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorCube.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/ColorCube.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx/LICENSE" "$<TARGET_FILE_DIR:zPlayer>/ufbx-LICENSE.txt")
+add_custom_command(TARGET zPlayer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/third_party/JoltPhysics/LICENSE" "$<TARGET_FILE_DIR:zPlayer>/Jolt-LICENSE.txt")
 
 add_executable(zEngine WIN32
     src/Main.cpp
@@ -130,6 +154,10 @@ add_custom_command(TARGET zEngine POST_BUILD
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(zEnginePhysicsTests tests/PhysicsTests.cpp)
+    target_link_libraries(zEnginePhysicsTests PRIVATE zEnginePhysics zEngineScenes)
+    add_test(NAME PhysicsWorld COMMAND zEnginePhysicsTests)
+    set_tests_properties(PhysicsWorld PROPERTIES TIMEOUT 60)
     add_executable(zEngineStyleTests tests/StyleTests.cpp)
     target_include_directories(zEngineStyleTests PRIVATE src)
     target_compile_features(zEngineStyleTests PRIVATE cxx_std_20)

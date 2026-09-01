@@ -251,6 +251,7 @@ void EditorShell::Render()
     const auto now=std::chrono::steady_clock::now();
     const double elapsed=std::min(0.1,std::chrono::duration<double>(now-lastTick_).count());
     lastTick_=now;
+    ++framesSinceFps_;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample_).count();if(fpsElapsed>=.5){currentFps_=static_cast<unsigned>(std::lround(framesSinceFps_/fpsElapsed));framesSinceFps_=0;fpsSample_=now;InvalidateRect(window_,&optionsBar_,FALSE);}
     CameraTick(static_cast<float>(elapsed));
     PollBuild();
     PollAssetWork();
@@ -275,7 +276,7 @@ void EditorShell::Render()
         if (!paused_)
         {
             tickAccumulator_+=elapsed;
-            while (tickAccumulator_>=1.0/60.0) { TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f); tickAccumulator_-=1.0/60.0; }
+            while (tickAccumulator_>=1.0/60.0) { TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f); physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents());tickAccumulator_-=1.0/60.0; }
         }
         if (!paused_ || stepDraw_)
             scriptHost_.Draw(objects_,[&](zengine::GameObjectId id) {
@@ -288,7 +289,7 @@ void EditorShell::Render()
         if (GetTickCount64()-lastInspectorRefresh_>=100)
         { inspectorPanel_->RefreshLiveValues(); ReportScriptErrors(); InvalidateRect(window_,&sceneBrowser_,FALSE); lastInspectorRefresh_=GetTickCount64(); }
     }
-    renderer_->Render(BuildSceneFrame());
+    auto frame=BuildSceneFrame();if(showFps_)frame.fps=currentFps_;renderer_->Render(frame);
 }
 
 bool EditorShell::PrepareScripts()
@@ -331,7 +332,8 @@ bool EditorShell::Play()
     SetFocus(window_); // Finish Inspector edits before snapshotting values/transforms.
     if (!PrepareScripts()) { ReportScriptErrors(); return false; }
     auto authored=zengine::scenes::Capture(objects_,scriptHost_);
-    if (!scriptHost_.Play(objects_)) { ReportScriptErrors(); return false; }
+    physicsWorld_=std::make_unique<zengine::physics::World>();try{physicsWorld_->Build(objects_);}catch(const std::exception& e){physicsWorld_.reset();status_=L"Physics: "+WideText(e.what());InvalidateRect(window_,nullptr,FALSE);return false;}
+    if (!scriptHost_.Play(objects_,physicsWorld_.get())) { physicsWorld_.reset();ReportScriptErrors(); return false; }
     playScene_=std::move(authored);
     paused_=false; stepDraw_=false; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
     status_=L"Playing - Stop restores transforms and discards runtime variable changes";
@@ -342,7 +344,7 @@ bool EditorShell::Play()
 void EditorShell::Stop()
 {
     SetFocus(window_);
-    scriptHost_.Stop(objects_); paused_=false; stepDraw_=false; tickAccumulator_=0;
+    scriptHost_.Stop(objects_);physicsWorld_.reset(); paused_=false; stepDraw_=false; tickAccumulator_=0;
     if (playScene_)
         for (const auto& saved:playScene_->objects)
             if (auto* object=objects_.Find(saved.id))
@@ -367,7 +369,7 @@ void EditorShell::SetPaused(bool paused)
 void EditorShell::Step()
 {
     if (!Playing()) return;
-    SetPaused(true); TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f); stepDraw_=true;
+    SetPaused(true); TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f);physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents()); stepDraw_=true;
     inspectorPanel_->RefreshLiveValues(); ReportScriptErrors();
 }
 void EditorShell::ReportScriptErrors()
@@ -396,6 +398,7 @@ ViewportFrame EditorShell::BuildSceneFrame() const
     {
         const auto& object = objects_.At(i);
         const auto* mesh = object.GetBehavior<zengine::MeshRenderer>();
+        if(!Playing())if(const auto* collider=object.GetBehavior<zengine::physics::Collider>();collider&&collider->Enabled()){DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));frame.colliders.push_back({collider->Shape(),object.GetTransform(),parent,object.Id()==selectedObject_});}
         const auto bound = meshBindings_.find(object.Id());
         if (mesh && mesh->Enabled() && !mesh->Asset().empty() && bound != meshBindings_.end() && bound->second.asset == mesh->Asset())
         {
@@ -514,13 +517,14 @@ void EditorShell::Paint()
         DrawTextLabel(bufferContext, menu, menuRectangle, TextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         menuX += (menu == L"Window") ? 70 : 55;
     }
-    RECT projectName{optionsBar_.right - 240, optionsBar_.top, optionsBar_.right - 12, optionsBar_.bottom};
+    RECT projectName{optionsBar_.right - 370, optionsBar_.top, optionsBar_.right - 140, optionsBar_.bottom};
     const wchar_t* toolNames[]={L"Move W",L"Rotate E",L"Scale R"};
     for (int i=0;i<3;++i)
     {
         button(6+i,toolNames[i],static_cast<int>(transformTool_)==i);
     }
     DrawTextLabel(bufferContext, project_?WideText(project_->config.name):L"No project open", projectName, MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    button(11,(showFps_?L"☑ FPS ":L"☐ FPS ")+std::to_wstring(currentFps_),showFps_);
     RECT optionLine{0, optionsBar_.bottom - 1, optionsBar_.right, optionsBar_.bottom};
     FillRectangle(bufferContext, optionLine, BorderColor);
 
@@ -1410,6 +1414,7 @@ LRESULT EditorShell::HandleMessage(
         if(pressedChrome_>=0){InvalidateRect(window_,nullptr,FALSE);if(!ChromeEnabled(pressedChrome_)){pressedChrome_=-1;return 0;}}
         if(pressedChrome_==9){NewAssetFolderDialog();return 0;}
         if(pressedChrome_==10){SendMessageW(window_,WM_COMMAND,UpFolderCommand,0);return 0;}
+        if(pressedChrome_==11){showFps_=!showFps_;InvalidateRect(window_,&optionsBar_,FALSE);return 0;}
         const RECT assetRoot{mediaLibrary_.left+12,mediaLibrary_.top+PanelHeaderHeight+12,mediaLibrary_.left+150,mediaLibrary_.top+PanelHeaderHeight+36};
         if(project_ && PtInRect(&assetRoot,point)){OpenAssetFolder(assetsDirectory_);return 0;}
         for (int i=0;i<3;++i) { const auto rectangle=ToolRectangle(i); if (PtInRect(&rectangle,point)) { SetTransformTool(static_cast<gizmo::Mode>(i)); return 0; } }

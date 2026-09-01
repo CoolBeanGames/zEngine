@@ -2,6 +2,7 @@
 #include "core/ScriptBehavior.h"
 #include "core/BehaviorLifecycle.h"
 #include "zscript/Script.h"
+#include "physics/PhysicsWorld.h"
 #include <map>
 
 namespace zengine
@@ -18,7 +19,8 @@ namespace zengine
         std::string Error(const ScriptBehavior&) const;
         std::map<std::string,script::Value> AuthoredValues(const ScriptBehavior&) const;
         void RestoreValues(ScriptBehavior&, std::map<std::string,script::Value> values);
-        bool Play(ObjectStore&);
+        bool Play(ObjectStore&, physics::World* physicsWorld=nullptr);
+        void DispatchPhysicsEvents(const std::vector<physics::ContactEvent>&);
         void Stop(ObjectStore&);
         void Tick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.Tick(objects, delta); }
         void Draw(ObjectStore& objects, const std::function<bool(GameObjectId)>& visible) { if (playing_) lifecycle_.Draw(objects, visible); }

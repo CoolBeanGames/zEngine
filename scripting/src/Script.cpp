@@ -25,7 +25,7 @@ bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
 bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
-    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "array" || s == "is" || words.contains(s);
+    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "is" || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
     if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
@@ -276,7 +276,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, IsType, MakeVector, SetComponent, Self, Input, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, IsType, MakeVector, SetComponent, Self, Input, Physics, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -296,6 +296,7 @@ struct Class {
 bool Numeric(const std::string& t) { return t == "int" || t == "float"; }
 bool TextType(const std::string& t) { return t=="string" || t=="char"; }
 bool GlobalField(const std::string& name) {return name=="global_position" || name=="global_rotation" || name=="global_scale";}
+bool DirectionField(const std::string& name) {return name=="forward" || name=="up" || name=="right";}
 Value DefaultValue(const std::string& t) {
     if (t == "int") return std::int64_t{0};
     if (t == "float") return 0.0;
@@ -408,6 +409,7 @@ class BytecodeCompiler {
         }
         if (e.kind == Expr::Name) {
             if (t.text == "Input") { Emit(Op::Input,t); return "InputService"; }
+            if (t.text == "Physics") { Emit(Op::Physics,t); return "PhysicsService"; }
             if (t.text == "this") { Emit(Op::Self, t); return owner.name; }
             auto local = Local(t.text);
             if (local != std::numeric_limits<std::size_t>::max()) { Emit(Op::LoadLocal, t, local); return function.locals[local]; }
@@ -425,7 +427,7 @@ class BytecodeCompiler {
                 Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
-                Require(callee.token.text != "InputService" && callee.token.text != "InputAction",t,"Input objects are supplied by the host");
+                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "PhysicsBody",t,"Native service objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
@@ -523,7 +525,8 @@ class BytecodeCompiler {
         auto receiver = Expression(*e.children[0]);
         Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
         Require(receiver != "InputAction",e.token,"Input state is read-only");
-        Require(!(program.Assignable("Transform",receiver) && GlobalField(e.token.text)),e.token,"Global transform is read-only");
+        Require(!(program.Assignable("gameObject",receiver) && e.token.text=="physics"),e.token,"The physics component reference is read-only");
+        Require(!(program.Assignable("Transform",receiver) && (GlobalField(e.token.text)||DirectionField(e.token.text))),e.token,"Global transform directions are read-only");
         return {FieldType(receiver, e.token), true, 0, e.token.text};
     }
     void Load(const Slot& slot, const Token& t) {
@@ -620,14 +623,24 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Class action;action.name="InputAction";action.signals={"just_pressed","just_released","is_pressed","was_just_pressed","was_just_released"};
     action.fields={{{Token::Identifier,"pressed"},"bool"},{{Token::Identifier,"axis"},"float"},{{Token::Identifier,"value"},"Vector3"}};
     program.classes.emplace(action.name,std::move(action));
+    Class physicsService;physicsService.name="PhysicsService";
+    for(const auto& name:{"cast","cast_all"}){Function f;f.params={"Vector3","Vector3","int"};f.result=std::string(name)=="cast"?"gameObject":"array";physicsService.methods.emplace(name,std::move(f));}
+    program.classes.emplace(physicsService.name,std::move(physicsService));
+    Class physicsBody;physicsBody.name="PhysicsBody";
+    physicsBody.fields={{{Token::Identifier,"velocity"},"Vector3"},{{Token::Identifier,"angular_velocity"},"Vector3"}};
+    physicsBody.signals={"collision_entered","collision_stayed","collision_exited","area_entered","area_stayed","area_exited"};
+    for(const auto& name:{"add_force","add_impulse","add_torque","add_angular_impulse"}){Function f;f.params={"Vector3"};physicsBody.methods.emplace(name,std::move(f));}
+    program.classes.emplace(physicsBody.name,std::move(physicsBody));
     Class transform; transform.name = "Transform";
     transform.signals = {"was_moved", "was_rotated", "was_scaled"};
     for (const auto& name : {"position", "rotation", "scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
     for (const auto& name : {"global_position", "global_rotation", "global_scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
+    for (const auto& name : {"forward", "up", "right"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
     program.classes.emplace("Transform", std::move(transform));
     Class gameObject; gameObject.name = "gameObject";
     gameObject.fields.push_back({Token{Token::Identifier, "transform"}, "Transform"});
     gameObject.fields.push_back({Token{Token::Identifier, "parent"}, "gameObject"});
+    gameObject.fields.push_back({Token{Token::Identifier, "physics"}, "PhysicsBody"});
     Function find;find.params={"string"};find.result="gameObject";gameObject.methods.emplace("find",std::move(find));
     program.classes.emplace("gameObject", std::move(gameObject));
     std::map<std::string, const ClassAst*> byName;
@@ -638,13 +651,13 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     }
     std::map<std::string, int> state;
     auto build = [&](auto&& self, const std::string& name, std::size_t depth) -> void {
-        if (name == "gameObject" || name == "Transform" || name == "InputService" || name == "InputAction" || state[name] == 2) return;
+        if (name == "gameObject" || name == "Transform" || name == "InputService" || name == "InputAction" || name == "PhysicsService" || name == "PhysicsBody" || state[name] == 2) return;
         const auto& ast = *byName.at(name); auto& c = program.classes.at(name);
         if (state[name] == 1) Fail(program.source, ast.name, "Inheritance cycle");
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
-            if(c.base=="InputService" || c.base=="InputAction")Fail(program.source,ast.name,"Cannot inherit native input types");
+            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="PhysicsBody")Fail(program.source,ast.name,"Cannot inherit native service types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -723,7 +736,7 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
                 for (const auto& [methodName, f] : current->methods) if (seen.insert(methodName).second && !f.code.empty()) active = true;
                 current = current->base.empty() ? nullptr : &p->classes.at(current->base);
             }
-            if (name != "gameObject" && name != "Transform" && name != "InputService" && name != "InputAction" && active) ++p->stats.executableClasses;
+            if (name != "gameObject" && name != "Transform" && name != "InputService" && name != "InputAction" && name != "PhysicsService" && name != "PhysicsBody" && active) ++p->stats.executableClasses;
         }
         return {std::shared_ptr<const Program>(new Program(std::move(p))), {}};
     } catch (const ScriptError& error) { return {nullptr, {error.Detail()}}; }
@@ -731,6 +744,7 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
 struct Runtime::Impl {
     struct Object {
         ObjectRef transformOwner;
+        ObjectRef physicsOwner;
         const Class* type = nullptr;
         std::vector<Value> fields;
         std::map<std::string, std::vector<CallableRef>> connections;
@@ -746,9 +760,12 @@ struct Runtime::Impl {
     std::size_t remaining = 0, depth = 0;
     std::size_t connectionCount = 0;
     ObjectRef inputService;
+    ObjectRef physicsService;
     InputFrame inputFrame;
     std::map<std::string,ObjectRef> inputActions;
     std::function<ObjectRef(std::string_view)> objectLookup;
+    Runtime::PhysicsBodyCall physicsBodyCall;
+    Runtime::PhysicsCastCall physicsCastCall;
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
     [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
@@ -821,12 +838,15 @@ struct Runtime::Impl {
             if(parent.id && ++ancestors>64)Error(t,"Global transform hierarchy exceeds 64 levels");
             transform=parent.id?std::get<ObjectRef>(Get(parent,"transform",t)):ObjectRef{};
         }
-        Vector3 result=name=="global_position"?Vector3{matrix[3][0],matrix[3][1],matrix[3][2]}:name=="global_rotation"?world::Euler(rotation):world::Scale(matrix);
+        Vector3 result;
+        if(name=="global_position")result={matrix[3][0],matrix[3][1],matrix[3][2]};else if(name=="global_rotation")result=world::Euler(rotation);else if(name=="global_scale")result=world::Scale(matrix);
+        else {const int row=name=="right"?0:name=="up"?1:2;result={rotation[row][0],rotation[row][1],rotation[row][2]};}
         return Coerce(result,"Vector3",t);
     }
     Value Get(ObjectRef ref, const std::string& name, const Token& t = {}) const {
         auto& o = Resolve(ref, t); std::size_t index = 0;
-        if(program->Assignable("Transform",o.type->name) && GlobalField(name))return Global(ref,name,t);
+        if(program->Assignable("Transform",o.type->name) && (GlobalField(name)||DirectionField(name)))return Global(ref,name,t);
+        if(o.type->name=="PhysicsBody" && (name=="velocity"||name=="angular_velocity") && physicsBodyCall)return Coerce(physicsBodyCall(o.physicsOwner,name=="velocity"?"get_velocity":"get_angular_velocity",{}),"Vector3",t);
         if (o.type->signals.contains(name)) return SignalRef{ref, name};
         if (program->Method(o.type->name, name)) return CallableRef{ref, name};
         if (!program->FindField(o.type->name, name, &index)) Error(t, "Unknown field '" + name + "'");
@@ -837,8 +857,9 @@ struct Runtime::Impl {
         auto field = program->FindField(o.type->name, name, &index);
         if (!field) Error(t, "Unknown field '" + name + "'");
         if(o.type->name=="InputAction")Error(t,"Input state is read-only");
-        if(program->Assignable("Transform",o.type->name) && GlobalField(name))Error(t,"Global transform is read-only");
+        if(program->Assignable("Transform",o.type->name) && (GlobalField(name)||DirectionField(name)))Error(t,"Global transform directions are read-only");
         value = Coerce(std::move(value), field->type, t);
+        if(o.type->name=="PhysicsBody" && (name=="velocity"||name=="angular_velocity") && physicsBodyCall){physicsBodyCall(o.physicsOwner,name=="velocity"?"set_velocity":"set_angular_velocity",{value});}
         if(name=="transform" && program->Assignable("gameObject",o.type->name)){
             const auto next=std::get<ObjectRef>(value),previous=std::get<ObjectRef>(o.fields[index]);
             if(next.id){auto& target=Resolve(next,t);if(target.transformOwner.id && target.transformOwner!=ref)Error(t,"A Transform cannot belong to two GameObjects");target.transformOwner=ref;}
@@ -867,6 +888,7 @@ struct Runtime::Impl {
                 if (args.size() != 1) Error(t, "Transform signals require one Vector3 argument");
                 Coerce(args[0], "Vector3", t);
             }
+            if(owner.type->name=="PhysicsBody"){if(args.size()!=1)Error(t,"Physics signals require one GameObject argument");Coerce(args[0],"gameObject",t);}
             // Snapshot permits safe connect/disconnect during a callback. New listeners wait until next emission.
             const auto snapshot = connections;
             // Validate every recipient before invoking any, avoiding partial dispatch on signature mistakes.
@@ -886,6 +908,7 @@ struct Runtime::Impl {
         const auto* f = program->Method(Resolve(callback.owner, t).type->name, callback.name);
         if (!f || f->result != "void") Error(t, "Signal callback must be a void function");
         if(owner.type->name=="InputAction" && !f->params.empty())Error(t,"Input signal callbacks take no arguments");
+        if(owner.type->name=="PhysicsBody" && f->params!=std::vector<std::string>{"gameObject"})Error(t,"Physics signal callback must take one gameObject");
         if (program->Assignable("Transform", owner.type->name) &&
             (signal.name == "was_moved" || signal.name == "was_rotated" || signal.name == "was_scaled") && f->params != std::vector<std::string>{"Vector3"})
             Error(t, "Transform signal callback must take one Vector3");
@@ -914,7 +937,7 @@ struct Runtime::Impl {
         while (c) { bases.push_back(c); c = c->base.empty() ? nullptr : &program->classes.at(c->base); }
         try {
                         if (program->Assignable("Transform", name)) Set(ref, "scale", Vector3{1, 1, 1}, t);
-            if (program->Assignable("gameObject", name)) {const auto transform=Create("Transform",t);Resolve(transform,t).transformOwner=ref;Set(ref,"transform",transform,t);}
+            if (program->Assignable("gameObject", name)) {const auto transform=Create("Transform",t);Resolve(transform,t).transformOwner=ref;Set(ref,"transform",transform,t);const auto physics=Create("PhysicsBody",t);Resolve(physics,t).physicsOwner=ref;Set(ref,"physics",physics,t);}
             for (auto it = bases.rbegin(); it != bases.rend(); ++it) Execute(ref, (*it)->initializer, {}, t);
         } catch (...) { objects[ref.id - 1]->failed = true; throw; }
         return ref;
@@ -1014,6 +1037,18 @@ struct Runtime::Impl {
     }
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
+        if(object.type->name=="PhysicsBody") {
+            if(!physicsBodyCall)Error(t,"Physics is not available in this runtime");
+            if(args.size()!=1)Error(t,"Physics body force methods take one Vector3");
+            return physicsBodyCall(object.physicsOwner,name,{Coerce(args[0],"Vector3",t)});
+        }
+        if(object.type->name=="PhysicsService") {
+            if(!physicsCastCall)Error(t,"Physics is not available in this runtime");
+            if(args.size()!=3)Error(t,"Physics casts take from, to, and a layer mask");
+            const auto from=std::get<Vector3>(Coerce(args[0],"Vector3",t)),to=std::get<Vector3>(Coerce(args[1],"Vector3",t));const auto mask=static_cast<std::uint32_t>(std::get<std::int64_t>(Coerce(args[2],"int",t)));
+            const auto hits=physicsCastCall(from,to,mask);if(name=="cast")return hits.empty()?Value{ObjectRef{}}:Value{hits.front()};
+            std::vector<Value> values;values.reserve(hits.size());for(auto hit:hits)values.push_back(hit);return MakeArray(std::move(values),t);
+        }
         if(name=="find" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("find")) {
             Tick(t);if(args.size()!=1)Error(t,"find takes one scene object name");
             const auto requested=std::get<std::string>(Coerce(args[0],"string",t));
@@ -1105,6 +1140,7 @@ struct Runtime::Impl {
             }
             case Op::Self: stack.push_back(ref); break;
             case Op::Input: if(!inputService.id)inputService=Create("InputService",t);stack.push_back(inputService);break;
+            case Op::Physics: if(!physicsService.id)physicsService=Create("PhysicsService",t);stack.push_back(physicsService);break;
             case Op::LoadLocal: stack.push_back(locals[ins.a]); break;
             case Op::StoreLocal: locals[ins.a] = Coerce(pop(), f.locals[ins.a], t); break;
                         case Op::LoadField: {
@@ -1197,6 +1233,7 @@ Value Runtime::Call(ObjectRef object, std::string_view method, const std::vector
 Value Runtime::Get(ObjectRef object, std::string_view field) const { return impl_->Get(object, std::string(field)); }
 void Runtime::Set(ObjectRef object, std::string_view field, Value value, bool notify) { if(!impl_->depth)impl_->Reset(); impl_->Set(object, std::string(field), std::move(value), {}, notify); }
 void Runtime::SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->objectLookup=std::move(lookup);}
+void Runtime::SetPhysicsCallbacks(PhysicsBodyCall bodyCall,PhysicsCastCall castCall){impl_->physicsBodyCall=std::move(bodyCall);impl_->physicsCastCall=std::move(castCall);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}

@@ -22,5 +22,6 @@ private:
     input::System input_;
     std::map<GameObjectId,std::filesystem::path> models_;
     std::string reference_;
+    std::unique_ptr<physics::World> physics_;
 };
 }

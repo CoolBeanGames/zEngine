@@ -598,7 +598,7 @@ void EditorBuildTests() {
         Require(editor.BuildProject(output) && editor.Building(),"Editor did not start asynchronous game build");
         bool rejected=false;try{editor.BuildProject(output);}catch(...){rejected=true;}Require(rejected,"Editor started overlapping builds");
         const auto deadline=GetTickCount64()+30000;while(editor.Building() && GetTickCount64()<deadline){editor.Render();Sleep(2);}
-        Require(!editor.Building() && editor.BuildError().empty() && std::filesystem::is_regular_file(editor.LastBuild()),"Editor game build did not complete");
+        if(editor.Building() || !editor.BuildError().empty() || !std::filesystem::is_regular_file(editor.LastBuild()))throw std::runtime_error("Editor game build did not complete: "+editor.BuildError());
         const auto packaged=zengine::projects::Open(editor.LastBuild().parent_path()/L"Data"/L"Game.zproject");
         Require(packaged.config.lastScene=="Assets/Launch.zscene","Editor exported wrong startup scene");
         Require(editor.Play(),"Play after build failed");rejected=false;try{editor.BuildProject(output);}catch(...){rejected=true;}Require(rejected,"Building during Play was allowed");editor.Stop();

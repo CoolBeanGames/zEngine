@@ -239,6 +239,7 @@ private:
     std::wstring status_ = L"Create or open a project from the File menu";
     zengine::ObjectStore objects_;
     zengine::ScriptHost scriptHost_;
+    std::unique_ptr<zengine::physics::World> physicsWorld_;
     bool paused_ = false, stepDraw_ = false;
     double tickAccumulator_ = 0;
     std::chrono::steady_clock::time_point lastTick_ = std::chrono::steady_clock::now();
@@ -257,6 +258,9 @@ private:
     POINT assetDragStart_{};
     bool assetDragMoved_ = false;
     ULONGLONG lastBusyPaint_ = 0;
+    bool showFps_=true;
+    unsigned currentFps_=0,framesSinceFps_=0;
+    std::chrono::steady_clock::time_point fpsSample_=std::chrono::steady_clock::now();
 
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr;

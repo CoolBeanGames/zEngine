@@ -27,17 +27,17 @@ Session::Session(const projects::Project& project,const std::string& scene):refe
         }
     }
 }
-Session::~Session(){if(scene_.scripts.Playing())scene_.scripts.Stop(scene_.objects);}
+Session::~Session(){if(scene_.scripts.Playing())scene_.scripts.Stop(scene_.objects);physics_.reset();}
 void Session::CheckErrors() const {
     for(std::size_t i=0;i<scene_.objects.Size();++i)for(std::size_t j=0;j<scene_.objects.At(i).BehaviorCount();++j) {
         const auto& behavior=scene_.objects.At(i).BehaviorAt(j);
         if(behavior.Faulted())throw std::runtime_error(scene_.objects.At(i).Name()+": "+behavior.Error());
     }
 }
-void Session::Start(){if(!scene_.scripts.Play(scene_.objects))throw std::runtime_error("Could not start scene scripts.");CheckErrors();}
+void Session::Start(){physics_=std::make_unique<physics::World>();physics_->Build(scene_.objects);if(!scene_.scripts.Play(scene_.objects,physics_.get()))throw std::runtime_error("Could not start scene scripts.");CheckErrors();}
 void Session::Tick(float delta,const input::Hardware& hardware) {
     script::InputFrame frame;for(const auto& [name,s]:input_.Tick(hardware))frame.emplace(name,script::InputState{s.x,s.y,s.pressed,s.justPressed,s.justReleased});
-    scene_.scripts.SetInput(std::move(frame));scene_.scripts.Tick(scene_.objects,delta);CheckErrors();
+    scene_.scripts.SetInput(std::move(frame));scene_.scripts.Tick(scene_.objects,delta);physics_->Step(scene_.objects,delta);scene_.scripts.DispatchPhysicsEvents(physics_->DrainEvents());CheckErrors();
 }
 void Session::Draw(const std::function<bool(GameObjectId)>& visible){scene_.scripts.Draw(scene_.objects,visible);CheckErrors();}
 }

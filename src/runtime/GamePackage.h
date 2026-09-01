@@ -5,7 +5,7 @@
 #include <functional>
 
 namespace zengine::game {
-struct Settings {SceneCamera camera;};
+struct Settings {SceneCamera camera;bool showFps=true;};
 std::string EncodeSettings(const Settings&);
 Settings DecodeSettings(const std::string&);
 // Produces a new, uniquely named output directory. Never overwrites an earlier build.

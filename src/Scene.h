@@ -1,5 +1,6 @@
 #pragma once
 #include "ScriptHost.h"
+#include "physics/PhysicsBehavior.h"
 #include <string_view>
 
 namespace zengine::scenes
@@ -7,12 +8,16 @@ namespace zengine::scenes
     constexpr std::size_t MaxSceneBytes=8*1024*1024;
     struct BehaviorData
     {
-        enum class Kind { Mesh, Script };
+        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area };
         Kind kind=Kind::Mesh;
         bool enabled=true;
         float priority=0;
         std::string asset;
         std::map<std::string,script::Value> variables;
+        physics::ColliderShape shape=physics::ColliderShape::Box;
+        std::uint32_t layer=1,mask=0xffffffffu;
+        float friction=.5f,bounciness=0,mass=1,gravityScale=1;
+        Vec3 velocity{},angularVelocity{},constantForce{},constantTorque{};
     };
     struct ObjectData
     {

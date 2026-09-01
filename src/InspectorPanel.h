@@ -2,6 +2,7 @@
 
 #include "core/GameObject.h"
 #include "ScriptHost.h"
+#include "physics/PhysicsBehavior.h"
 #include <windows.h>
 #include <commctrl.h>
 #include <array>
@@ -18,7 +19,8 @@ public:
     static constexpr int AddScriptButton = 1120;
     static constexpr int FirstBehaviorField = 1200;
     static constexpr int AddBehaviorButton = 1121, MeshEnabled = 1122, ChooseMeshButton = 1123,
-        CubeMeshButton = 1124, ClearMeshButton = 1125, AddMeshCommand = 1126, AddScriptCommand = 1127;
+        CubeMeshButton = 1124, ClearMeshButton = 1125, AddMeshCommand = 1126, AddScriptCommand = 1127,
+        AddColliderCommand=1128,AddRigidBodyCommand=1129,AddKinematicBodyCommand=1130,AddStaticBodyCommand=1131,AddAreaCommand=1132;
     enum class MeshAction { Add, Choose, Cube, Clear };
     ~InspectorPanel();
     void Create(HWND parent, HINSTANCE instance, HFONT font, std::function<void()> changed);
@@ -55,6 +57,7 @@ private:
         Field field;
         bool priority = false;
         bool multiline = false;
+        bool combo = false;
         int axis = -1; // Three consecutive fields share one Vector3 row.
         Style style = Style::Normal;
     };

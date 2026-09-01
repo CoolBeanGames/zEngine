@@ -54,6 +54,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> gridBuffer_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> axesBuffer_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> colliderBuffer_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> overlayDepth_;
     UINT gridVertexCount_ = 0;
     UINT axesVertexCount_ = 0;

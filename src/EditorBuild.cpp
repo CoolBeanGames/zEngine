@@ -14,9 +14,9 @@ bool EditorShell::BuildProject(const std::filesystem::path& outputParent) {
     if(!PrepareScripts() || !SaveScene())return false;
     auto player=zengine::game::ExecutableDirectory();
 #ifdef _DEBUG
-    if(std::filesystem::is_regular_file(player.parent_path()/L"Release"/L"zPlayer.exe"))player=player.parent_path()/L"Release";
+    if(const auto release=player.parent_path()/L"Release";std::filesystem::is_regular_file(release/L"zPlayer.exe")&&std::filesystem::is_regular_file(release/L"Jolt-LICENSE.txt"))player=release;
 #endif
-    const auto project=*project_;const auto scene=scenePath_;const zengine::game::Settings settings{sceneCamera_};
+    const auto project=*project_;const auto scene=scenePath_;const zengine::game::Settings settings{sceneCamera_,showFps_};
     buildProgress_=std::make_shared<BuildProgress>();const auto progress=buildProgress_;lastBuild_.clear();buildError_.clear();
     buildWork_=std::async(std::launch::async,[project,scene,settings,outputParent,player,progress] {
         return zengine::game::Export(project,scene,settings,outputParent,player,[progress](unsigned percent,const std::string& message){std::lock_guard lock(progress->mutex);progress->percent=percent;progress->message=message;});

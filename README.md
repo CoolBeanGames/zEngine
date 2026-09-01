@@ -1,5 +1,30 @@
 # zEngine
 
+## Physics
+
+Add exactly one **Collider** plus one **Rigid Body**, **Kinematic Body**, **Static Body**, or **Area** from the Inspector's Add Behavior menu. Collider shapes are Box, Sphere, and Capsule; their wireframes are visible only in the editor and disappear in Play/standalone games. Bodies expose 32-bit collision layer/mask values, friction, bounciness, and the settings appropriate to their motion type. Rigid bodies add mass, gravity scale, velocity, angular velocity, constant force, and constant torque. Physics runs at the same fixed 60 Hz as script Update, respects nested global transforms, and writes simulated rigid-body poses back to local transforms.
+
+The script API is engine-owned; Jolt types never enter game scripts:
+
+```cpp
+class PhysicsMover : gameObject {
+    func start() {
+        physics.collision_entered.connect(hit);
+        physics.add_impulse(transform.forward * 4);
+    }
+    func update(float delta) { physics.add_torque(transform.up * delta); }
+    func hit(gameObject other) { }
+    func scan() {
+        gameObject first = Physics.cast(transform.global_position, transform.global_position + transform.forward * 20, -1);
+        array all = Physics.cast_all(transform.global_position, transform.global_position + transform.forward * 20, -1);
+    }
+}
+```
+
+`physics.velocity` and `physics.angular_velocity` are readable/writable Vector3 values. Force methods are `add_force`, `add_impulse`, `add_torque`, and `add_angular_impulse`. Collision signals are `collision_entered`, `collision_stayed`, and `collision_exited`; area equivalents use the `area_` prefix. Each passes the other `gameObject`. A cast's final signed integer is interpreted as a 32-bit mask (`-1` means every layer); `cast` returns the nearest object or null and `cast_all` returns nearest-first objects. `transform.forward`, `transform.up`, and `transform.right` are read-only global direction vectors (+Z, +Y, +X in local space).
+
+The top-right **FPS** checkbox controls the lightweight viewport counter and is captured in standalone build settings. `zEnginePhysics` is a separate facade library backed by pinned Jolt 5.5.0 (MIT), SSE2-compatible and single-thread scheduled to avoid background worker overhead on low-spec laptops. Scene/prefab assets persist physics settings. Standalone packages include `Jolt-LICENSE.txt`.
+
 ## Global transforms and text scripting
 
 Scripts can read `transform.global_position`, `transform.global_rotation`, and `transform.global_scale` without adding global fields to the Transform Inspector. They reflect the current parent chain; positions use the world matrix, rotation is XYZ Euler degrees, and scale is the world-axis magnitudes (lossy for sheared hierarchies).
@@ -16,7 +41,7 @@ All registered scenes and the project's Assets contents are packaged, preserving
 
 Until a Camera component is added, the build uses the **current viewport camera** as a fixed game camera. It renders at the game window's aspect ratio, with no editor grid or handles. The startup scene is the scene open at export, not whichever asset is selected.
 
-Build the `zEngine` target in **Release** to produce both the editor and `zPlayer.exe`; keep the player and `ufbx-LICENSE.txt` next to the editor. Debug editors prefer a sibling Release player when available. Use Release builds for distribution. `zEngineGameRuntime` is the reusable scene host/packager, `zEngineRenderer` is the shared renderer library, and `zPlayer` is the small platform entry point; editor widgets are not linked into the player.
+Build the `zEngine` target in **Release** to produce both the editor and `zPlayer.exe`; keep the player, `ufbx-LICENSE.txt`, and `Jolt-LICENSE.txt` next to the editor. Debug editors prefer a complete sibling Release player when available. Use Release builds for distribution. `zEngineGameRuntime` is the reusable scene host/packager, `zEngineRenderer` is the shared renderer library, and `zPlayer` is the small platform entry point; editor widgets are not linked into the player.
 
 For automated checks, the player accepts `--frames N` (1–3600 fixed ticks, hidden window), `--report path` (with `--frames`), and `--scene Assets/path.zscene` for another registered scene. `StandaloneGameBuild` exports and launches an actual game from a different working directory after moving the source project away, verifies script-driven transforms and distinct scene values, and checks missing-data errors.
 
@@ -253,6 +278,7 @@ The importer is a separate static library (`zEngineAssets`) using vendored [ufbx
 From a Visual Studio Developer PowerShell:
 
 ```powershell
+git submodule update --init --recursive
 cmake -S . -B build
 cmake --build build --config Debug
 .\build\Debug\zEngine.exe

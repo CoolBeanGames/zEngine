@@ -31,12 +31,14 @@ std::vector<ClassRange> Classes(const std::vector<Token>& t) {
 }
 Index::Index() {
     auto add=[&](const wchar_t* type,const wchar_t* name,const wchar_t* result,bool function=false){types_[type].members[name]={name,result,function};};
-    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"gameObject",L"GameObject",L"Transform"})types_[type];
+    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"gameObject",L"GameObject",L"Transform",L"PhysicsBody"})types_[type];
     types_[L"GameObject"].base=L"gameObject";
     add(L"gameObject",L"transform",L"Transform");
     add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);
+    add(L"gameObject",L"physics",L"PhysicsBody");
     for(const auto name:{L"position",L"rotation",L"scale"})add(L"Transform",name,L"Vector3");
     for(const auto name:{L"global_position",L"global_rotation",L"global_scale"})add(L"Transform",name,L"Vector3");
+    for(const auto name:{L"forward",L"up",L"right"})add(L"Transform",name,L"Vector3");
     add(L"string",L"size",L"int",true);add(L"string",L"truncate",L"string",true);add(L"string",L"substr",L"string",true);
     for(const auto name:{L"was_moved",L"was_rotated",L"was_scaled"})add(L"Transform",name,L"signal");
     for(const auto name:{L"x",L"y",L"z"})add(L"Vector3",name,L"float");
@@ -47,6 +49,10 @@ Index::Index() {
     add(L"Input",L"action",L"InputAction",true);add(L"Input",L"get_axis",L"float",true);add(L"Input",L"get_vector",L"Vector3",true);
     for(const auto name:{L"just_pressed",L"just_released",L"is_pressed",L"was_just_pressed",L"was_just_released"})add(L"InputAction",name,L"signal");
     add(L"InputAction",L"pressed",L"bool");add(L"InputAction",L"axis",L"float");add(L"InputAction",L"value",L"Vector3");
+    add(L"Physics",L"cast",L"gameObject",true);add(L"Physics",L"cast_all",L"array",true);
+    add(L"PhysicsBody",L"velocity",L"Vector3");add(L"PhysicsBody",L"angular_velocity",L"Vector3");
+    for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})add(L"PhysicsBody",name,L"void",true);
+    for(const auto name:{L"collision_entered",L"collision_stayed",L"collision_exited",L"area_entered",L"area_stayed",L"area_exited"})add(L"PhysicsBody",name,L"signal");
 }
 void Index::AddString(std::wstring value) {
     if(value.empty() || value.size()>128 || strings_.size()>=4096)return;
@@ -93,7 +99,7 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
     for(const auto& c:Classes(t))if(t[c.begin].pos<caret && (c.end==t.size()||t[c.end].pos>=caret)){currentClass=c.name;classBegin=c.begin;classEnd=c.end;break;}
     auto members=[&](std::wstring type){std::map<std::wstring,Item> found;std::set<std::wstring> seen;
         while(index.types_.contains(type)&&seen.insert(type).second){const auto& c=index.types_.at(type);found.insert(c.members.begin(),c.members.end());type=c.base;}return found;};
-    auto variables=members(currentClass);variables[L"this"]={L"this",currentClass};variables[L"Input"]={L"Input",L"Input"};
+    auto variables=members(currentClass);variables[L"this"]={L"this",currentClass};variables[L"Input"]={L"Input",L"Input"};variables[L"Physics"]={L"Physics",L"Physics"};
     // Only parameters/locals in the current method's live lexical scopes are visible.
     for(auto i=classBegin;i<classEnd && i+2<t.size();++i)if(t[i].text==L"func") {
         const auto close=Closing(t,i+2,L"(",L")");auto body=close+1;

@@ -124,6 +124,10 @@ public:
     void SetInput(const InputFrame& frame, bool emitEvents = true);
     // Host lookup returns same-VM scene proxies. Missing names return a null reference.
     void SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup);
+    using PhysicsBodyCall = std::function<Value(ObjectRef, std::string_view, const std::vector<Value>&)>;
+    using PhysicsCastCall = std::function<std::vector<ObjectRef>(Vector3, Vector3, std::uint32_t)>;
+    // Host-owned physics bridge. Scripts never see the backend physics API.
+    void SetPhysicsCallbacks(PhysicsBodyCall bodyCall, PhysicsCastCall castCall);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);
