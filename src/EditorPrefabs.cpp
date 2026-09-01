@@ -15,7 +15,21 @@ namespace
 }
 bool EditorShell::CanEdit(zengine::GameObjectId id,bool transformOnly) const
 {
-    return !prefabGenerated_.contains(id) && (transformOnly || !prefabLinks_.contains(id));
+    (void)transformOnly;
+    return !prefabGenerated_.contains(id);
+}
+void EditorShell::RecordPrefabDataOverride(zengine::GameObjectId id)
+{
+    auto link=prefabLinks_.find(id);if(link==prefabLinks_.end())return;
+    const auto live=zengine::scenes::Capture(objects_,scriptHost_);
+    const auto current=std::find_if(live.objects.begin(),live.objects.end(),[&](const auto& object){return object.id==id;});
+    if(current==live.objects.end())return;
+    const auto source=zengine::prefabs::Load(assetsDirectory_,std::filesystem::path(std::u8string(link->second.prefab.begin(),link->second.prefab.end())));
+    const auto& root=source.objects.front();
+    link->second.prefabDataMask=0;
+    if(current->name!=root.name){link->second.prefabDataMask|=1;link->second.name=current->name;}else link->second.name="Prefab instance";
+    if(current->tags!=root.tags){link->second.prefabDataMask|=2;link->second.tags=current->tags;}else link->second.tags.clear();
+    if(current->behaviors!=root.behaviors){link->second.prefabDataMask|=4;link->second.behaviors=current->behaviors;}else link->second.behaviors.clear();
 }
 void EditorShell::RequireEditable(zengine::GameObjectId id,bool transformOnly) const
 {
@@ -44,7 +58,9 @@ zengine::scenes::Document EditorShell::CaptureDocument() const
         {
             const auto transform=object.transform;
             object=link->second;
-            object.name="Prefab instance"; object.behaviors.clear(); object.tags.clear();
+            if(!(object.prefabDataMask&1))object.name="Prefab instance";
+            if(!(object.prefabDataMask&2))object.tags.clear();
+            if(!(object.prefabDataMask&4))object.behaviors.clear();
             object.transform=OverrideTransform(zengine::Transform{},transform,object.transformMask);
         }
     return document;

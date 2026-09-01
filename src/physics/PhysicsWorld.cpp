@@ -88,7 +88,7 @@ std::pair<GameObjectId,GameObjectId> Pair(GameObjectId a,GameObjectId b){return 
 }
 
 struct World::Impl final : JPH::ContactListener {
-    struct Entry { JPH::BodyID id; Body* body{}; bool area=false; };
+    struct Entry { JPH::BodyID id; Body* body{}; Vec3 offset{}; bool area=false; };
     JoltLifetime& lifetime=Lifetime();
     BroadPhase broadPhase;ObjectBroadPhaseFilter bpFilter;ObjectPairFilter pairFilter;
     JPH::PhysicsSystem system;JPH::TempAllocatorImpl allocator{16*1024*1024};
@@ -130,15 +130,15 @@ void World::Build(ObjectStore& objects) {
         auto* collider=object.GetBehavior<Collider>();if(!collider||!collider->Enabled())throw std::runtime_error(object.Name()+" has a physics body but no enabled Collider.");
         unsigned kinds=!!object.GetBehavior<RigidBody>()+!!object.GetBehavior<KinematicBody>()+!!object.GetBehavior<StaticBody>()+!!object.GetBehavior<Area>();
         if(kinds!=1)throw std::runtime_error(object.Name()+" must have exactly one physics body type.");
-        const auto pose=GlobalPose(objects,object);const Vec3 s{std::max(.002f,std::abs(pose.scale.x)),std::max(.002f,std::abs(pose.scale.y)),std::max(.002f,std::abs(pose.scale.z))};JPH::ShapeRefC shape;
+        const auto pose=GlobalPose(objects,object);const auto colliderScale=Mul(pose.scale,collider->Size());const Vec3 s{std::max(.002f,std::abs(colliderScale.x)),std::max(.002f,std::abs(colliderScale.y)),std::max(.002f,std::abs(colliderScale.z))};const auto offset=Mul(collider->Offset(),pose.scale);JPH::ShapeRefC shape;
         if(collider->Shape()==ColliderShape::Box)shape=new JPH::BoxShape(JV(Vec3{s.x*.5f,s.y*.5f,s.z*.5f}));
         else if(collider->Shape()==ColliderShape::Sphere)shape=new JPH::SphereShape(std::max({s.x,s.y,s.z})*.5f);
         else {const float r=std::max(s.x,s.z)*.5f;shape=new JPH::CapsuleShape(std::max(.001f,s.y*.5f-r),r);}
         const bool area=object.GetBehavior<Area>()!=nullptr;const bool kinematic=object.GetBehavior<KinematicBody>()!=nullptr||area;const auto motion=object.GetBehavior<RigidBody>()?JPH::EMotionType::Dynamic:kinematic?JPH::EMotionType::Kinematic:JPH::EMotionType::Static;
-        JPH::BodyCreationSettings settings(shape,pose.position,pose.rotation,motion,motion==JPH::EMotionType::Static?NonMoving:Moving);settings.mUserData=object.Id();settings.mFriction=body->Friction();settings.mRestitution=body->Bounciness();settings.mIsSensor=area;settings.mCollideKinematicVsNonDynamic=kinematic;
+        JPH::BodyCreationSettings settings(shape,pose.position+pose.rotation*JV(offset),pose.rotation,motion,motion==JPH::EMotionType::Static?NonMoving:Moving);settings.mUserData=object.Id();settings.mFriction=body->Friction();settings.mRestitution=body->Bounciness();settings.mIsSensor=area;settings.mCollideKinematicVsNonDynamic=kinematic;
         if(auto* rigid=object.GetBehavior<RigidBody>()){settings.mGravityFactor=rigid->GravityScale();settings.mOverrideMassProperties=JPH::EOverrideMassProperties::CalculateInertia;settings.mMassPropertiesOverride.mMass=rigid->Mass();settings.mAllowSleeping=false;}
         auto id=bi.CreateAndAddBody(settings,motion==JPH::EMotionType::Static?JPH::EActivation::DontActivate:JPH::EActivation::Activate);if(id.IsInvalid())throw std::runtime_error("Physics body capacity exceeded.");
-        impl_->entries.emplace(object.Id(),Impl::Entry{id,body,area});impl_->reverse.emplace(id,object.Id());
+        impl_->entries.emplace(object.Id(),Impl::Entry{id,body,offset,area});impl_->reverse.emplace(id,object.Id());
         if(auto* moving=dynamic_cast<MovingBody*>(body)){bi.SetLinearVelocity(id,JV(moving->Velocity()));bi.SetAngularVelocity(id,JV(moving->AngularVelocity()));}
     }
     impl_->system.OptimizeBroadPhase();
@@ -147,10 +147,10 @@ void World::Step(ObjectStore& objects,float delta) {
     if(!std::isfinite(delta)||delta<=0)throw std::invalid_argument("Physics delta must be finite and positive.");auto& bi=impl_->system.GetBodyInterface();
     for(auto& [id,e]:impl_->entries)if(auto* moving=dynamic_cast<MovingBody*>(e.body)){
         if(dynamic_cast<RigidBody*>(moving)){bi.AddForce(e.id,JV(moving->ConstantForce()));bi.AddTorque(e.id,JV(moving->ConstantTorque()));}
-        else if(auto* object=objects.Find(id)){const auto pose=GlobalPose(objects,*object);bi.MoveKinematic(e.id,pose.position,pose.rotation,delta);}
+        else if(auto* object=objects.Find(id)){const auto pose=GlobalPose(objects,*object);bi.MoveKinematic(e.id,pose.position+pose.rotation*JV(e.offset),pose.rotation,delta);}
     }
     const int steps=std::clamp(static_cast<int>(std::ceil(delta*60)),1,4);impl_->system.Update(delta,steps,&impl_->allocator,&impl_->jobs);impl_->Publish();
-    for(auto& [id,e]:impl_->entries)if(dynamic_cast<RigidBody*>(e.body)){auto* object=objects.Find(id);if(!object)continue;JPH::RVec3 p;JPH::Quat q;bi.GetPositionAndRotation(e.id,p,q);SetFromGlobal(objects,*object,p,q);auto* moving=dynamic_cast<MovingBody*>(e.body);moving->SetVelocity(ZV(bi.GetLinearVelocity(e.id)));moving->SetAngularVelocity(ZV(bi.GetAngularVelocity(e.id)));}
+    for(auto& [id,e]:impl_->entries)if(dynamic_cast<RigidBody*>(e.body)){auto* object=objects.Find(id);if(!object)continue;JPH::RVec3 p;JPH::Quat q;bi.GetPositionAndRotation(e.id,p,q);SetFromGlobal(objects,*object,p-q*JV(e.offset),q);auto* moving=dynamic_cast<MovingBody*>(e.body);moving->SetVelocity(ZV(bi.GetLinearVelocity(e.id)));moving->SetAngularVelocity(ZV(bi.GetAngularVelocity(e.id)));}
 }
 bool World::Contains(GameObjectId id) const{return impl_->entries.contains(id);}
 void World::AddForce(GameObjectId id,Vec3 v){impl_->system.GetBodyInterface().AddForce(impl_->entries.at(id).id,JV(v));}

@@ -69,10 +69,12 @@ void PrefabTests()
         auto saved=s::Decode(s::Load(firstScene)); Check(!saved.objects[0].prefab.empty(),"Dragging object failed to create reference");
         prefab=assets/std::filesystem::path(std::u8string(saved.objects[0].prefab.begin(),saved.objects[0].prefab.end()));
         const auto instance2=editor.InstantiatePrefab(prefab); Check(editor.GameObjects().Size()==2,"Prefab placement failed");
-        Reject([&] { editor.AddMeshRenderer(instance2); });
+        Check(!editor.AddMeshRenderer(instance2),"Duplicate Mesh Renderer accepted on editable prefab instance");
         const auto inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
-        Check(!IsWindowEnabled(GetDlgItem(inspector,InspectorPanel::NameField)) && IsWindowEnabled(GetDlgItem(inspector,InspectorPanel::FirstTransformField)),"Instance Inspector edit policy incorrect");
+        Check(IsWindowEnabled(GetDlgItem(inspector,InspectorPanel::NameField)) && IsWindowEnabled(GetDlgItem(inspector,InspectorPanel::FirstTransformField)),"Prefab instance root is not editable");
+        SetDlgItemTextW(inspector,InspectorPanel::NameField,L"Customized Cube");
         SetDlgItemTextW(inspector,InspectorPanel::FirstTransformField,L"9"); Check(editor.SaveScene(),"Save placement override");
+        saved=s::Decode(s::Load(firstScene));Check(saved.objects[1].prefabDataMask==1 && saved.objects[1].name=="Customized Cube","Prefab name override was not persisted independently");
         Check(editor.OpenPrefab(prefab) && editor.EditingPrefab()==prefab,"Open prefab failed");
         SetDlgItemTextW(inspector,InspectorPanel::NameField,L"Shared Cube");
         SetDlgItemTextW(inspector,InspectorPanel::FirstTransformField+6,L"3");
@@ -80,7 +82,7 @@ void PrefabTests()
         Put(script,"class NewBehavior : gameObject { export float speed=3; func update(float delta) { transform.position.x+=speed*delta; } }");
         Check(editor.AttachScript(rootId,script),"Attach prefab script"); Check(editor.SavePrefab(),"Save prefab data");
         Check(editor.ClosePrefab() && editor.GameObjects().Size()==2,"Return to scene failed");
-        Check(editor.GameObjects().At(0).Name()=="Shared Cube" && editor.GameObjects().At(1).Name()=="Shared Cube","Prefab save did not update all current instances");
+        Check(editor.GameObjects().At(0).Name()=="Shared Cube" && editor.GameObjects().At(1).Name()=="Customized Cube","Prefab source overwrote a per-instance name override");
         Check(editor.GameObjects().Find(instance2)->GetTransform().Position().x==9,"Prefab update overwrote instance placement");
         Check(editor.GameObjects().At(0).GetTransform().Scale().x==3 && editor.GameObjects().Find(instance2)->GetTransform().Scale().x==3,"Moved instance did not inherit prefab scale");
         Check(editor.Play(),"Linked prefab scripts cannot play"); editor.Step(); editor.Stop();
@@ -95,7 +97,7 @@ void PrefabTests()
         Check(editor.SavePrefab() && editor.ClosePrefab(),"Save nested dependency failed");
         Check(editor.GameObjects().At(1).Name()=="Propagated Cube","Shared change did not propagate inside outer prefab");
         Check(editor.SaveScene() && editor.OpenScene(firstScene),"Reopen other scene");
-        Check(editor.GameObjects().At(0).Name()=="Propagated Cube" && editor.GameObjects().At(1).Name()=="Propagated Cube","Closed scene did not resolve current prefab data");
+        Check(editor.GameObjects().At(0).Name()=="Propagated Cube" && editor.GameObjects().At(1).Name()=="Customized Cube","Closed scene lost prefab propagation or instance override");
         Check(editor.SaveScene(),"Save final scene");
         const auto count=editor.GameObjects().Size(); auto source=s::Load(prefab); Put(prefab,"broken prefab");
         Reject([&] { editor.OpenScene(firstScene); }); Check(editor.GameObjects().Size()==count,"Broken prefab destroyed open scene"); Put(prefab,source);
@@ -104,5 +106,5 @@ void PrefabTests()
         EditorShell editor(GetModuleHandleW(nullptr)); Check(editor.Create(SW_HIDE,test.path)!=nullptr,"Restart editor creation failed"); editor.InitializeRenderer();
         Check(editor.OpenScene(secondScene) && editor.GameObjects().Size()==2 && editor.GameObjects().At(1).Name()=="Propagated Cube","Nested prefab failed after editor restart");
     }
-    CoUninitialize(); std::cout<<"PASS: prefab conversion, nesting, graph safety, local transforms, scene references, all-instance propagation, scripts, Inspector, placement overrides, restart\n";
+    CoUninitialize(); std::cout<<"PASS: prefab conversion, nesting, graph safety, local transforms, scene references, source propagation, independent instance overrides, scripts, Inspector, restart\n";
 }

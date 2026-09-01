@@ -49,6 +49,7 @@ int main(int argc, char**)
             const auto complete=[&](const std::wstring& text){return index.Complete(text,text.size());};
             const auto has=[](const auto& result,const wchar_t* name){return std::any_of(result.items.begin(),result.items.end(),[&](const auto& item){return item.name==name;});};
             Check(has(complete(L"class A : gameObject { func upd"),L"update"),"Lifecycle completion missing");
+            Check(has(complete(L"class A : gameObject { func physics"),L"physicsUpdate"),"Physics lifecycle completion missing");
             Check(has(complete(L"class A : gameObject { func f(){ transform.global_"),L"global_position"),"Global transform completion missing");
             Check(has(complete(L"class A { func f(){ string s; s."),L"truncate"),"String method completion missing");
             Check(complete(L"class A { char c='a").items.empty(),"String suggestions leaked into character literal");

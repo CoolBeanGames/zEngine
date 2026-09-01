@@ -65,6 +65,11 @@ Expansion Expand(const scenes::Document& document,const Loader& load)
             auto child=asset.objects[i]; child.id=ids.at(child.id);
             child.parent=i?ids.at(child.parent):object.parent;
             if (!i && (object.transformOverride || object.transformMask)) child.transform=OverrideTransform(child.transform,object.transform,object.transformMask?object.transformMask:511);
+            if (!i) {
+                if(object.prefabDataMask&1)child.name=object.name;
+                if(object.prefabDataMask&2)child.tags=object.tags;
+                if(object.prefabDataMask&4)child.behaviors=object.behaviors;
+            }
             append(std::move(child),generated || i!=0,source,depth+1);
         }
         active.erase(key);

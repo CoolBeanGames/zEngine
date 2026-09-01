@@ -2,7 +2,7 @@
 
 ## Physics
 
-Add exactly one **Collider** plus one **Rigid Body**, **Kinematic Body**, **Static Body**, or **Area** from the Inspector's Add Behavior menu. Collider shapes are Box, Sphere, and Capsule; their wireframes are visible only in the editor and disappear in Play/standalone games. Bodies expose 32-bit collision layer/mask values, friction, bounciness, and the settings appropriate to their motion type. Rigid bodies add mass, gravity scale, velocity, angular velocity, constant force, and constant torque. Physics runs at the same fixed 60 Hz as script Update, respects nested global transforms, and writes simulated rigid-body poses back to local transforms.
+Add exactly one **Collider** plus one **Rigid Body**, **Kinematic Body**, **Static Body**, or **Area** from the Inspector's Add Behavior menu. Collider shapes are Box, Sphere, and Capsule; each has editable local XYZ offset and size, and its wireframe is visible only in the editor. Bodies expose 32-bit collision layer/mask values, friction, bounciness, and the settings appropriate to their motion type. Rigid bodies add mass, gravity scale, velocity, angular velocity, constant force, and constant torque. Physics runs at a fixed 60 Hz, respects nested global transforms, and writes simulated rigid-body poses back to the GameObject's shared Transform so its model, children, scripts, and Inspector follow it.
 
 The script API is engine-owned; Jolt types never enter game scripts:
 
@@ -20,6 +20,8 @@ class PhysicsMover : gameObject {
     }
 }
 ```
+
+An optional `func physicsUpdate(float delta)` runs for each behavior on every fixed physics tick, after `update` and immediately before the physics world advances. Use it for forces and other physics-sensitive work.
 
 `physics.velocity` and `physics.angular_velocity` are readable/writable Vector3 values. Force methods are `add_force`, `add_impulse`, `add_torque`, and `add_angular_impulse`. Collision signals are `collision_entered`, `collision_stayed`, and `collision_exited`; area equivalents use the `area_` prefix. Each passes the other `gameObject`. A cast's final signed integer is interpreted as a 32-bit mask (`-1` means every layer); `cast` returns the nearest object or null and `cast_all` returns nearest-first objects. `transform.forward`, `transform.up`, and `transform.right` are read-only global direction vectors (+Z, +Y, +X in local space).
 
@@ -138,7 +140,7 @@ New saves use `ZENGINE_SCENE 3`, tracking prefab transform overrides per XYZ com
 
 - Drag an ordinary Scene Browser object into the Media Library to create a project-owned `.zprefab`. Its authored subtree becomes the prefab contents; the original object becomes a linked instance without changing its ID or placement.
 - Drag a prefab asset into the viewport to instantiate it. Double-click the asset to open an isolated prefab editing stage with its contents selected in the Inspector. Edit names, tags, transforms, mesh assignments, scripts, and exported values normally, then **Ctrl+S / File > Save Prefab**. **File > Close Prefab** returns to your previous scene, preserving its unsaved edits. Play is available in scenes, not in the prefab stage.
-- Scene instances inherit the source's name, tags, components, and script values. These inherited fields are read-only; edit the source prefab to change them. An instance root's transform remains editable and becomes a placement override. Generated children are edited through their source prefab. This first version does not support per-instance component/variable overrides or unpacking.
+- Scene instance roots are editable. Changed name, tags, transform axes, or complete behavior data are stored as independent instance overrides; non-overridden categories continue receiving source-prefab changes. Generated/nested children remain inherited and are edited through their source prefab.
 - In the prefab stage, **Create Empty** adds a child to its root. Drop another prefab into the viewport to nest it under that root, or onto an editable tree object to choose its parent. Nested references stay linked: saving the inner source updates it throughout outer prefabs and scenes. Circular nesting is rejected before saving.
 - Returning from prefab editing resolves the scene against the saved source. Other scenes resolve their references when opened; their files do not need rewriting. External prefab edits require reopening the scene. Missing/corrupt prefab dependencies prevent opening instead of silently losing objects. Save conflicts preserve the existing asset.
 

@@ -38,17 +38,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         MSG message{};
         while (message.message != WM_QUIT)
         {
-            if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            // A continuous mouse drag can keep the queue nonempty forever. Drain a
+            // bounded batch, then render so gizmo/camera interaction stays at frame rate.
+            for (unsigned handled=0;handled<64 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE);++handled)
             {
+                if (message.message==WM_QUIT) break;
                 if (editor.TranslateShortcut(message)) continue;
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
-            else
-            {
-                editor.Render();
-                if (IsIconic(window)) Sleep(20);
-            }
+            if(message.message==WM_QUIT)break;
+            editor.Render();
+            if (IsIconic(window)) Sleep(20);
         }
         return static_cast<int>(message.wParam);
     }

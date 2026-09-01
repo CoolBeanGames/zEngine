@@ -68,8 +68,8 @@ void EditorShell::UpdateGizmoDrag(gizmo::Point point)
     // Keep no-op clicks and drags back to the start clean.
     const auto& current=object->GetTransform(); const auto& original=gizmoDrag_->Original();
     const auto equal=[](zengine::Vec3 a,zengine::Vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; };
-    sceneDirty_=gizmoWasDirty_ || !equal(current.Position(),original.Position()) || !equal(current.Rotation(),original.Rotation()) || !equal(current.Scale(),original.Scale());
-    UpdateSceneTitle(); inspectorPanel_->RefreshLiveValues();
+    const bool dirty=gizmoWasDirty_ || !equal(current.Position(),original.Position()) || !equal(current.Rotation(),original.Rotation()) || !equal(current.Scale(),original.Scale());
+    if(dirty!=sceneDirty_){sceneDirty_=dirty;UpdateSceneTitle();}
 }
 LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPARAM l)
 {
@@ -81,6 +81,9 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
         cameraDrag_=(w&MK_CONTROL)?CameraDrag::Pan:(w&MK_SHIFT)?CameraDrag::Fly:CameraDrag::Orbit;
         SetCapture(window);CameraMotion(cameraPoint_);return 0;
     case WM_RBUTTONUP:EndCameraDrag();return 0;
+    case WM_MBUTTONDOWN:
+        EndGizmoDrag(true);SetFocus(window);cameraPoint_={GET_X_LPARAM(l),GET_Y_LPARAM(l)};cameraDrag_=CameraDrag::Pan;SetCapture(window);return 0;
+    case WM_MBUTTONUP:EndCameraDrag();return 0;
     case WM_MOUSEWHEEL:
         EndGizmoDrag(true);{const auto mode=cameraDrag_;cameraDrag_=CameraDrag::Pan;CameraMotion(cameraPoint_);cameraDrag_=mode;sceneCamera_.distance=std::clamp(sceneCamera_.distance*std::exp(-static_cast<float>(GET_WHEEL_DELTA_WPARAM(w))/WHEEL_DELTA*0.15f),0.05f,10000.0f);}return 0;
     case WM_LBUTTONDOWN:

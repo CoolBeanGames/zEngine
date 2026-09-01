@@ -12,9 +12,11 @@ namespace zengine
         virtual bool HasStart() const noexcept = 0;
         virtual bool HasUpdate() const noexcept = 0;
         virtual bool HasDraw() const noexcept = 0;
+        virtual bool HasPhysicsUpdate() const noexcept { return false; }
         virtual void Start(GameObject&) = 0;
         virtual void Update(GameObject&, float delta) = 0;
         virtual void Draw(GameObject&) = 0;
+        virtual void PhysicsUpdate(GameObject&, float) {}
     };
     // Project-relative asset reference with an optional live instance during Play.
     class ScriptBehavior final : public Behavior
@@ -37,9 +39,11 @@ namespace zengine
         bool HasStart() const noexcept override { return instance_ && instance_->HasStart(); }
         bool HasUpdate() const noexcept override { return instance_ && instance_->HasUpdate(); }
         bool HasDraw() const noexcept override { return instance_ && instance_->HasDraw(); }
+        bool HasPhysicsUpdate() const noexcept override { return instance_ && instance_->HasPhysicsUpdate(); }
         void OnStart() override { instance_->Start(Owner()); }
         void OnUpdate(float delta) override { instance_->Update(Owner(),delta); }
         void OnDraw() override { instance_->Draw(Owner()); }
+        void OnPhysicsUpdate(float delta) override { instance_->PhysicsUpdate(Owner(),delta); }
     private:
         std::string asset_;
         std::unique_ptr<ScriptInstance> instance_;

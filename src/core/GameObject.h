@@ -11,7 +11,7 @@
 
 namespace zengine
 {
-    struct Vec3 { float x = 0, y = 0, z = 0; };
+    struct Vec3 { float x = 0, y = 0, z = 0; bool operator==(const Vec3&) const = default; };
 
     // Local to the parent. Euler angles are in degrees.
     class Transform
@@ -51,14 +51,17 @@ namespace zengine
         // Called only after full construction/ownership, never from a base constructor.
         void Instantiate();
         void Tick(float delta);
+        void PhysicsTick(float delta);
         void Draw();
     protected:
         explicit Behavior(GameObject& owner) : owner_(owner) {}
         virtual bool HasStart() const noexcept { return false; }
         virtual bool HasUpdate() const noexcept { return false; }
+        virtual bool HasPhysicsUpdate() const noexcept { return false; }
         virtual bool HasDraw() const noexcept { return false; }
         virtual void OnStart() {}
         virtual void OnUpdate(float) {}
+        virtual void OnPhysicsUpdate(float) {}
         virtual void OnDraw() {}
         void ResetLifecycle() { started_ = false; error_.clear(); }
     private:

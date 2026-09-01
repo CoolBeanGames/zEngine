@@ -23,6 +23,7 @@ namespace zengine
         void DispatchPhysicsEvents(const std::vector<physics::ContactEvent>&);
         void Stop(ObjectStore&);
         void Tick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.Tick(objects, delta); }
+        void PhysicsTick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.PhysicsTick(objects, delta); }
         void Draw(ObjectStore& objects, const std::function<bool(GameObjectId)>& visible) { if (playing_) lifecycle_.Draw(objects, visible); }
         bool Playing() const noexcept { return playing_; }
         void SetInput(script::InputFrame frame) { input_=std::move(frame); }

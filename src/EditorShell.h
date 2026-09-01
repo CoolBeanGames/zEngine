@@ -154,6 +154,7 @@ private:
     void RequireEditable(zengine::GameObjectId,bool transformOnly=false) const;
     bool CanEdit(zengine::GameObjectId,bool transformOnly=false) const;
     void RecordTransformOverride(zengine::GameObjectId);
+    void RecordPrefabDataOverride(zengine::GameObjectId);
     int ObjectDepth(zengine::GameObjectId) const;
     std::vector<zengine::GameObjectId> ObjectRows() const;
     bool HasChildren(zengine::GameObjectId) const;

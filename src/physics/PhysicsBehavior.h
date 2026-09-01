@@ -11,9 +11,15 @@ class Collider final : public Behavior {
 public:
     explicit Collider(GameObject& owner) : Behavior(owner) {}
     ColliderShape Shape() const noexcept { return shape_; }
+    const Vec3& Offset() const noexcept { return offset_; }
+    const Vec3& Size() const noexcept { return size_; }
     void SetShape(ColliderShape value) noexcept { shape_ = value; }
+    void SetOffset(Vec3 value);
+    void SetSize(Vec3 value);
 private:
     ColliderShape shape_ = ColliderShape::Box;
+    Vec3 offset_{};
+    Vec3 size_{1, 1, 1};
 };
 
 class Body : public Behavior {

@@ -84,7 +84,7 @@ namespace zengine::scripts
             const auto type = name + (i ? std::to_string(i) : "");
             const auto path = Resolve(root, std::filesystem::path(type + ".zsh"));
             const auto source = "class " + type + " : gameObject\r\n{\r\n    func start()\r\n    {\r\n    }\r\n\r\n"
-                "    func update(float delta)\r\n    {\r\n    }\r\n\r\n    func draw()\r\n    {\r\n    }\r\n}\r\n";
+                "    func update(float delta)\r\n    {\r\n    }\r\n\r\n    func physicsUpdate(float delta)\r\n    {\r\n    }\r\n\r\n    func draw()\r\n    {\r\n    }\r\n}\r\n";
             HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (file == INVALID_HANDLE_VALUE)
             {

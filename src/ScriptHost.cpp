@@ -58,7 +58,7 @@ namespace
     public:
         BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
-              draw(program->HasCode(name,"draw")), input(inputFrame),scene(objects)
+              draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),scene(objects)
         {
             runtime.SetInput(input,false);for(const auto& [field,value]:overrides)runtime.Set(object,field,value);
             proxies.emplace(owner,object);
@@ -79,9 +79,11 @@ namespace
         // Synchronize native transform signals even for a listener with no update body.
         bool HasUpdate() const noexcept override { return true; }
         bool HasDraw() const noexcept override { return draw; }
+        bool HasPhysicsUpdate() const noexcept override { return physicsUpdate; }
         void Start(GameObject& owner) override { Invoke(owner,[&] { runtime.Start(object); }); }
         void Update(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.SetInput(input); runtime.Update(object,delta); }); }
         void Draw(GameObject& owner) override { Invoke(owner,[&] { runtime.Draw(object); }); }
+        void PhysicsUpdate(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.PhysicsUpdate(object,delta); }); }
         void PhysicsEvent(GameObject& owner,const physics::ContactEvent& event) {
             Invoke(owner,[&]{const auto body=std::get<ObjectRef>(runtime.Get(object,"physics"));const char* phase=event.phase==physics::ContactPhase::Entered?"entered":event.phase==physics::ContactPhase::Stayed?"stayed":"exited";runtime.Emit({body,std::string(event.area?"area_":"collision_")+phase},{Proxy(event.other)});});
         }
@@ -131,7 +133,7 @@ namespace
             for(const auto& [id,transform]:transforms)scene.Find(id)->GetTransform()=transform;
             previousTransforms=std::move(transforms);
         }
-        bool draw;
+        bool draw,physicsUpdate;
         const InputFrame& input;
         ObjectStore& scene;
         std::map<GameObjectId,ObjectRef> proxies;

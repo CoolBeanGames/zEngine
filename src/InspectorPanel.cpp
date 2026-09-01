@@ -17,6 +17,7 @@ namespace
 {
     constexpr wchar_t ClassName[] = L"zEngineInspector";
     constexpr COLORREF Background = RGB(40, 42, 47), Text = RGB(214, 216, 221);
+    constexpr COLORREF AxisColor(int axis) { return axis==0?RGB(239,92,92):axis==1?RGB(104,205,120):RGB(100,156,244); }
     std::wstring ReadText(HWND window)
     {
         std::wstring text(static_cast<std::size_t>(GetWindowTextLengthW(window)) + 1, L'\0');
@@ -168,7 +169,11 @@ void InspectorPanel::RefreshBehaviors()
             dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
         add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
-        if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior))addShape(collider);
+        if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior)){
+            addShape(collider);
+            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"offset",L"Offset"},{"size",L"Size"}})
+                for(int axis=0;axis<3;++axis){add(&behavior,key,label,false,true,true);behaviorFields_.back().axis=axis;}
+        }
         if(auto* body=dynamic_cast<zengine::physics::Body*>(&behavior)) {
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"layer",L"Collision layer bits"},{"mask",L"Collision mask bits"},{"friction",L"Friction"},{"bounciness",L"Bounciness (0 - 1)"}})add(&behavior,key,label,false,true,true);
             if(dynamic_cast<zengine::physics::RigidBody*>(body)){add(&behavior,"mass",L"Mass",false,true,true);add(&behavior,"gravity",L"Gravity scale",false,true,true);}
@@ -238,6 +243,10 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
         else if(auto* moving=dynamic_cast<zengine::physics::MovingBody*>(body)){const auto value=entry.name=="velocity"?moving->Velocity():entry.name=="angular_velocity"?moving->AngularVelocity():entry.name=="constant_force"?moving->ConstantForce():moving->ConstantTorque();out<<(entry.axis==0?value.x:entry.axis==1?value.y:value.z);}
         return out.str();
     }
+    if(auto* collider=dynamic_cast<zengine::physics::Collider*>(entry.behavior);collider && entry.axis>=0) {
+        const auto value=entry.name=="offset"?collider->Offset():collider->Size();
+        std::wostringstream out;out<<std::setprecision(9)<<(entry.axis==0?value.x:entry.axis==1?value.y:value.z);return out.str();
+    }
     return {};
 }
 void InspectorPanel::ChangeBehaviorField(std::size_t index)
@@ -270,6 +279,12 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
                 }
                 scriptHost_->SetField(*script,entry.name,Utf8(combined));
             }
+        }
+        else if(auto* collider=dynamic_cast<zengine::physics::Collider*>(entry.behavior);collider && entry.axis>=0) {
+            float value;if(!ParseNumber(text,value))throw std::invalid_argument("Invalid collider vector");
+            const auto base=index-entry.axis;auto vector=entry.name=="offset"?collider->Offset():collider->Size();float* parts[]={&vector.x,&vector.y,&vector.z};
+            for(int axis=0;axis<3;++axis)if(axis==entry.axis)*parts[axis]=value;else if(!ParseNumber(BehaviorValue(base+axis),*parts[axis]))throw std::invalid_argument("Invalid collider vector");
+            if(entry.name=="offset")collider->SetOffset(vector);else collider->SetSize(vector);
         }
         else if(auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior)) {
             if(entry.name=="layer"||entry.name=="mask"){wchar_t* end=nullptr;errno=0;const auto value=std::wcstoull(text.c_str(),&end,0);while(end&&*end&&std::iswspace(*end))++end;if(!end||end==text.c_str()||*end||errno==ERANGE||value>0xffffffffull)throw std::invalid_argument("Invalid collision bits");if(entry.name=="layer")body->SetLayer(static_cast<std::uint32_t>(value));else body->SetMask(static_cast<std::uint32_t>(value));}
@@ -419,6 +434,11 @@ void InspectorPanel::Layout()
     const int width = static_cast<int>(client.right);
     const int labelWidth = width >= 250 ? 68 : 12;
     const int column = std::max(24, (width - labelWidth - 16) / 3);
+    HDWP positions=BeginDeferWindowPos(static_cast<int>(fields_.size()+behaviorFields_.size()+8));
+    const auto place=[&](HWND control,int x,int y,int w,int h) {
+        if(positions)positions=DeferWindowPos(positions,control,nullptr,x,y,w,h,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
+        else SetWindowPos(control,nullptr,x,y,w,h,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
+    };
     for (int index = 0; index < static_cast<int>(fields_.size()); ++index)
     {
         if (!fields_[index].window) continue;
@@ -429,14 +449,14 @@ void InspectorPanel::Layout()
             y = width >= 250 ? 168 + ((index - 2) / 3) * 37 : 184 + ((index - 2) / 3) * 54;
             w = column - 3;
         }
-        MoveWindow(fields_[index].window, x, y - scroll_, w, 24, TRUE);
+        place(fields_[index].window, x, y - scroll_, w, 24);
     }
     int y = (width >= 250 ? 321 : 370) - scroll_;
     for (auto& entry:behaviorFields_)
     {
         if (entry.field.window) {
-            if(entry.axis>=0) {const int cell=std::max(30,(width-36)/3);MoveWindow(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24,TRUE);}
-            else MoveWindow(entry.field.window,12,y+21,std::max(30,width-24),entry.multiline?84:24,TRUE);
+            if(entry.axis>=0) {const int cell=std::max(30,(width-36)/3);place(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24);}
+            else place(entry.field.window,12,y+21,std::max(30,width-24),entry.multiline?84:24);
         }
         y+=RowHeight(entry);
     }
@@ -444,15 +464,16 @@ void InspectorPanel::Layout()
     for (HWND control : {meshEnabled_,chooseMesh_,cubeMesh_,clearMesh_}) ShowWindow(control,hasMesh ? SW_SHOW : SW_HIDE);
     if (hasMesh)
     {
-        MoveWindow(meshEnabled_,12,y,std::max(30,width-24),24,TRUE);
-        MoveWindow(chooseMesh_,12,y+52,std::max(30,width-24),26,TRUE);
-        MoveWindow(cubeMesh_,12,y+82,std::max(30,(width-30)/2),26,TRUE);
-        MoveWindow(clearMesh_,15+(width-30)/2,y+82,std::max(30,(width-30)/2),26,TRUE);
+        place(meshEnabled_,12,y,std::max(30,width-24),24);
+        place(chooseMesh_,12,y+52,std::max(30,width-24),26);
+        place(cubeMesh_,12,y+82,std::max(30,(width-30)/2),26);
+        place(clearMesh_,15+(width-30)/2,y+82,std::max(30,(width-30)/2),26);
         y += 122;
     }
-    MoveWindow(addBehaviorButton_,12,y,std::max(30,width-24),28,TRUE);
-    MoveWindow(addScriptButton_,12,y+34,std::max(30,width-24),28,TRUE);
-    InvalidateRect(window_, nullptr, FALSE);
+    place(addBehaviorButton_,12,y,std::max(30,width-24),28);
+    place(addScriptButton_,12,y+34,std::max(30,width-24),28);
+    if(positions)EndDeferWindowPos(positions);
+    RedrawWindow(window_,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN);
 }
 void InspectorPanel::Paint()
 {
@@ -469,8 +490,7 @@ void InspectorPanel::Paint()
     label(L"Transform", 12, 117, width - 24);
     const int labelWidth = width >= 250 ? 68 : 12;
     const int column = std::max(24, (width - labelWidth - 16) / 3);
-    label(L"X", labelWidth, 144, column); label(L"Y", labelWidth + column, 144, column);
-    label(L"Z", labelWidth + column * 2, 144, column);
+    for(int axis=0;axis<3;++axis){SetTextColor(dc,AxisColor(axis));label(axis==0?L"X":axis==1?L"Y":L"Z",labelWidth+column*axis,144,column);}SetTextColor(dc,Text);
     const wchar_t* names[]{L"Position", L"Rotation", L"Scale"};
     for (int row = 0; row < 3; ++row)
         label(names[row], 12, width >= 250 ? 170 + row * 37 : 164 + row * 54, width >= 250 ? 54 : width - 24);
@@ -485,7 +505,7 @@ void InspectorPanel::Paint()
         if(entry.axis<=0)DrawTextW(dc,entry.label.c_str(),-1,&row,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
         if(entry.axis>=0) {
             const int cell=std::max(30,(width-36)/3);
-            label(entry.axis==0?L"X":entry.axis==1?L"Y":L"Z",12+entry.axis*(cell+6),rowY+20,cell);
+            SetTextColor(dc,AxisColor(entry.axis));label(entry.axis==0?L"X":entry.axis==1?L"Y":L"Z",12+entry.axis*(cell+6),rowY+20,cell);SetTextColor(dc,Text);
         }
         rowY+=RowHeight(entry);
     }
@@ -574,7 +594,8 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
         const int dynamicIndex=GetDlgCtrlID(reinterpret_cast<HWND>(l))-FirstBehaviorField;
         const bool valid = dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()) ? behaviorFields_[dynamicIndex].field.valid :
             index < 0 || index >= static_cast<int>(fields_.size()) || fields_[index].valid;
-        SetTextColor(reinterpret_cast<HDC>(w), Text);
+        int axis=-1;if(index>=2 && index<static_cast<int>(fields_.size()))axis=(index-2)%3;else if(dynamicIndex>=0&&dynamicIndex<static_cast<int>(behaviorFields_.size()))axis=behaviorFields_[dynamicIndex].axis;
+        SetTextColor(reinterpret_cast<HDC>(w), axis>=0?AxisColor(axis):Text);
         SetBkColor(reinterpret_cast<HDC>(w), valid ? RGB(52, 54, 60) : RGB(92, 45, 45));
         return reinterpret_cast<LRESULT>(valid ? fieldBrush_ : invalidBrush_);
     }

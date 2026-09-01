@@ -136,7 +136,7 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
         for(const auto word:{L"class",L"func",L"return",L"if",L"else",L"while",L"true",L"false",L"null",L"export",L"multiline",L"label",L"signal",L"is"})candidates[word]={word,L"keyword"};
         auto preceding=source.substr(0,result.start);const auto last=preceding.find_last_not_of(L" \t\r\n");
         if(last!=preceding.npos && last>=3 && preceding.substr(last-3,4)==L"func") {
-            candidates.clear();for(const auto name:{L"start",L"update",L"draw"})candidates[name]={name,L"lifecycle",true};
+            candidates.clear();for(const auto name:{L"start",L"update",L"physicsUpdate",L"draw"})candidates[name]={name,L"lifecycle",true};
             for(const auto& [name,item]:members(currentClass))if(item.function)candidates[name]=item;
         }
     }

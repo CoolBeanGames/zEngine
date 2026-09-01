@@ -15,9 +15,11 @@ namespace zengine::scenes
         std::string asset;
         std::map<std::string,script::Value> variables;
         physics::ColliderShape shape=physics::ColliderShape::Box;
+        Vec3 colliderOffset{},colliderSize{1,1,1};
         std::uint32_t layer=1,mask=0xffffffffu;
         float friction=.5f,bounciness=0,mass=1,gravityScale=1;
         Vec3 velocity{},angularVelocity{},constantForce{},constantTorque{};
+        bool operator==(const BehaviorData&) const = default;
     };
     struct ObjectData
     {
@@ -30,6 +32,7 @@ namespace zengine::scenes
         std::string prefab;
         bool transformOverride=false;
         unsigned transformMask=0; // XYZ position, XYZ rotation, XYZ scale. Legacy bool-only references override all.
+        unsigned prefabDataMask=0; // Name, tags, and behavior-list overrides while remaining linked.
     };
     struct Document { std::vector<ObjectData> objects; };
     // Scene data/codec have no filesystem, renderer, or window dependencies.

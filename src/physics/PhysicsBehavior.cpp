@@ -9,6 +9,13 @@ void Finite(Vec3 v) {
         throw std::invalid_argument("Physics vector values must be finite.");
 }
 }
+void Collider::SetOffset(Vec3 value) { Finite(value); offset_ = value; }
+void Collider::SetSize(Vec3 value) {
+    Finite(value);
+    if (value.x <= 0 || value.y <= 0 || value.z <= 0)
+        throw std::invalid_argument("Collider size components must be greater than zero.");
+    size_ = value;
+}
 void Body::SetFriction(float value) {
     if (!std::isfinite(value) || value < 0) throw std::invalid_argument("Friction must be finite and nonnegative.");
     friction_ = value;

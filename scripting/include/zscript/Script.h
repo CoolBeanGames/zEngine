@@ -131,6 +131,7 @@ public:
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);
+    void PhysicsUpdate(ObjectRef object, double delta);
     void Draw(ObjectRef object);
 private:
     struct Impl;

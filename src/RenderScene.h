@@ -14,7 +14,7 @@ struct MeshDraw
     zengine::Transform transform;
     std::optional<DirectX::XMFLOAT4X4> parentMatrix;
 };
-struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; };
+struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; };
 // Submission values only: no GameObject pointers or importer types cross this boundary.
 struct ViewportFrame
 {

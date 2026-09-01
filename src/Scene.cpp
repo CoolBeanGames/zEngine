@@ -78,7 +78,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
             if (const auto* mesh=dynamic_cast<const MeshRenderer*>(&behavior)) b.asset=mesh->Asset();
             else if (const auto* script=dynamic_cast<const ScriptBehavior*>(&behavior))
             { b.kind=BehaviorData::Kind::Script; b.asset=script->Asset(); b.variables=scripts.AuthoredValues(*script); }
-            else if(const auto* collider=dynamic_cast<const physics::Collider*>(&behavior)){b.kind=BehaviorData::Kind::Collider;b.shape=collider->Shape();}
+            else if(const auto* collider=dynamic_cast<const physics::Collider*>(&behavior)){b.kind=BehaviorData::Kind::Collider;b.shape=collider->Shape();b.colliderOffset=collider->Offset();b.colliderSize=collider->Size();}
             else if(const auto* body=dynamic_cast<const physics::Body*>(&behavior)) {
                 b.layer=body->Layer();b.mask=body->Mask();b.friction=body->Friction();b.bounciness=body->Bounciness();
                 if(const auto* rigid=dynamic_cast<const physics::RigidBody*>(body)){b.kind=BehaviorData::Kind::RigidBody;b.mass=rigid->Mass();b.gravityScale=rigid->GravityScale();}
@@ -97,19 +97,19 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
 std::string Encode(const Document& scene)
 {
     std::ostringstream out; out.imbue(std::locale::classic()); out<<std::setprecision(17);
-    out<<"ZENGINE_SCENE 4\nobjects "<<scene.objects.size()<<'\n';
+    out<<"ZENGINE_SCENE 5\nobjects "<<scene.objects.size()<<'\n';
     for (const auto& object:scene.objects)
     {
         out<<"object "<<object.id<<' '<<std::quoted(object.name)<<"\ntags "<<object.tags.size();
         for (const auto& tag:object.tags) out<<' '<<std::quoted(tag);
         out<<"\ntransform";
         for (const auto v:{object.transform.Position(),object.transform.Rotation(),object.transform.Scale()}) out<<' '<<v.x<<' '<<v.y<<' '<<v.z;
-        out<<"\nparent "<<object.parent<<"\nprefab "<<std::quoted(object.prefab)<<' '<<(object.transformMask?object.transformMask:object.transformOverride?511:0);
+        out<<"\nparent "<<object.parent<<"\nprefab "<<std::quoted(object.prefab)<<' '<<(object.transformMask?object.transformMask:object.transformOverride?511:0)<<' '<<object.prefabDataMask;
         out<<"\nbehaviors "<<object.behaviors.size()<<'\n';
         for (const auto& b:object.behaviors)
         {
             out<<KindName(b.kind)<<' '<<(b.enabled?1:0)<<' '<<b.priority<<' '<<std::quoted(b.asset)<<'\n';
-            if(b.kind==BehaviorData::Kind::Collider)out<<"collider_shape "<<static_cast<unsigned>(b.shape)<<'\n';
+            if(b.kind==BehaviorData::Kind::Collider)out<<"collider_shape "<<static_cast<unsigned>(b.shape)<<' '<<b.colliderOffset.x<<' '<<b.colliderOffset.y<<' '<<b.colliderOffset.z<<' '<<b.colliderSize.x<<' '<<b.colliderSize.y<<' '<<b.colliderSize.z<<'\n';
             else if(b.kind!=BehaviorData::Kind::Mesh && b.kind!=BehaviorData::Kind::Script) {
                 out<<"body "<<b.layer<<' '<<b.mask<<' '<<b.friction<<' '<<b.bounciness<<' '<<b.mass<<' '<<b.gravityScale;
                 for(auto v:{b.velocity,b.angularVelocity,b.constantForce,b.constantTorque})out<<' '<<v.x<<' '<<v.y<<' '<<v.z;out<<'\n';
@@ -127,7 +127,7 @@ Document Decode(std::string_view text)
 {
     Require(text.size()<=MaxSceneBytes,"Scene exceeds the 8 MiB limit.");
     std::istringstream in{std::string(text)}; in.imbue(std::locale::classic());
-    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,4); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
+    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,5); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
     Document scene; const auto count=Count(in,10000); std::set<GameObjectId> ids;
     for (std::size_t i=0;i<count;++i)
     {
@@ -143,8 +143,9 @@ Document Decode(std::string_view text)
             Token(in,"prefab"); object.prefab=Text(in);
             if(version>=3){object.transformMask=static_cast<unsigned>(Count(in,511));object.transformOverride=object.transformMask!=0;}
             else object.transformOverride=Boolean(in);
+            if(version>=5)object.prefabDataMask=static_cast<unsigned>(Count(in,7));
             if (!object.prefab.empty()) { Asset(object.prefab,false); Require(object.prefab.ends_with(".zprefab"),"Expected prefab reference."); }
-            else Require(!object.transformOverride,"Only prefab instances can override inherited transforms.");
+            else Require(!object.transformOverride && !object.prefabDataMask,"Only prefab instances can override inherited data.");
         }
         Token(in,"behaviors"); const auto behaviors=Count(in,256); bool mesh=false,collider=false,body=false;
         for (std::size_t j=0;j<behaviors;++j)
@@ -155,7 +156,7 @@ Document Decode(std::string_view text)
             else if(type=="script")b.kind=BehaviorData::Kind::Script;else if(type=="collider")b.kind=BehaviorData::Kind::Collider;else if(type=="rigid_body")b.kind=BehaviorData::Kind::RigidBody;else if(type=="kinematic_body")b.kind=BehaviorData::Kind::KinematicBody;else if(type=="static_body")b.kind=BehaviorData::Kind::StaticBody;else b.kind=BehaviorData::Kind::Area;
             if(type=="collider"){Require(!collider,"Duplicate Collider.");collider=true;}else if(type=="rigid_body"||type=="kinematic_body"||type=="static_body"||type=="area"){Require(!body,"Duplicate physics body type.");body=true;}
             b.enabled=Boolean(in); b.priority=Float(in); b.asset=Text(in);if(type=="mesh"||type=="script")Asset(b.asset,type=="mesh");else Require(b.asset.empty(),"Native physics behaviors cannot reference assets.");
-            if(type=="collider"){Token(in,"collider_shape");b.shape=static_cast<physics::ColliderShape>(Count(in,2));}
+            if(type=="collider"){Token(in,"collider_shape");b.shape=static_cast<physics::ColliderShape>(Count(in,2));if(version>=5){b.colliderOffset=Vector(in);b.colliderSize=Vector(in);Require(b.colliderSize.x>0&&b.colliderSize.y>0&&b.colliderSize.z>0,"Invalid collider size.");}}
             else if(type!="mesh"&&type!="script"){Token(in,"body");b.layer=static_cast<std::uint32_t>(Count(in,0xffffffffu));b.mask=static_cast<std::uint32_t>(Count(in,0xffffffffu));b.friction=Float(in);b.bounciness=Float(in);b.mass=Float(in);b.gravityScale=Float(in);b.velocity=Vector(in);b.angularVelocity=Vector(in);b.constantForce=Vector(in);b.constantTorque=Vector(in);Require(b.friction>=0&&b.bounciness>=0&&b.bounciness<=1&&b.mass>0,"Invalid physics body settings.");}
             Token(in,"variables"); const auto fields=Count(in,1024); Require(type=="script" || fields==0,"Only scripts can contain fields.");
             for (std::size_t k=0;k<fields;++k)
@@ -169,7 +170,10 @@ Document Decode(std::string_view text)
     for (const auto& object:scene.objects)
     {
         Require(!object.parent || ids.contains(object.parent),"Missing parent object.");
-        if (!object.prefab.empty()) Require(object.behaviors.empty() && object.tags.empty(),"Prefab instances inherit their data from the asset.");
+        if (!object.prefab.empty()) {
+            Require((object.prefabDataMask&2) || object.tags.empty(),"Prefab instance tags require an override flag.");
+            Require((object.prefabDataMask&4) || object.behaviors.empty(),"Prefab instance behaviors require an override flag.");
+        }
         parents.emplace(object.id,object.parent);
     }
     for (const auto& object:scene.objects)
@@ -191,7 +195,7 @@ Instance Instantiate(const Document& scene)
             Behavior* behavior=nullptr;
             if (b.kind==BehaviorData::Kind::Mesh) behavior=&object.AddBehavior<MeshRenderer>(b.asset);
             else if(b.kind==BehaviorData::Kind::Script) { auto& script=object.AddBehavior<ScriptBehavior>(b.asset); instance.scripts.RestoreValues(script,b.variables); behavior=&script; }
-            else if(b.kind==BehaviorData::Kind::Collider){auto& v=object.AddBehavior<physics::Collider>();v.SetShape(b.shape);behavior=&v;}
+            else if(b.kind==BehaviorData::Kind::Collider){auto& v=object.AddBehavior<physics::Collider>();v.SetShape(b.shape);v.SetOffset(b.colliderOffset);v.SetSize(b.colliderSize);behavior=&v;}
             else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& v=object.AddBehavior<physics::RigidBody>();v.SetMass(b.mass);v.SetGravityScale(b.gravityScale);body=&v;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
             behavior->SetEnabled(b.enabled); behavior->SetPriority(b.priority);
         }

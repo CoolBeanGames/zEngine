@@ -689,8 +689,8 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
             if (program.Assignable("gameObject", name)) {
                 if (method.name.text == "start" || method.name.text == "draw") {
                     if (f.result != "void" || !f.params.empty()) Fail(program.source, method.name, "Lifecycle hook must be void with no parameters");
-                } else if (method.name.text == "update") {
-                    if (f.result != "void" || f.params != std::vector<std::string>{"float"}) Fail(program.source, method.name, "Update signature must be func update(float delta)");
+                } else if (method.name.text == "update" || method.name.text == "physicsUpdate") {
+                    if (f.result != "void" || f.params != std::vector<std::string>{"float"}) Fail(program.source, method.name, method.name.text=="update"?"Update signature must be func update(float delta)":"Physics update signature must be func physicsUpdate(float delta)");
                 }
             }
             c.methods.emplace(method.name.text, std::move(f));
@@ -1241,6 +1241,10 @@ void Runtime::Start(ObjectRef object) { impl_->Reset(); impl_->Start(object); }
 void Runtime::Update(ObjectRef object, double delta) {
     if (!std::isfinite(delta) || delta < 0) impl_->Error({}, "Delta must be finite and nonnegative");
     impl_->Reset(); impl_->Hook(object, "update", {delta});
+}
+void Runtime::PhysicsUpdate(ObjectRef object, double delta) {
+    if (!std::isfinite(delta) || delta < 0) impl_->Error({}, "Delta must be finite and nonnegative");
+    impl_->Reset(); impl_->Hook(object, "physicsUpdate", {delta});
 }
 void Runtime::Draw(ObjectRef object) { impl_->Reset(); impl_->Hook(object, "draw", {}); }
 

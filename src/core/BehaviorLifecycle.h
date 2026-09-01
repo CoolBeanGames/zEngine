@@ -13,6 +13,7 @@ namespace zengine
         explicit BehaviorLifecycle(std::uint32_t seed = std::random_device{}()) : random_(seed) {}
         std::vector<Behavior*> Ordered(ObjectStore& objects);
         void Tick(ObjectStore& objects, float delta);
+        void PhysicsTick(ObjectStore& objects, float delta);
         void Draw(ObjectStore& objects, const std::function<bool(GameObjectId)>& hasDraw);
     private:
         std::mt19937 random_;

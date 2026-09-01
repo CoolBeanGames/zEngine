@@ -49,6 +49,16 @@ void zengine::Behavior::Tick(float delta)
     catch (const std::exception& e) { error_ = e.what(); if (error_.empty()) error_ = "Behavior update failed."; }
     catch (...) { error_ = "Unknown behavior update failure."; }
 }
+void zengine::Behavior::PhysicsTick(float delta)
+{
+    if (!std::isfinite(delta) || delta < 0) throw std::invalid_argument("Physics tick delta must be finite and nonnegative.");
+    if (!enabled_ || Faulted() || starting_) return;
+    Instantiate();
+    if (Faulted()) return;
+    try { if (HasPhysicsUpdate()) OnPhysicsUpdate(delta); }
+    catch (const std::exception& e) { error_ = e.what(); if (error_.empty()) error_ = "Behavior physics update failed."; }
+    catch (...) { error_ = "Unknown behavior physics update failure."; }
+}
 void zengine::Behavior::Draw()
 {
     if (!enabled_ || Faulted() || starting_) return;

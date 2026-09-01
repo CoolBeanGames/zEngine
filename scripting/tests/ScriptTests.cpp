@@ -61,17 +61,18 @@ void Movement() {
 }
 void LifecycleAndInheritance() {
     auto p = Compile(R"(class Child : Base { func update(float dt) { elapsed += dt * 2; frames += 1; } }
-        class Quiet : Base { func start() {} func update(float dt) {} }
-        class Base : GameObject { int starts; int frames; int draws; float elapsed = 1;
+        class Quiet : Base { func start() {} func update(float dt) {} func physicsUpdate(float dt) {} }
+        class Base : GameObject { int starts; int frames; int fixedTicks; int draws; float elapsed = 1;
             func start() { starts += 1; } func update(float dt) { elapsed += dt; frames += 1; }
+            func physicsUpdate(float dt) { fixedTicks += 1; }
             func draw() { draws += 1; } func seconds() : float { return elapsed; } }
         class Driver { Base target = Child(); func run(float dt) { target.update(dt); } }
     )");
     Runtime r(p); auto a = r.Create("Child"), b = r.Create("Quiet");
-    r.Update(a, 0.25); r.Start(a); r.Update(a, 0.5); r.Draw(a); r.Update(b, 1);
-    Check(Int(r.Get(a, "starts")) == 1 && Int(r.Get(a, "frames")) == 2 && Int(r.Get(a, "draws")) == 1, "Lifecycle counts");
+    r.Update(a, 0.25); r.Start(a); r.Update(a, 0.5); r.PhysicsUpdate(a,1.0/60);r.PhysicsUpdate(a,1.0/60);r.Draw(a); r.Update(b, 1);r.PhysicsUpdate(b,1.0/60);
+    Check(Int(r.Get(a, "starts")) == 1 && Int(r.Get(a, "frames")) == 2 && Int(r.Get(a, "fixedTicks"))==2 && Int(r.Get(a, "draws")) == 1, "Lifecycle counts");
     Check(Float(r.Call(a, "seconds")) == 2.5, "Inherited state/override");
-    Check(Int(r.Get(b, "starts")) == 0 && Float(r.Get(b, "elapsed")) == 1, "Empty override");
+    Check(Int(r.Get(b, "starts")) == 0 && Int(r.Get(b,"fixedTicks"))==0 && Float(r.Get(b, "elapsed")) == 1, "Empty override");
     auto driver = r.Create("Driver"); r.Call(driver, "run", {0.5}); auto target = std::get<ObjectRef>(r.Get(driver, "target"));
     Check(Float(r.Get(target, "elapsed")) == 2, "Virtual dispatch through base reference");
     r.Set(a, "elapsed", std::int64_t{9}); Check(Float(r.Get(a, "elapsed")) == 9, "Host widening");
@@ -113,7 +114,7 @@ void Diagnostics() {
         {"class A { func f() { return 1; } }", "Void function"}, {"class A { func f() : float { return; } }", "Return value required"},
         {"class A { func f() { if (1) {} } }", "Condition must"}, {"class A { func f() { int n = true + 1; } }", "Arithmetic operands"},
         {"class A { func f() { this = A(); } }", "Cannot assign to this"}, {"class A { func f() { int A; } }", "type keywords"},
-        {"class A : gameObject { func update() {} }", "Update signature"}, {"class A : gameObject { func start(int n) {} }", "Lifecycle hook"},
+        {"class A : gameObject { func update() {} }", "Update signature"}, {"class A : gameObject { func physicsUpdate() {} }", "Physics update signature"}, {"class A : gameObject { func start(int n) {} }", "Lifecycle hook"},
         {"class A { func f(int n) {} } class B : A { func f(float n) {} }", "Override"},
         {"class A { func f() {} } class B : A { int f; }", "Duplicate/inherited"},
         {"class A { string s = \"bad; }", "Unterminated string"}, {"class A { float f = 1e999; }", "out of range"},

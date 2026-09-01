@@ -276,7 +276,7 @@ void EditorShell::Render()
         if (!paused_)
         {
             tickAccumulator_+=elapsed;
-            while (tickAccumulator_>=1.0/60.0) { TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f); physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents());tickAccumulator_-=1.0/60.0; }
+            while (tickAccumulator_>=1.0/60.0) { TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f);scriptHost_.PhysicsTick(objects_,1.0f/60.0f);physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents());tickAccumulator_-=1.0/60.0; }
         }
         if (!paused_ || stepDraw_)
             scriptHost_.Draw(objects_,[&](zengine::GameObjectId id) {
@@ -369,7 +369,7 @@ void EditorShell::SetPaused(bool paused)
 void EditorShell::Step()
 {
     if (!Playing()) return;
-    SetPaused(true); TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f);physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents()); stepDraw_=true;
+    SetPaused(true); TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f);scriptHost_.PhysicsTick(objects_,1.0f/60.0f);physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents()); stepDraw_=true;
     inspectorPanel_->RefreshLiveValues(); ReportScriptErrors();
 }
 void EditorShell::ReportScriptErrors()
@@ -398,7 +398,7 @@ ViewportFrame EditorShell::BuildSceneFrame() const
     {
         const auto& object = objects_.At(i);
         const auto* mesh = object.GetBehavior<zengine::MeshRenderer>();
-        if(!Playing())if(const auto* collider=object.GetBehavior<zengine::physics::Collider>();collider&&collider->Enabled()){DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));frame.colliders.push_back({collider->Shape(),object.GetTransform(),parent,object.Id()==selectedObject_});}
+        if(!Playing())if(const auto* collider=object.GetBehavior<zengine::physics::Collider>();collider&&collider->Enabled()){DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));frame.colliders.push_back({collider->Shape(),object.GetTransform(),collider->Offset(),collider->Size(),parent,object.Id()==selectedObject_});}
         const auto bound = meshBindings_.find(object.Id());
         if (mesh && mesh->Enabled() && !mesh->Asset().empty() && bound != meshBindings_.end() && bound->second.asset == mesh->Asset())
         {
@@ -707,12 +707,13 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
     if(index<firstObject_)firstObject_=index;else if(index>=firstObject_+visible)firstObject_=index-visible+1;
     if (inspectorPanel_) inspectorPanel_->Bind(object,CanEdit(id),CanEdit(id,true));
     selectedObject_ = id;
-    if (prefabSources_.contains(id)) status_=L"Prefab instance: inherited fields are read-only; double-click its asset to edit the source";
+    if (prefabLinks_.contains(id)) status_=L"Prefab instance root: edits are saved as instance overrides; double-click the asset to edit every non-overridden instance";
+    else if (prefabSources_.contains(id)) status_=L"Nested prefab content is inherited; edit its prefab asset to change it";
     InvalidateRect(window_, &sceneBrowser_, FALSE);
 }
 void EditorShell::OnObjectChanged()
 {
-    if (!Playing()) RecordTransformOverride(selectedObject_);
+    if (!Playing()) { RecordTransformOverride(selectedObject_); RecordPrefabDataOverride(selectedObject_); }
     MarkSceneDirty();
     if (const auto* selected = SelectedGameObject())
         SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + WideText(selected->Name())).c_str());

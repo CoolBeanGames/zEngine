@@ -28,6 +28,11 @@ void zengine::BehaviorLifecycle::Tick(ObjectStore& objects, float delta)
     if (!std::isfinite(delta) || delta<0) throw std::invalid_argument("Tick delta must be finite and nonnegative.");
     for (auto* behavior:Ordered(objects)) behavior->Tick(delta);
 }
+void zengine::BehaviorLifecycle::PhysicsTick(ObjectStore& objects, float delta)
+{
+    if (!std::isfinite(delta) || delta<0) throw std::invalid_argument("Physics tick delta must be finite and nonnegative.");
+    for (auto* behavior:Ordered(objects)) behavior->PhysicsTick(delta);
+}
 void zengine::BehaviorLifecycle::Draw(ObjectStore& objects, const std::function<bool(GameObjectId)>& hasDraw)
 {
     for (auto* behavior:Ordered(objects))
