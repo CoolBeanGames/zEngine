@@ -1,0 +1,7 @@
+# The launcher is configured out-of-tree (cmake -S launcher -B builds/launcher),
+# but ignore in-tree build output too in case someone runs cmake here directly.
+/build/
+/builds/
+/out/
+/.vs/
+*.user

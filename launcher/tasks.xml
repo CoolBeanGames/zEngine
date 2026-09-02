@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<tasks project="launcher" nextIndex="7">
+  <task id="L-5">
+    <name>hook up editor download button</name>
+    <prompt>download the most recent release from the github repo unzip it and replace the old files</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>The Update button runs ProjectStore::UpdateEditor: WinHTTP GET api.github.com/repos/&lt;owner&gt;/&lt;repo&gt;/releases/latest (owner/repo default CoolBeanGames/zEngine, overridable via %LOCALAPPDATA%\zLauncher\repo.txt) -&gt; pick the highest "engine_&lt;n&gt;.zip" asset (else any .zip, else zipball) -&gt; download -&gt; System32 tar.exe -xf -&gt; descend a single wrapper folder if present -&gt; recursively copy over the installed editor folder -&gt; write &lt;editorDir&gt;\version.txt with the tag. Refuses to overwrite a build/builds tree; reports per-file copy failures (editor open). Verified end to end against the live release: downloads engine_1.zip (6.9MB), extracts, replaces zEngine.exe + adds zPlayer.exe/shaders/licenses/libs over a test editor dir, leaves unrelated files, writes version.txt "engine_1". Linked winhttp.lib.</notes>
+    <filesChanged>launcher/CMakeLists.txt; launcher/src/ProjectStore.h; launcher/src/ProjectStore.cpp; launcher/src/LauncherWindow.cpp; launcher/README.md</filesChanged>
+    <image></image>
+  </task>
+  <task id="L-6">
+    <name>create launcher update</name>
+    <prompt>the launcher update updates itself, for zip name lets use launcher_buildnumber.zip replacing build number with the release number</prompt>
+    <requirements>the launcher can now update</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>update,launcher,git</tags>
+    <notes>Launcher self-update. New CMake target zLauncherUpdate (launcher/updater/Main.cpp) - a tiny WIN32 helper. The launcher bakes in ZLAUNCHER_BUILD_NUMBER (CMake cache var, default 1) and ZLAUNCHER_BUILD_DATE. The Update button first calls ProjectStore::LauncherUpdate: WinHTTP GET .../releases -&gt; HighestNumberedAsset scans for "launcher_&lt;n&gt;.zip" -&gt; if n &gt; ZLAUNCHER_BUILD_NUMBER it spawns zLauncherUpdate.exe (--pid --url --dir --exe) and the launcher closes; otherwise it reports "up to date (build N)" and falls through to the editor update. The helper waits for the launcher pid to exit, downloads the zip, tar-extracts it, copies over the launcher folder (staging zLauncherUpdate.exe as .new since it cannot overwrite itself - swapped in on next start by SwapStagedUpdater), then relaunches zLauncher.exe and exits. Release build produced at launcher/builds/release/Release and packaged as launcher/builds/release/launcher_1.zip (zLauncher.exe + zLauncherUpdate.exe). Verified: launcher-update check runs against the live repo and correctly reports up-to-date (only engine_1.zip present); the helper's download+extract+copy path proven by running it standalone against engine_1.zip. Committed and pushed. NOTE: end-to-end self-replacement is not exercisable until a launcher_&lt;n&gt;.zip (n&gt;1) asset exists on a release.</notes>
+    <filesChanged>launcher/CMakeLists.txt; launcher/updater/Main.cpp; launcher/src/ProjectStore.h; launcher/src/ProjectStore.cpp; launcher/src/LauncherWindow.cpp; launcher/README.md</filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="true">check github for a launcher update</subtask>
+      <subtask done="true">it one exists launch a new mini app we create here</subtask>
+      <subtask done="true">the mini app downloads the launcher zip</subtask>
+      <subtask done="true">extracts it repolacing the old launcher</subtask>
+      <subtask done="true">then launches the launcher and closes itself</subtask>
+      <subtask done="true">launcher is now updated</subtask>
+      <subtask done="true">each launcher should store the date it was built, when we zip it we will use that date in the name</subtask>
+      <subtask done="true">use the name of the zip to verify if its an update</subtask>
+    </subtasks>
+  </task>
+  <task id="L-1">
+    <name>add creation date, last launched date, last build date, and version number fields</name>
+    <prompt></prompt>
+    <requirements>add it for each project, if the data doesnt exist just dont show anything for that portion</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>data,projects</tags>
+    <notes>Each project row now shows a third metadata line built only from data that exists: version, Created, Launched, Built (dates). Introduced a per-project ".zlaunch" sidecar (ZLAUNCH 1: name/version/icon/created/launched) read in ProjectStore::Resolve; created falls back to the .zproject/folder creation time; built is derived from the project's builds/current folder mtime; launched is stamped by the new ProjectStore::MarkLaunched, called after a successful editor launch from New Project and the row Edit button. Row height 76-&gt;86. Built and verified via launcher/builds/test.</notes>
+    <filesChanged>launcher/src/ProjectStore.h; launcher/src/ProjectStore.cpp; launcher/src/LauncherWindow.cpp; launcher/.gitignore</filesChanged>
+    <image></image>
+  </task>
+  <task id="L-2">
+    <name>author project file</name>
+    <prompt>create a file that will be in every project folder, set it up automatically on the launchers FIRST and only FIRST run so that double clicking this file launches the project. it should basically be a very small file containing the version number, name, and icon, the editor will override some of these settings later</prompt>
+    <requirements>project file is created in new projects</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>new file, new project</tags>
+    <notes>Every project folder now carries a small "&lt;name&gt;.zlaunch" file (ZLAUNCH 1: name/version/icon + created/launched timestamps) written by ProjectStore::Create for new projects. ProjectStore::RunFirstTimeSetup (called once, guarded by %LOCALAPPDATA%\zLauncher\setup.done) back-fills the sidecar into already-registered projects. The per-user file association (HKCU\Software\Classes\.zlaunch -&gt; zLauncher.Project -&gt; "zLauncher.exe" "%1" + DefaultIcon) is (re)written whenever it does not already point at the running exe. Main.cpp handles a ".zlaunch" command-line argument: it registers the folder and opens the project in the editor via the new static ProjectStore::LaunchProjectAt, then exits without showing the launcher window. Built and verified via launcher/builds/test (sidecar created, marker written, association keys present, double-click arg resolves and launches).</notes>
+    <filesChanged>launcher/src/ProjectStore.h; launcher/src/ProjectStore.cpp; launcher/src/LauncherWindow.cpp; launcher/src/Main.cpp; launcher/CMakeLists.txt</filesChanged>
+    <image></image>
+  </task>
+  <task id="L-3">
+    <name>add bottom bar to show launcher version and editor version</name>
+    <prompt>add the data needed to populate it, and add the bottom bar</prompt>
+    <requirements>bottom bar in place</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>The bottom bar now shows the transient status message on the left and "zLauncher &lt;v&gt;  •  Editor &lt;v&gt;" right-aligned. Launcher version is a compile define (ZLAUNCHER_VERSION from CMake PROJECT_VERSION). Editor version comes from ProjectStore::EditorVersion(): a "version.txt" next to zEngine.exe, else the exe's VS_FIXEDFILEINFO product version, else CMAKE_PROJECT_VERSION from an adjacent CMakeCache.txt (dev tree). If the editor version cannot be determined, only the launcher version is shown. Linked version.lib. Built and verified via launcher/builds/test.</notes>
+    <filesChanged>launcher/CMakeLists.txt; launcher/src/ProjectStore.h; launcher/src/ProjectStore.cpp; launcher/src/LauncherWindow.h; launcher/src/LauncherWindow.cpp</filesChanged>
+    <image></image>
+  </task>
+  <task id="L-4">
+    <name>hook up play button</name>
+    <prompt>play button looks for a /builds/current/ folder in the project directory and if it exists launchers the exe inside. if its missing the button is greyed out</prompt>
+    <requirements>button is hooked up</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>Added a per-row Play button (rows are now Play / Edit / Build / Delete). ProjectStore::PlayableExe returns "&lt;project&gt;/builds/current/&lt;exe&gt;" (prefers "&lt;name&gt;.exe", else the first .exe) when that folder exists, else empty; ProjectStore::PlayProject ShellExecutes it with its own folder as the working directory. RebuildRows enables Play only when PlayableExe has a value, so it is greyed out when builds/current is absent or empty. The row metadata line's "Built" date is derived from the builds/current folder. Row button id scheme changed from *3 to *4. Built and verified via launcher/builds/test (Play enabled with a build present, greyed without).</notes>
+    <filesChanged>launcher/src/ProjectStore.h; launcher/src/ProjectStore.cpp; launcher/src/LauncherWindow.h; launcher/src/LauncherWindow.cpp</filesChanged>
+    <image></image>
+  </task>
+</tasks>
