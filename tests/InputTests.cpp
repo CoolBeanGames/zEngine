@@ -30,7 +30,7 @@ int main(int argc,char**){try{
     h.pads[0].connected=false;states=system.Tick(h);Check(states.at("stick").justReleased,"Controller disconnect release");
     states=system.Tick({});Check(states.at("move").justReleased,"Focus release");
     auto compiled=script::Compiler::Compile(R"(class Test : gameObject {
-        export int presses; export int releases; export int held; export bool polled; export Vector3 movement; export Vector3 action_axis;
+        export int presses; export int releases; export int held; export bool polled; export Vector2 movement; export Vector2 action_axis;
         func start(){Input.action("jump").just_pressed.connect(press);Input.action("jump").just_released.connect(release);Input.action("jump").is_pressed.connect(holding);}
         func press(){presses+=1;transform.position.y+=1;polled=Input.is_action_just_pressed("jump");}
         func release(){releases+=1;}func holding(){held+=1;}
@@ -39,7 +39,7 @@ int main(int argc,char**){try{
     script::Runtime vm(compiled.program);auto object=vm.Create("Test");script::InputFrame frame{{"jump",{}},{"move",{}}};vm.SetInput(frame,false);vm.Start(object);
     frame["jump"]={1,0,true,true,false};frame["move"]={0.5,0.5,true,true,false};vm.SetInput(frame);vm.Update(object,0.1);
     Check(std::get<std::int64_t>(vm.Get(object,"presses"))==1 && std::get<bool>(vm.Get(object,"polled")),"Input signals/poll disagree");
-    Check(std::get<script::Vector3>(vm.Get(object,"movement")).y==0.5,"Input vector");Check(std::get<script::Vector3>(vm.Get(object,"action_axis")).x==0.5&&std::get<script::Vector3>(vm.Get(object,"action_axis")).y==0.5,"2D InputAction axis must be a Vector3");
+    Check(std::get<script::Vector2>(vm.Get(object,"movement")).y==0.5,"Input vector");Check(std::get<script::Vector2>(vm.Get(object,"action_axis")).x==0.5&&std::get<script::Vector2>(vm.Get(object,"action_axis")).y==0.5,"2D InputAction axis must be a Vector2");
     frame["jump"].justPressed=false;vm.SetInput(frame);Check(std::get<std::int64_t>(vm.Get(object,"held"))==2,"Held signal each tick");
     frame["jump"]={0,0,false,false,true};vm.SetInput(frame);Check(std::get<std::int64_t>(vm.Get(object,"releases"))==1,"Release signal");
     ObjectStore objects;ScriptHost host;auto& owner=objects.Create();auto& behavior=owner.AddBehavior<ScriptBehavior>("InputMover.zsh");

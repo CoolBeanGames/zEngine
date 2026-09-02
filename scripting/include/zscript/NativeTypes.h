@@ -43,6 +43,7 @@ inline const std::vector<NativeType>& NativeTypes() {
         {"PhysicsService", "",            "",               false, false, true },
         {"Mathf",          "",            "",               false, false, true },
         {"Vector3",        "",            "",               false, false, false},
+        {"Vector2",        "",            "",               false, false, false},
     };
     return types;
 }

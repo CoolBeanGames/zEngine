@@ -54,17 +54,18 @@ Index::Index() {
     add(L"string",L"size",L"int",true);add(L"string",L"truncate",L"string",true);add(L"string",L"substr",L"string",true);
     for(const auto name:{L"was_moved",L"was_rotated",L"was_scaled"})add(L"Transform",name,L"signal");
     for(const auto name:{L"x",L"y",L"z"})add(L"Vector3",name,L"float");
+    for(const auto name:{L"x",L"y"})add(L"Vector2",name,L"float");
     add(L"array",L"append",L"void",true);add(L"array",L"erase",L"void",true);add(L"array",L"size",L"int",true);
     add(L"prefab",L"spawn",L"gameObject",true);
     for(const auto name:{L"connect",L"disconnect",L"emit"})add(L"signal",name,L"void",true);
     add(L"signal",L"is_connected",L"bool",true);
     types_[L"Timer"].base=L"gameObject";add(L"Timer",L"finished",L"signal");
     for(const auto name:{L"is_action_pressed",L"is_action_just_pressed",L"is_action_just_released"})add(L"Input",name,L"bool",true);
-    add(L"Input",L"action",L"InputAction",true);add(L"Input",L"get_axis",L"float",true);add(L"Input",L"get_vector",L"Vector3",true);
+    add(L"Input",L"action",L"InputAction",true);add(L"Input",L"get_axis",L"float",true);add(L"Input",L"get_vector",L"Vector2",true);
     for(const auto name:{L"just_pressed",L"just_released",L"is_pressed",L"was_just_pressed",L"was_just_released"})add(L"InputAction",name,L"signal");
-    add(L"InputAction",L"pressed",L"bool");add(L"InputAction",L"axis",L"Vector3");add(L"InputAction",L"value",L"Vector3");
+    add(L"InputAction",L"pressed",L"bool");add(L"InputAction",L"axis",L"Vector2");add(L"InputAction",L"value",L"Vector2");
     add(L"Input",L"mouse",L"Mouse");
-    add(L"Mouse",L"delta",L"Vector3");add(L"Mouse",L"position",L"Vector3");
+    add(L"Mouse",L"delta",L"Vector2");add(L"Mouse",L"position",L"Vector2");
     for(const auto name:{L"clicked",L"click_ended",L"held",L"was_just_moved"})add(L"Mouse",name,L"signal");
     add(L"Physics",L"cast",L"gameObject",true);add(L"Physics",L"cast_all",L"array",true);
     for(const auto name:{L"lerp",L"sin",L"cos",L"tan",L"sqrt",L"exp",L"round"})add(L"Mathf",name,L"float",true);
@@ -87,7 +88,7 @@ Index::Index() {
     for(const auto name:{L"was_moved",L"was_rotated",L"was_scaled"})sig(L"Transform",name,L"Vector3 value");
     for(const auto name:{L"collision_entered",L"collision_stayed",L"collision_exited",L"area_entered",L"area_stayed",L"area_exited"})sig(L"PhysicsBody",name,L"gameObject other");
     for(const auto name:{L"clicked",L"click_ended",L"held"})sig(L"Mouse",name,L"int button");
-    sig(L"Mouse",L"was_just_moved",L"Vector3 old_position, Vector3 new_position");
+    sig(L"Mouse",L"was_just_moved",L"Vector2 old_position, Vector2 new_position");
     sig(L"Timer",L"finished",L"");
     for(const auto& native:zengine::script::NativeTypes()) {
         std::wstring lower=Wide(native.name);

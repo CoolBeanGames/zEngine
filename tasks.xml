@@ -921,7 +921,7 @@ a Breakpoint has been reached
     <prompt>add a new global vector2 type for use with 2D and inputs, update Input stuff to use it</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -929,14 +929,14 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>input,scripting</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>New Vector2 value type in the scripting VM, sitting alongside Vector3: Vector2(x,y) / Vector2(), .x / .y components, +/- and component-* between Vector2s, scalar * and /, unary minus, interpolation ("v=" &amp; {vec} -&gt; "x, y"), `is Vector2`, and read-only cross-type rules (cannot assign Vector2 to Vector3 or mix them in arithmetic). Registered in the phone book (NativeTypes.h, scriptClass=false like Vector3). Input APIs switched to Vector2 as the prompt asked: Input.get_vector, InputAction.axis / .value, and Mouse.delta / .position / was_just_moved(Vector2, Vector2). Engine plumbing: ScriptHost Format/Parse ("x, y")/Editable/ValueTypeName/DefaultForType/ArrayElementTypes; Scene serialization WriteValue/ReadValue ("Vector2 x y", also for array elements); InspectorPanel renders an exported Vector2 as a 2-field X/Y row (new BehaviorField::axisCount, was hard-coded 3). Autocomplete lists Vector2 + x/y and the retyped Input members/signatures. Coverage: new scripting Vector2Type suite (ctor/arith/components/is/interp/errors), InputTests + MouseInput retargeted to Vector2, SceneTests fixture gains an exported Vector2 field (round-trip + Fields parse). ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/include/zscript/NativeTypes.h; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/Scene.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/ScriptCompletion.cpp; tests/InputTests.cpp; tests/SceneTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-73">

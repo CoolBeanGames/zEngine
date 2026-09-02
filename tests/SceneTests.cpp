@@ -19,10 +19,11 @@ int main()
         object.GetTransform().SetPosition({1.25f,-2.5f,9}); object.GetTransform().SetRotation({-90,180,45}); object.GetTransform().SetScale({2,0,-1});
         auto& mesh=object.AddBehavior<MeshRenderer>(MeshRenderer::CubeAsset); mesh.SetEnabled(false); mesh.SetPriority(-1.25f);
         auto& behavior=object.AddBehavior<ScriptBehavior>("Behaviors/Mover.zsh"); behavior.SetPriority(3.5f); behavior.SetEnabled(false);
-        const std::string code=R"(class Mover : gameObject { export int count=1; export float speed=2; export bool active=true; export string title="default"; export Vector3 direction=Vector3(1,2,3); export prefab template; float hidden=7; func update(float dt) { transform.position.x+=speed*dt; } })";
+        const std::string code=R"(class Mover : gameObject { export int count=1; export float speed=2; export bool active=true; export string title="default"; export Vector3 direction=Vector3(1,2,3); export Vector2 uv=Vector2(0,0); export prefab template; float hidden=7; func update(float dt) { transform.position.x+=speed*dt; } })";
         Check(host.Prepare(behavior,code,"Mover"),"Compile fixture failed");
         host.SetField(behavior,"count","-9223372036854775808"); host.SetField(behavior,"speed","0.12345678901234567");
-        host.SetField(behavior,"active","false"); host.SetField(behavior,"title","hello \"world\"\nUTF-8: \xc3\xa9"); host.SetField(behavior,"direction","-3, 4.5, 0");host.SetField(behavior,"template","Prefabs/Crate.zprefab");
+        host.SetField(behavior,"active","false"); host.SetField(behavior,"title","hello \"world\"\nUTF-8: \xc3\xa9"); host.SetField(behavior,"direction","-3, 4.5, 0");host.SetField(behavior,"uv","0.5, 0.25");host.SetField(behavior,"template","Prefabs/Crate.zprefab");
+        { bool found=false; for(const auto& f:host.Fields(behavior)) if(f.name=="uv") found = f.type=="Vector2" && f.value=="0.5, 0.25"; Check(found,"Vector2 script field not surfaced/parsed"); }
         auto& empty=objects.Create("Empty"); Check(empty.Id()==43,"Restored ID sequence incorrect");
         auto& missing=empty.AddBehavior<ScriptBehavior>("Missing.zsh");
         host.RestoreValues(missing,{{"stored",std::int64_t{123}},{"character",char32_t{0x1f642}}});

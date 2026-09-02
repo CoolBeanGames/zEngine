@@ -521,10 +521,42 @@ void NativeTypeAliases() {
         }
     }
 }
+void Vector2Type() {
+    auto p=Compile(R"(class V : gameObject {
+        export Vector2 pos = Vector2(1, 2);
+        func make():Vector2 { return Vector2(3, 4); }
+        func zero():Vector2 { return Vector2(); }
+        func add():Vector2 { return Vector2(1,2) + Vector2(10,20); }
+        func sub():Vector2 { return Vector2(10,20) - Vector2(1,2); }
+        func scale():Vector2 { return Vector2(1,2) * 3; }
+        func rscale():Vector2 { return 3 * Vector2(1,2); }
+        func div():Vector2 { return Vector2(6,9) / 3; }
+        func mul():Vector2 { return Vector2(2,3) * Vector2(4,5); }
+        func neg():Vector2 { return -Vector2(1,-2); }
+        func comp():float { Vector2 v = Vector2(5,6); v.x = 9; v.y += 1; return v.x + v.y; }
+        func checks():bool { return Vector2(1,2) is Vector2 && !(Vector2(1,2) is Vector3) && !(5 is Vector2); }
+        func text():string { return "v=" & {Vector2(1,2)}; }
+    })");
+    Runtime r(p); auto v=r.Create("V");
+    Check(std::get<Vector2>(r.Get(v,"pos"))==Vector2{1,2},"Vector2 field initializer");
+    Check(std::get<Vector2>(r.Call(v,"make"))==Vector2{3,4},"Vector2(x,y)");
+    Check(std::get<Vector2>(r.Call(v,"zero"))==Vector2{0,0},"Vector2()");
+    Check(std::get<Vector2>(r.Call(v,"add"))==Vector2{11,22} && std::get<Vector2>(r.Call(v,"sub"))==Vector2{9,18},"Vector2 add/sub");
+    Check(std::get<Vector2>(r.Call(v,"scale"))==Vector2{3,6} && std::get<Vector2>(r.Call(v,"rscale"))==Vector2{3,6},"Vector2 scalar multiply");
+    Check(std::get<Vector2>(r.Call(v,"div"))==Vector2{2,3} && std::get<Vector2>(r.Call(v,"mul"))==Vector2{8,15},"Vector2 divide / component multiply");
+    Check(std::get<Vector2>(r.Call(v,"neg"))==Vector2{-1,2},"Vector2 negate");
+    Check(std::get<double>(r.Call(v,"comp"))==16,"Vector2 component read/write");
+    Check(std::get<bool>(r.Call(v,"checks")),"Vector2 is-type checks");
+    Check(std::get<std::string>(r.Call(v,"text"))=="v=1, 2","Vector2 interpolation");
+    Error([&]{Compile("class A { Vector2 v = Vector2(1); }");},"zero or two");
+    Error([&]{Compile("class A { func f(){ Vector2 v; v.z = 1; } }");},"Unknown field 'z' on 'Vector2'");
+    Error([&]{Compile("class A { func f(){ Vector2 a = Vector2(); Vector3 b = a; } }");},"Cannot assign 'Vector2' to 'Vector3'");
+    Error([&]{Compile("class A { func f(){ Vector2 a = Vector2() + Vector3(); } }");},"Arithmetic operands");
+}
 void MouseInput() {
     auto program=Compile(R"(class Cursor : gameObject {
         int clicks; int releases; int held; int moves;
-        Vector3 last_from; Vector3 last_to; int last_button = -1;
+        Vector2 last_from; Vector2 last_to; int last_button = -1;
         func start(){
             Input.mouse.clicked.connect(on_click);
             Input.mouse.click_ended.connect(on_release);
@@ -534,9 +566,9 @@ void MouseInput() {
         func on_click(int b){ clicks += 1; last_button = b; }
         func on_release(int b){ releases += 1; }
         func on_held(int b){ held += 1; }
-        func on_move(Vector3 from, Vector3 to){ moves += 1; last_from = from; last_to = to; }
-        func position():Vector3{ return Input.mouse.position; }
-        func delta():Vector3{ return Input.mouse.delta; }
+        func on_move(Vector2 from, Vector2 to){ moves += 1; last_from = from; last_to = to; }
+        func position():Vector2{ return Input.mouse.position; }
+        func delta():Vector2{ return Input.mouse.delta; }
         func clicks_count():int{ return clicks; }
         func releases_count():int{ return releases; }
         func held_count():int{ return held; }
@@ -546,12 +578,12 @@ void MouseInput() {
     Runtime r(program); const auto c=r.Create("Cursor"); r.Start(c);
     MouseFrame f; f.x=0.5; f.y=-0.25;
     r.SetMouse(f);                    // first frame: establishes position, no delta / move event
-    Check(std::get<Vector3>(r.Call(c,"position"))==Vector3{0.5,-0.25,0},"Mouse.position not exposed");
-    Check(std::get<Vector3>(r.Call(c,"delta"))==Vector3{},"First mouse frame should have zero delta");
+    Check(std::get<Vector2>(r.Call(c,"position"))==Vector2{0.5,-0.25},"Mouse.position not exposed");
+    Check(std::get<Vector2>(r.Call(c,"delta"))==Vector2{},"First mouse frame should have zero delta");
     Check(Int(r.Call(c,"moves_count"))==0,"was_just_moved fired on the first frame");
     f.x=0.75; f.y=-0.25; f.buttons[0]={true,true,false};
     r.SetMouse(f);
-    Check(std::get<Vector3>(r.Call(c,"delta"))==Vector3{0.25,0,0},"Mouse delta not derived from successive frames");
+    Check(std::get<Vector2>(r.Call(c,"delta"))==Vector2{0.25,0},"Mouse delta not derived from successive frames");
     Check(Int(r.Call(c,"moves_count"))==1,"was_just_moved did not fire on movement");
     Check(Int(r.Call(c,"clicks_count"))==1 && Int(r.Call(c,"button"))==0,"clicked(button) did not fire");
     f.buttons[0]={true,false,false};   // still held
@@ -562,17 +594,17 @@ void MouseInput() {
     Check(Int(r.Call(c,"releases_count"))==1,"click_ended(button) did not fire");
     Error([&]{Compile("class Bad : Mouse {}");},"Cannot inherit");
     Error([&]{Compile("class Bad : gameObject { Mouse m=Mouse(); }");},"supplied by the host");
-    Error([&]{Compile("class Bad : gameObject { func f(){ Input.mouse.delta = Vector3(1,0,0); } }");},"read-only");
+    Error([&]{Compile("class Bad : gameObject { func f(){ Input.mouse.delta = Vector2(1,0); } }");},"read-only");
     // Callback signature is checked when connect() runs (like the Transform/PhysicsBody signals).
     { Runtime bad(Compile("class Bad : gameObject { func start(){ Input.mouse.clicked.connect(f); } func f(){} }"));
       auto o=bad.Create("Bad"); Error([&]{bad.Start(o);},"button index"); }
     { Runtime bad(Compile("class Bad : gameObject { func start(){ Input.mouse.was_just_moved.connect(f); } func f(Vector3 v){} }"));
-      auto o=bad.Create("Bad"); Error([&]{bad.Start(o);},"was_just_moved"); }
+      auto o=bad.Create("Bad"); Error([&]{bad.Start(o);},"Mouse was_just_moved"); }
     Error([&]{ Runtime bad(Compile("class X : gameObject {}")); bad.SetMouse([]{ MouseFrame m; m.x=99; return m; }()); },"Invalid mouse position");
 }
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
+        {"Vector2 type", Vector2Type}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},

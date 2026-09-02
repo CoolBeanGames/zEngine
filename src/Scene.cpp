@@ -49,6 +49,8 @@ namespace
         else if(const auto* v=std::get_if<char32_t>(&value)){Require(script::text::Scalar(*v),"Invalid character.");out<<"char "<<static_cast<std::uint32_t>(*v);}
         else if (const auto* v=std::get_if<script::Vector3>(&value))
         { Require(std::isfinite(v->x)&&std::isfinite(v->y)&&std::isfinite(v->z),"Invalid script vector."); out<<"Vector3 "<<v->x<<' '<<v->y<<' '<<v->z; }
+        else if (const auto* v=std::get_if<script::Vector2>(&value))
+        { Require(std::isfinite(v->x)&&std::isfinite(v->y),"Invalid script vector."); out<<"Vector2 "<<v->x<<' '<<v->y; }
         else if(const auto* v=std::get_if<script::PrefabRef>(&value)){if(!v->asset.empty()){Asset(v->asset,false);Require(v->asset.ends_with(".zprefab"),"Expected prefab script field asset.");}out<<"prefab "<<std::quoted(v->asset);}
         else throw std::runtime_error("Cannot persist a runtime object reference.");
     }
@@ -61,6 +63,7 @@ namespace
         if (type=="string") return Text(in);
         if(type=="char"){std::uint32_t value;Require(static_cast<bool>(in>>value) && script::text::Scalar(static_cast<char32_t>(value)),"Invalid character.");return static_cast<char32_t>(value);}
         if (type=="Vector3") { const double x=Number(in),y=Number(in),z=Number(in); return script::Vector3{x,y,z}; }
+        if (type=="Vector2") { const double x=Number(in),y=Number(in); return script::Vector2{x,y}; }
         if(type=="prefab"){auto asset=Text(in);if(!asset.empty()){Asset(asset,false);Require(asset.ends_with(".zprefab"),"Expected prefab script field asset.");}return script::PrefabRef{std::move(asset)};}
         throw std::runtime_error("Unsupported scene variable type.");
     }

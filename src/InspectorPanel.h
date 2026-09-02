@@ -80,7 +80,8 @@ private:
         bool objectReference = false;
         bool bitmask = false; // Collision layer/mask row: a grid of toggle buttons instead of an edit field.
         std::vector<HWND> bits; // Bitmask toggle buttons (low bit first), or array aux buttons ([0] = add/remove).
-        int axis = -1; // Three consecutive fields share one Vector3 row.
+        int axis = -1; // Consecutive fields share one vector row (axis 0..axisCount-1).
+        int axisCount = 3; // 3 for Vector3/Vec3 rows, 2 for a script Vector2 field.
         bool arrayHeader = false; // "+ Add element" row for an exported script array field.
         int arrayIndex = -1;      // >=0: one element row of the exported array named `name`.
         Style style = Style::Normal;

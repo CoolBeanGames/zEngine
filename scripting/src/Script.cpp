@@ -12,6 +12,7 @@
 #include <locale>
 #include <map>
 #include <sstream>
+#include <type_traits>
 #include <set>
 #include <utility>
 
@@ -44,7 +45,7 @@ std::string Canonical(std::string name) {
     return name;
 }
 bool Reserved(std::string_view s) {
-    static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "for", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
+    static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "for", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Vector2", "Transform", "export", "label"};
     return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || s == "not" || s == "and" || s == "or" || s == "nor" || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
@@ -332,6 +333,7 @@ Value DefaultValue(const std::string& t) {
     if (t == "char") return char32_t{};
     if (t == "void") return {};
     if (t == "Vector3") return Vector3{};
+    if (t == "Vector2") return Vector2{};
     if (t == "prefab") return ObjectRef{};
     return ObjectRef{};
 }
@@ -340,7 +342,7 @@ struct Program::Impl {
     std::string source;
     std::map<std::string, Class> classes;
     ProgramStats stats;
-    bool IsType(const std::string& t) const { return t == "char" || t == "array" || t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || classes.contains(t); }
+    bool IsType(const std::string& t) const { return t == "char" || t == "array" || t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || t == "Vector2" || classes.contains(t); }
     bool Assignable(const std::string& target, const std::string& from) const {
         if (target == from || (target == "float" && from == "int")) return true;
         if(target=="string" && from=="char")return true;
@@ -398,6 +400,7 @@ class BytecodeCompiler {
     }
     std::string FieldType(const std::string& type, const Token& field) const {
         if (type == "Vector3" && (field.text == "x" || field.text == "y" || field.text == "z")) return "float";
+        if (type == "Vector2" && (field.text == "x" || field.text == "y")) return "float";
         const auto* f = program.FindField(type, field.text);
         Require(f != nullptr, field, "Unknown field '" + field.text + "' on '" + type + "'");
         return f->type;
@@ -458,7 +461,12 @@ class BytecodeCompiler {
             if (callee.kind == Expr::Name && callee.token.text == "Vector3") {
                 Require(e.children.size() == 1 || e.children.size() == 4, t, "Vector3 takes zero or three numeric arguments");
                 for (std::size_t i = 1; i < e.children.size(); ++i) Require(Numeric(Expression(*e.children[i])), t, "Vector3 components must be numeric");
-                Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
+                Emit(Op::MakeVector, t, e.children.size() - 1, "Vector3"); return "Vector3";
+            }
+            if (callee.kind == Expr::Name && callee.token.text == "Vector2") {
+                Require(e.children.size() == 1 || e.children.size() == 3, t, "Vector2 takes zero or two numeric arguments");
+                for (std::size_t i = 1; i < e.children.size(); ++i) Require(Numeric(Expression(*e.children[i])), t, "Vector2 components must be numeric");
+                Emit(Op::MakeVector, t, e.children.size() - 1, "Vector2"); return "Vector2";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
                 Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "Mouse" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "Timer" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
@@ -535,7 +543,7 @@ class BytecodeCompiler {
         }
         if (e.kind == Expr::Unary) {
             auto type = Expression(*e.children[0]);
-            Require(type == "any" || ((t.text == "!" || t.text == "not") ? type == "bool" : (Numeric(type) || type == "Vector3")), t, "Invalid unary operand");
+            Require(type == "any" || ((t.text == "!" || t.text == "not") ? type == "bool" : (Numeric(type) || type == "Vector3" || type == "Vector2")), t, "Invalid unary operand");
             Emit((t.text == "!" || t.text == "not") ? Op::Not : Op::Negate, t); return type;
         }
         auto left = Expression(*e.children[0]);
@@ -569,11 +577,12 @@ class BytecodeCompiler {
         if (left != "void" && right != "void" && (left == "any" || right == "any")) return "any";
         if ((op == "+" || op=="&") && TextType(left) && TextType(right)) return "string";
         Require(op!="&",t,"Concatenation operands must be strings or characters");
-        if ((op == "+" || op == "-") && left == "Vector3" && right == "Vector3") return "Vector3";
-        if (op == "*" && left == "Vector3" && right == "Vector3") return "Vector3";
-        if ((op == "*" || op == "/") && left == "Vector3" && Numeric(right)) return "Vector3";
-        if (op == "*" && Numeric(left) && right == "Vector3") return "Vector3";
-        Require(Numeric(left) && Numeric(right), t, "Arithmetic operands must be numeric or compatible Vector3 values");
+        for (const char* v : {"Vector3", "Vector2"}) {
+            if ((op == "+" || op == "-" || op == "*") && left == v && right == v) return v;
+            if ((op == "*" || op == "/") && left == v && Numeric(right)) return v;
+            if (op == "*" && Numeric(left) && right == v) return v;
+        }
+        Require(Numeric(left) && Numeric(right), t, "Arithmetic operands must be numeric or compatible Vector3/Vector2 values");
         return left == "float" || right == "float" ? "float" : "int";
     }
     struct Slot { std::string type; bool field; std::size_t index; std::string name; };
@@ -586,7 +595,7 @@ class BytecodeCompiler {
         }
         Require(e.kind == Expr::Member, e.token, "Assignment target must be a variable or field");
         auto receiver = Expression(*e.children[0]);
-        Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
+        Require(receiver != "Vector3" && receiver != "Vector2", e.token, "Cannot assign to a temporary vector component");
         Require(receiver != "InputAction" && receiver != "Mouse",e.token,"Input state is read-only");
         const auto nativeAccessor=[&](const std::string& field){for(const auto& n:NativeTypes())if(!n.accessor.empty()&&n.accessor!="transform"&&n.accessor==field)return true;return false;};
         Require(!(program.Assignable("gameObject",receiver) && nativeAccessor(e.token.text)),e.token,"Native behavior references are read-only");
@@ -628,7 +637,7 @@ class BytecodeCompiler {
             bool component = false;
             if (target.kind == Expr::Member) {
                 auto mark = function.code.size(); auto receiverType = Expression(*target.children[0]); function.code.resize(mark);
-                component = receiverType == "Vector3";
+                component = receiverType == "Vector3" || receiverType == "Vector2";
                 if (component) { FieldType(receiverType, target.token); destination = target.children[0].get(); }
             }
             auto slot = Destination(*destination);
@@ -680,17 +689,17 @@ public:
 void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts) {
     Class input; input.name="InputService";
     for(const auto& name:{"is_action_pressed","is_action_just_pressed","is_action_just_released","get_axis","get_vector","action"}) {
-        Function f;f.params={"string"};f.result=std::string(name)=="action"?"InputAction":std::string(name)=="get_axis"?"float":std::string(name)=="get_vector"?"Vector3":"bool";
+        Function f;f.params={"string"};f.result=std::string(name)=="action"?"InputAction":std::string(name)=="get_axis"?"float":std::string(name)=="get_vector"?"Vector2":"bool";
         input.methods.emplace(name,std::move(f));
     }
     input.fields={{{Token::Identifier,"mouse"},"Mouse"}}; // Input.mouse
     program.classes.emplace(input.name,std::move(input));
     Class action;action.name="InputAction";action.signals={"just_pressed","just_released","is_pressed","was_just_pressed","was_just_released"};
-    action.fields={{{Token::Identifier,"pressed"},"bool"},{{Token::Identifier,"axis"},"Vector3"},{{Token::Identifier,"value"},"Vector3"}};
+    action.fields={{{Token::Identifier,"pressed"},"bool"},{{Token::Identifier,"axis"},"Vector2"},{{Token::Identifier,"value"},"Vector2"}};
     program.classes.emplace(action.name,std::move(action));
     Class mouse;mouse.name="Mouse";
     mouse.signals={"clicked","click_ended","held","was_just_moved"};
-    mouse.fields={{{Token::Identifier,"delta"},"Vector3"},{{Token::Identifier,"position"},"Vector3"}};
+    mouse.fields={{{Token::Identifier,"delta"},"Vector2"},{{Token::Identifier,"position"},"Vector2"}};
     program.classes.emplace(mouse.name,std::move(mouse));
     Class physicsService;physicsService.name="PhysicsService";
     for(const auto& name:{"cast","cast_all"}){Function f;f.params={"Vector3","Vector3","int"};f.result=std::string(name)=="cast"?"gameObject":"array";physicsService.methods.emplace(name,std::move(f));}
@@ -860,7 +869,7 @@ struct Runtime::Impl {
     InputFrame inputFrame;
     MouseFrame mouseFrame;
     bool mouseSeen = false;
-    Vector3 mousePrevious;
+    Vector2 mousePrevious;
     std::map<std::string,ObjectRef> inputActions;
     struct TimerRecord { ObjectRef object; double remaining = 0; };
     std::vector<TimerRecord> timers;
@@ -916,7 +925,7 @@ struct Runtime::Impl {
         case 3: return "bool"; case 4: return "string"; case 6: return "Vector3";
         case 7: return "signal"; case 8: return "callable";
         case 9: ArrayId(value, t); return "array";
-        case 10: return "char"; case 11:return "prefab";
+        case 10: return "char"; case 11:return "prefab"; case 12: return "Vector2";
         default: { auto ref = std::get<ObjectRef>(value); if (ref.id == 0 && ref.runtime == 0) return "null"; return Resolve(ref, t).type->name; }
         }
     }
@@ -928,6 +937,7 @@ struct Runtime::Impl {
         if(auto c=std::get_if<char32_t>(&value);c && !text::Scalar(*c))Error(t,"Invalid Unicode character");
         if (auto v = std::get_if<double>(&value); v && !std::isfinite(*v)) Error(t, "Non-finite float");
         if (auto v = std::get_if<Vector3>(&value); v && (!std::isfinite(v->x) || !std::isfinite(v->y) || !std::isfinite(v->z))) Error(t, "Non-finite Vector3");
+        if (auto v = std::get_if<Vector2>(&value); v && (!std::isfinite(v->x) || !std::isfinite(v->y))) Error(t, "Non-finite Vector2");
         if(auto s=std::get_if<std::string>(&value)){
             if(s->size()>limits.stringBytes)Error(t,"String size limit exceeded");
             try{std::size_t at=0;while(at<s->size())text::Next(*s,at);}catch(const std::exception& error){Error(t,error.what());}
@@ -1038,7 +1048,7 @@ struct Runtime::Impl {
         if(owner.type->name=="InputAction" && !f->params.empty())Error(t,"Input signal callbacks take no arguments");
         if(owner.type->name=="Mouse") {
             if((signal.name=="clicked"||signal.name=="click_ended"||signal.name=="held") && f->params!=std::vector<std::string>{"int"})Error(t,"Mouse click signal callback must take one int (button index)");
-            if(signal.name=="was_just_moved" && f->params!=std::vector<std::string>{"Vector3","Vector3"})Error(t,"Mouse was_just_moved callback must take (Vector3 old, Vector3 new)");
+            if(signal.name=="was_just_moved" && f->params!=std::vector<std::string>{"Vector2","Vector2"})Error(t,"Mouse was_just_moved callback must take (Vector2 old, Vector2 new)");
         }
         if(program->Assignable("PhysicsBody",owner.type->name) && f->params!=std::vector<std::string>{"gameObject"})Error(t,"Physics signal callback must take one gameObject");
         if (program->Assignable("Transform", owner.type->name) &&
@@ -1117,23 +1127,32 @@ struct Runtime::Impl {
         }
         if(op==Op::Concat)Error(t,"Concatenation operands must be strings or characters");
         const auto aType = Type(left,t), bType = Type(right,t);
+        const auto vectorOk=[&](const char* v){
+            return ((op==Op::Add || op==Op::Subtract || op==Op::Multiply) && aType==v && bType==v)
+                || ((op==Op::Multiply || op==Op::Divide) && aType==v && Numeric(bType))
+                || (op==Op::Multiply && Numeric(aType) && bType==v);
+        };
         const bool valid = (Numeric(aType) && Numeric(bType)) ||
-            (op == Op::Add && aType == "string" && bType == "string") ||
-            ((op == Op::Add || op == Op::Subtract) && aType == "Vector3" && bType == "Vector3") ||
-            (op == Op::Multiply && aType == "Vector3" && bType == "Vector3") ||
-            ((op == Op::Multiply || op == Op::Divide) && aType == "Vector3" && Numeric(bType)) ||
-            (op == Op::Multiply && Numeric(aType) && bType == "Vector3");
+            (op == Op::Add && aType == "string" && bType == "string") || vectorOk("Vector3") || vectorOk("Vector2");
         if (!valid) Error(t, "Incompatible arithmetic operands");
+        // Component-wise op for Vector3 or Vector2 (validity already checked above).
+        auto vectorOp=[&](auto a,auto b,bool aVec,bool bVec)->Value{
+            using V=decltype(a);
+            auto comp=[&](double l,double r)->double{ switch(op){case Op::Add:return l+r;case Op::Subtract:return l-r;default:return l*r;} };
+            V out{};
+            if(aVec && bVec){out.x=comp(a.x,b.x);out.y=comp(a.y,b.y);if constexpr(std::is_same_v<V,Vector3>)out.z=comp(a.z,b.z);}
+            else if(aVec){ double s=Number(right); if(op==Op::Divide&&s==0)Error(t,"Division by zero");
+                out.x=op==Op::Divide?a.x/s:a.x*s;out.y=op==Op::Divide?a.y/s:a.y*s;if constexpr(std::is_same_v<V,Vector3>)out.z=op==Op::Divide?a.z/s:a.z*s;}
+            else { double s=Number(left); out.x=s*b.x;out.y=s*b.y;if constexpr(std::is_same_v<V,Vector3>)out.z=s*b.z;}
+            return Coerce(out, std::is_same_v<V,Vector3>?"Vector3":"Vector2", t);
+        };
         if (std::holds_alternative<Vector3>(left) || std::holds_alternative<Vector3>(right)) {
-            Vector3 result;
-            if (auto a = std::get_if<Vector3>(&left)) {
-                if (auto b = std::get_if<Vector3>(&right)) result = op == Op::Add ? Vector3{a->x + b->x, a->y + b->y, a->z + b->z} : op==Op::Subtract ? Vector3{a->x - b->x, a->y - b->y, a->z - b->z} : Vector3{a->x*b->x,a->y*b->y,a->z*b->z};
-                else {
-                    auto scalar = Number(right); if (op == Op::Divide && scalar == 0) Error(t, "Division by zero");
-                    result = op == Op::Divide ? Vector3{a->x / scalar, a->y / scalar, a->z / scalar} : Vector3{a->x * scalar, a->y * scalar, a->z * scalar};
-                }
-            } else { auto b = std::get<Vector3>(right); auto scalar = Number(left); result = {scalar * b.x, scalar * b.y, scalar * b.z}; }
-            return Coerce(result, "Vector3", t);
+            const auto* a=std::get_if<Vector3>(&left); const auto* b=std::get_if<Vector3>(&right);
+            return vectorOp(a?*a:Vector3{}, b?*b:Vector3{}, a!=nullptr, b!=nullptr);
+        }
+        if (std::holds_alternative<Vector2>(left) || std::holds_alternative<Vector2>(right)) {
+            const auto* a=std::get_if<Vector2>(&left); const auto* b=std::get_if<Vector2>(&right);
+            return vectorOp(a?*a:Vector2{}, b?*b:Vector2{}, a!=nullptr, b!=nullptr);
         }
         if (op == Op::Add && std::holds_alternative<std::string>(left)) {
             auto a = std::get<std::string>(std::move(left)); const auto& b = std::get<std::string>(right);
@@ -1261,7 +1280,7 @@ struct Runtime::Impl {
             if(name=="is_action_just_pressed")return state.justPressed;
             if(name=="is_action_just_released")return state.justReleased;
             if(name=="get_axis")return state.x;
-            if(name=="get_vector")return Vector3{state.x,state.y,0};
+            if(name=="get_vector")return Vector2{state.x,state.y};
             Error(t,"Unknown Input method");
         }
         const auto* function = program->Method(object.type->name, name);
@@ -1329,11 +1348,20 @@ struct Runtime::Impl {
                 stack.push_back(Coerce(typeLookup ? Value{typeLookup(ins.name)} : Value{ObjectRef{}}, "gameObject", t)); break;
             }
             case Op::MakeVector: {
+                if (ins.name == "Vector2") {
+                    Vector2 v; if (ins.a == 2) { v.y = Number(pop()); v.x = Number(pop()); }
+                    stack.push_back(Coerce(v, "Vector2", t)); break;
+                }
                 Vector3 v; if (ins.a == 3) { v.z = Number(pop()); v.y = Number(pop()); v.x = Number(pop()); }
                 stack.push_back(Coerce(v, "Vector3", t)); break;
             }
             case Op::SetComponent: {
-                double component = Number(pop()); auto v = std::get<Vector3>(pop());
+                double component = Number(pop()); auto value = pop();
+                if (auto* v = std::get_if<Vector2>(&value)) {
+                    if (ins.name == "x") v->x = component; else v->y = component;
+                    stack.push_back(Coerce(*v, "Vector2", t)); break;
+                }
+                auto v = std::get<Vector3>(value);
                 if (ins.name == "x") v.x = component; else if (ins.name == "y") v.y = component; else v.z = component;
                 stack.push_back(Coerce(v, "Vector3", t)); break;
             }
@@ -1353,6 +1381,7 @@ struct Runtime::Impl {
                         case Op::LoadField: {
                 auto value = pop();
                 if (auto v = std::get_if<Vector3>(&value)) stack.push_back(ins.name == "x" ? v->x : ins.name == "y" ? v->y : v->z);
+                else if (auto v = std::get_if<Vector2>(&value)) stack.push_back(ins.name == "x" ? v->x : v->y);
                 else stack.push_back(Get(Reference(value, t), ins.name, t));
                 break;
             }
@@ -1377,6 +1406,7 @@ struct Runtime::Impl {
                     if (*i == std::numeric_limits<std::int64_t>::min()) Error(t, "Integer overflow");
                     stack.push_back(-*i);
                 } else if (auto v = std::get_if<Vector3>(&value)) stack.push_back(Vector3{-v->x, -v->y, -v->z});
+                else if (auto v = std::get_if<Vector2>(&value)) stack.push_back(Vector2{-v->x, -v->y});
                 else if (auto number = std::get_if<double>(&value)) stack.push_back(-*number);
                 else Error(t,"Invalid unary operand");
                 break;
@@ -1395,6 +1425,7 @@ struct Runtime::Impl {
                 else if (const auto* string=std::get_if<std::string>(&value)) text<<*string;
                 else if (const auto* character=std::get_if<char32_t>(&value)) text<<script::text::Encode(*character);
                 else if (const auto* vector=std::get_if<Vector3>(&value)) text<<vector->x<<", "<<vector->y<<", "<<vector->z;
+                else if (const auto* vector=std::get_if<Vector2>(&value)) text<<vector->x<<", "<<vector->y;
                 else Error(t,"Only scalar values can be interpolated");
                 stack.push_back(text.str()); break;
             }
@@ -1409,9 +1440,9 @@ struct Runtime::Impl {
         inputFrame=frame;
         for(const auto& [name,s]:frame) {
             if(!inputActions.contains(name))inputActions.emplace(name,Create("InputAction",{}));
-            auto& fields=Resolve(inputActions.at(name)).fields;fields[0]=s.pressed;fields[1]=Vector3{s.x,s.y,0};fields[2]=Vector3{s.x,s.y,0};
+            auto& fields=Resolve(inputActions.at(name)).fields;fields[0]=s.pressed;fields[1]=Vector2{s.x,s.y};fields[2]=Vector2{s.x,s.y};
         }
-        for(const auto& [name,ref]:inputActions)if(!frame.contains(name)){auto& f=Resolve(ref).fields;f[0]=false;f[1]=Vector3{};f[2]=Vector3{};}
+        for(const auto& [name,ref]:inputActions)if(!frame.contains(name)){auto& f=Resolve(ref).fields;f[0]=false;f[1]=Vector2{};f[2]=Vector2{};}
         if(emitEvents)for(const auto& [name,s]:frame) {
             const auto ref=inputActions.at(name);
             if(s.justPressed){Signal({ref,"just_pressed"},"emit",{},{});Signal({ref,"was_just_pressed"},"emit",{},{});}
@@ -1422,15 +1453,15 @@ struct Runtime::Impl {
     void ApplyMouseFields() {
         if(!mouseService.id)return;
         auto& fields=Resolve(mouseService).fields;
-        const Vector3 position{mouseFrame.x,mouseFrame.y,0};
-        const Vector3 delta=mouseSeen?Vector3{position.x-mousePrevious.x,position.y-mousePrevious.y,0}:Vector3{};
+        const Vector2 position{mouseFrame.x,mouseFrame.y};
+        const Vector2 delta=mouseSeen?Vector2{position.x-mousePrevious.x,position.y-mousePrevious.y}:Vector2{};
         fields[0]=delta; fields[1]=position; // Mouse.delta, Mouse.position (declaration order)
     }
     void SetMouse(const MouseFrame& frame,bool emitEvents) {
         if(!std::isfinite(frame.x)||!std::isfinite(frame.y)||std::abs(frame.x)>16||std::abs(frame.y)>16)Error({},"Invalid mouse position");
-        const Vector3 position{frame.x,frame.y,0};
+        const Vector2 position{frame.x,frame.y};
         const bool moved=mouseSeen && (position.x!=mousePrevious.x || position.y!=mousePrevious.y);
-        const Vector3 previous=mousePrevious;
+        const Vector2 previous=mousePrevious;
         mouseFrame=frame;
         ApplyMouseFields();
         if(emitEvents && mouseService.id) {

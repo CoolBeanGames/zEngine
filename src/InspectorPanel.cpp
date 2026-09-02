@@ -242,10 +242,11 @@ void InspectorPanel::RefreshBehaviors()
                     addArrayButton(L"✕");
                     continue;
                 }
-                if(field.type=="Vector3" && !field.name.empty()) {
-                    for(int axis=0;axis<3;++axis) {
+                if((field.type=="Vector3" || field.type=="Vector2") && !field.name.empty()) {
+                    const int count = field.type=="Vector2" ? 2 : 3;
+                    for(int axis=0;axis<count;++axis) {
                         add(&behavior,field.name,Wide(field.name),false,true,field.editable);
-                        behaviorFields_.back().axis=axis;
+                        behaviorFields_.back().axis=axis; behaviorFields_.back().axisCount=count;
                     }
                     continue;
                 }
@@ -282,7 +283,7 @@ int InspectorPanel::BehaviorHeight() const
 int InspectorPanel::RowHeight(const BehaviorField& entry) const
 {
     if (entry.style != BehaviorField::Style::BehaviorHeader && IsBehaviorCollapsed(entry)) return 0;
-    if(entry.axis>=0)return entry.axis==2?72:0;
+    if(entry.axis>=0)return entry.axis==entry.axisCount-1?72:0;
     if(entry.bitmask)return 82;
     if(entry.arrayHeader)return 32;
     if(entry.arrayIndex>=0)return 48;
@@ -350,7 +351,7 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
                 while(*end && std::iswspace(*end))++end;
                 if(*end || errno==ERANGE || !std::isfinite(value))throw std::invalid_argument("Invalid vector component");
                 std::wstring combined;
-                for(int axis=0;axis<3;++axis) {
+                for(int axis=0;axis<entry.axisCount;++axis) {
                     if(axis)combined+=L", ";combined+=axis==entry.axis?text:BehaviorValue(index-entry.axis+axis);
                 }
                 scriptHost_->SetField(*script,entry.name,Utf8(combined));
@@ -623,7 +624,7 @@ void InspectorPanel::Layout()
         if (entry.field.window) {
             ShowWindow(entry.field.window,collapsed?SW_HIDE:SW_SHOW);
             if (collapsed) { y+=rowHeight; continue; }
-            if(entry.axis>=0) {const int cell=std::max(30,(width-36)/3);place(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24);}
+            if(entry.axis>=0) {const int cell=std::max(30,(width-36)/entry.axisCount);place(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24);}
             else if(entry.arrayIndex>=0) place(entry.field.window,12,y+21,std::max(30,width-52),24);
             else place(entry.field.window,12,y+21,std::max(30,width-24),entry.multiline?84:24);
         }
@@ -696,7 +697,7 @@ void InspectorPanel::Paint(HDC into)
         RECT row{left,rowY-scroll_,entry.style==BehaviorField::Style::BehaviorHeader?width-34:width-12,rowY-scroll_+(entry.style==BehaviorField::Style::BehaviorHeader?RowHeight(entry):20)};
         if(entry.axis<=0)DrawTextW(dc,entry.label.c_str(),-1,&row,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
         if(entry.axis>=0) {
-            const int cell=std::max(30,(width-36)/3);
+            const int cell=std::max(30,(width-36)/entry.axisCount);
             SetTextColor(dc,AxisColor(entry.axis));label(entry.axis==0?L"X":entry.axis==1?L"Y":L"Z",12+entry.axis*(cell+6),rowY+20,cell);SetTextColor(dc,Text);
         }
         rowY+=RowHeight(entry);

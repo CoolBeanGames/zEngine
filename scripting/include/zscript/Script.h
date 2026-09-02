@@ -24,6 +24,10 @@ struct Vector3 {
     double x = 0, y = 0, z = 0;
     bool operator==(const Vector3&) const = default;
 };
+struct Vector2 {
+    double x = 0, y = 0;
+    bool operator==(const Vector2&) const = default;
+};
 struct SignalRef {
     ObjectRef owner;
     std::string name;
@@ -43,7 +47,7 @@ struct PrefabRef {
     std::string asset;
     bool operator==(const PrefabRef&) const = default;
 };
-using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef, ArrayRef, char32_t, PrefabRef>;
+using Value = std::variant<std::monostate, std::int64_t, double, bool, std::string, ObjectRef, Vector3, SignalRef, CallableRef, ArrayRef, char32_t, PrefabRef, Vector2>;
 struct Diagnostic {
     std::string source;
     std::size_t line = 1;

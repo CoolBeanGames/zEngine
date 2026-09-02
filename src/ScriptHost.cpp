@@ -23,7 +23,7 @@ namespace
         if (!valid(v.x) || !valid(v.y) || !valid(v.z)) throw std::runtime_error("Script transform exceeds native float range.");
         return {static_cast<float>(v.x),static_cast<float>(v.y),static_cast<float>(v.z)};
     }
-    bool Editable(const std::string& type) { return type=="char" || type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3" || type=="prefab"; }
+    bool Editable(const std::string& type) { return type=="char" || type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3" || type=="Vector2" || type=="prefab"; }
     bool ReferenceTypeName(std::string_view type) { return !Editable(std::string(type)) && type!="array"; }
 
     // Runtime variant tag -> editor value-type name (empty for object references / void).
@@ -35,6 +35,7 @@ namespace
         if (std::holds_alternative<std::string>(value)) return "string";
         if (std::holds_alternative<char32_t>(value)) return "char";
         if (std::holds_alternative<Vector3>(value)) return "Vector3";
+        if (std::holds_alternative<Vector2>(value)) return "Vector2";
         if (std::holds_alternative<PrefabRef>(value)) return "prefab";
         return {};
     }
@@ -46,6 +47,7 @@ namespace
         if (type=="string") return std::string{};
         if (type=="char") return char32_t{0};
         if (type=="Vector3") return Vector3{};
+        if (type=="Vector2") return Vector2{};
         if (type=="prefab") return PrefabRef{};
         throw std::invalid_argument("Unknown array element value type.");
     }
@@ -92,6 +94,7 @@ namespace
         else if (const auto* v=std::get_if<std::string>(&value)) return *v;
         else if(const auto* v=std::get_if<char32_t>(&value))return *v?script::text::Encode(*v):"\\0";
         else if (const auto* v=std::get_if<Vector3>(&value)) text<<v->x<<", "<<v->y<<", "<<v->z;
+        else if (const auto* v=std::get_if<Vector2>(&value)) text<<v->x<<", "<<v->y;
         else if (std::holds_alternative<ArrayRef>(value)) return "(array - read only)";
         else if(const auto* v=std::get_if<PrefabRef>(&value))return v->asset;
         else return "(object reference - read only)";
@@ -112,6 +115,13 @@ namespace
             Vector3 v; char a,b;
             if (!(stream>>v.x>>a>>v.y>>b>>v.z) || a!=',' || b!=',' || !std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z))
                 throw std::invalid_argument("Use three finite numbers: x, y, z.");
+            value=v;
+        }
+        else if (type=="Vector2")
+        {
+            Vector2 v; char a;
+            if (!(stream>>v.x>>a>>v.y) || a!=',' || !std::isfinite(v.x) || !std::isfinite(v.y))
+                throw std::invalid_argument("Use two finite numbers: x, y.");
             value=v;
         }
         else throw std::invalid_argument("Object reference editing is not supported yet.");
@@ -468,7 +478,7 @@ void ScriptHost::SetObjectReference(ScriptBehavior& behavior, const std::string&
 const std::vector<std::string>& ScriptHost::ArrayElementTypes()
 {
     static const std::vector<std::string> types = {
-        "int","float","bool","string","char","Vector3","prefab",
+        "int","float","bool","string","char","Vector3","Vector2","prefab",
         "gameObject","Transform","RigidBody","KinematicBody","StaticBody","Area","Collider","Camera","PhysicsBody","Behavior",
     };
     return types;
