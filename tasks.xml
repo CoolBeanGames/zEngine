@@ -953,7 +953,7 @@ a Breakpoint has been reached
     <prompt>We need a simple way to get access to mouse data, it should be just a global part of Input as Input.mouse</prompt>
     <requirements>all subtasks complete</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -961,20 +961,20 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>input,new system</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>New native Mouse type reachable as Input.mouse (registered in the phone book / NativeTypes.h). Fields: mouse.delta and mouse.position, both Vector3, position normalized to the viewport as -1..1 with +y up, (0,0) = centre. Signals: clicked(int button), click_ended(int button), held(int button) (button 0=L,1=R,2=M) and was_just_moved(Vector3 old, Vector3 new). The Runtime derives the movement delta and the was_just_moved signal from successive host frames (new struct script::MouseFrame; Runtime::SetMouse). Callback signatures are validated at connect() time like the Transform/PhysicsBody signals; Mouse is read-only and cannot be constructed or inherited. Host wiring: ScriptHost::SetMouse feeds BoundScript each Update; EditorShell::TickInput samples the cursor against viewportWindow_ and L/R/M via GetKeyState (buttons gated to when the viewport has input focus); PlayerMain samples against the game window and passes a MouseFrame to Session::Tick. Autocomplete lists Input.mouse and the Mouse members. Coverage: new scripting MouseInput suite (position/delta/all four signals/read-only/inherit/construct/range guards), ScriptHostTests mouse block (click signal + position/delta reach a running script). Full ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/include/zscript/NativeTypes.h; scripting/tests/ScriptTests.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/ScriptCompletion.cpp; src/EditorShell.h; src/EditorInput.cpp; src/runtime/GameSession.h; src/runtime/GameSession.cpp; src/runtime/PlayerMain.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
     <image></image>
     <subtasks>
-      <subtask done="false">mouse.delta (returns a Vector3 of how much it moved)</subtask>
-      <subtask done="false">mouse.position (returns its position in screen coordinates from -1.-1.0 to 1,1,0)</subtask>
-      <subtask done="false">mouse.signals(clicked(button_index),click_ended(button_index),held(button_index))</subtask>
-      <subtask done="false">mouse.was_just_moved(old_position,new_position)</subtask>
+      <subtask done="true">mouse.delta (returns a Vector3 of how much it moved)</subtask>
+      <subtask done="true">mouse.position (returns its position in screen coordinates from -1.-1.0 to 1,1,0)</subtask>
+      <subtask done="true">mouse.signals(clicked(button_index),click_ended(button_index),held(button_index))</subtask>
+      <subtask done="true">mouse.was_just_moved(old_position,new_position)</subtask>
     </subtasks>
   </task>
   <task id="ZE-68">

@@ -30,9 +30,9 @@ void Session::CheckErrors() const {
     }
 }
 void Session::Start(){physics_=std::make_unique<physics::World>();physics_->Build(scene_.objects);if(!scene_.scripts.Play(scene_.objects,physics_.get()))throw std::runtime_error("Could not start scene scripts.");CheckErrors();}
-void Session::Tick(float delta,const input::Hardware& hardware) {
+void Session::Tick(float delta,const input::Hardware& hardware,const script::MouseFrame& mouse) {
     script::InputFrame frame;for(const auto& [name,s]:input_.Tick(hardware))frame.emplace(name,script::InputState{s.x,s.y,s.pressed,s.justPressed,s.justReleased});
-    scene_.scripts.SetInput(std::move(frame));scene_.scripts.Tick(scene_.objects,delta);scene_.scripts.PhysicsTick(scene_.objects,delta);physics_->Step(scene_.objects,delta);scene_.scripts.DispatchPhysicsEvents(physics_->DrainEvents());CheckErrors();
+    scene_.scripts.SetInput(std::move(frame));scene_.scripts.SetMouse(mouse);scene_.scripts.Tick(scene_.objects,delta);scene_.scripts.PhysicsTick(scene_.objects,delta);physics_->Step(scene_.objects,delta);scene_.scripts.DispatchPhysicsEvents(physics_->DrainEvents());CheckErrors();
 }
 void Session::Draw(const std::function<bool(GameObjectId)>& visible){scene_.scripts.Draw(scene_.objects,visible);CheckErrors();}
 void Session::PrepareObject(GameObject& object) {

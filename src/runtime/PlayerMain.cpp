@@ -7,6 +7,7 @@
 #include "input/InputAssets.h"
 #include <windows.h>
 #include <shellapi.h>
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
@@ -69,6 +70,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             loadMeshes();
             const auto visible=[&](zengine::GameObjectId id){const auto* object=session.Objects().Find(id);const auto* mesh=object?object->GetBehavior<zengine::MeshRenderer>():nullptr;return mesh&&mesh->Enabled()&&meshes.contains(id);};
             auto previous=std::chrono::steady_clock::now(),fpsSample=previous;double accumulated=0;unsigned rendered=0,fpsFrames=0,currentFps=0;
+            bool mousePrev[3]={};
             while(!state.closed && (!automated||rendered<frames)) {
                 MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){if(message.message==WM_QUIT)state.closed=true;TranslateMessage(&message);DispatchMessageW(&message);}
                 if(state.closed)break;
@@ -76,7 +78,23 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                 if(!state.width||!state.height||IsIconic(window)){Sleep(10);continue;}
                 if(width!=state.width||height!=state.height){renderer.Resize(state.width,state.height);width=state.width;height=state.height;}
                 if(automated)session.Tick(1.0f/60.0f,{});
-                else {accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,zengine::input::PollWindows(GetForegroundWindow()==window));accumulated-=1.0/60.0;}}
+                else {
+                    const bool focused=GetForegroundWindow()==window;
+                    zengine::script::MouseFrame mouse;
+                    if(state.width && state.height) {
+                        POINT cursor{}; GetCursorPos(&cursor); ScreenToClient(window,&cursor);
+                        mouse.inside = cursor.x>=0 && cursor.y>=0 && cursor.x<static_cast<LONG>(state.width) && cursor.y<static_cast<LONG>(state.height);
+                        mouse.x = std::clamp(cursor.x/static_cast<double>(state.width)*2.0-1.0,-1.0,1.0);
+                        mouse.y = std::clamp(1.0-cursor.y/static_cast<double>(state.height)*2.0,-1.0,1.0);
+                    }
+                    const int vks[3]={VK_LBUTTON,VK_RBUTTON,VK_MBUTTON};
+                    for(int i=0;i<3;++i) {
+                        const bool down=focused && (GetKeyState(vks[i])&0x8000)!=0;
+                        mouse.buttons[static_cast<std::size_t>(i)]={down,down&&!mousePrev[i],!down&&mousePrev[i]};
+                        mousePrev[i]=down;
+                    }
+                    accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,zengine::input::PollWindows(focused),mouse);accumulated-=1.0/60.0;}
+                }
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
                 for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id()))continue;DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));frame.meshes.push_back({meshes.at(object.Id()),object.GetTransform(),parent});}

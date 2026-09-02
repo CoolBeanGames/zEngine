@@ -122,11 +122,11 @@ namespace
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const std::map<std::string,std::vector<ScriptArrayElement>>& arrays, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const std::map<std::string,std::vector<ScriptArrayElement>>& arrays, const InputFrame& inputFrame,const MouseFrame& mouseFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
-              draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),scene(objects)
+              draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),mouse(mouseFrame),scene(objects)
         {
-            runtime.SetInput(input,false);BindNative(owner,object);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
+            runtime.SetInput(input,false);runtime.SetMouse(mouse,false);BindNative(owner,object);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
             printHandler=output;runtime.SetPrintCallback([this](std::string_view text){if(printHandler)printHandler(text);});
             proxies.emplace(owner,object);
             runtime.SetObjectLookup([this](std::string_view name){
@@ -174,7 +174,7 @@ namespace
         bool HasDraw() const noexcept override { return draw; }
         bool HasPhysicsUpdate() const noexcept override { return physicsUpdate; }
         void Start(GameObject& owner) override { Invoke(owner,[&] { runtime.Start(object); }); }
-        void Update(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.SetInput(input); runtime.Update(object,delta); }); }
+        void Update(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.SetInput(input); runtime.SetMouse(mouse); runtime.Update(object,delta); }); }
         void Draw(GameObject& owner) override { Invoke(owner,[&] { runtime.Draw(object); }); }
         void PhysicsUpdate(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.PhysicsUpdate(object,delta); }); }
         void PhysicsEvent(GameObject& owner,const physics::ContactEvent& event) {
@@ -253,6 +253,7 @@ namespace
         }
         bool draw,physicsUpdate;
         const InputFrame& input;
+        const MouseFrame& mouse;
         ObjectStore& scene;
         std::map<GameObjectId,ObjectRef> proxies;
         std::map<GameObjectId,Transform> previousTransforms;
@@ -381,7 +382,7 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
         record.preview=std::move(preview); record.program=compiled.program;
         ApplyPreviewReferences(record);
         for (const auto& [field, elements] : record.arrays) { (void)elements; SyncPreviewArray(record, field); }
-        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,record.arrays,input_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_));}
+        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,record.arrays,input_,mouse_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_));}
         return true;
     }
     catch (const std::exception& e) { record.overrides=std::move(previousValues); record.error=e.what(); return false; }
@@ -643,7 +644,7 @@ bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,r.arrays,input_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_)); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,r.arrays,input_,mouse_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_)); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();

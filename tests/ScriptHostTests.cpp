@@ -209,6 +209,22 @@ int main()
         Check(arrHost.Play(arr) && !bag.Faulted(),"Array Play failed"); arrHost.Stop(arr);
         Check(arrHost.Prepare(bag,"class Bag : gameObject { export array numbers; func start(){} }","Bag"),"Array recompile");
         Check(arrHost.AuthoredArrays(bag).count("numbers")==1 && arrHost.AuthoredArrays(bag).count("things")==0,"Array reconcile after field removal failed");
+        // ZE-62: Input.mouse is fed from the host each Update; buttons + delta reach scripts.
+        ObjectStore mouseStore; ScriptHost mouseHost;
+        auto& cursorObject=mouseStore.Create("Cursor");
+        auto& cursor=cursorObject.AddBehavior<ScriptBehavior>("Cursor.zsh");
+        Check(mouseHost.Prepare(cursor,R"(class Cursor : gameObject {
+            export int clicks=0; export float px=0; export float dx=0;
+            func start(){ Input.mouse.clicked.connect(hit); }
+            func update(float d){ px = Input.mouse.position.x; dx = Input.mouse.delta.x; }
+            func hit(int b){ clicks += 1; }
+        })","Cursor"),"Mouse fixture compile");
+        script::MouseFrame m; m.x=0.5; mouseHost.SetMouse(m);
+        Check(mouseHost.Play(mouseStore) && !cursor.Faulted(),"Mouse fixture Play");
+        m.x=0.75; m.buttons[0]={true,true,false}; mouseHost.SetMouse(m); mouseHost.Tick(mouseStore,0.1f);
+        Check(Value(mouseHost,cursor,"clicks")=="1","Mouse click signal did not reach the script");
+        Check(Value(mouseHost,cursor,"px")=="0.75" && Value(mouseHost,cursor,"dx")=="0.25","Mouse position/delta not exposed to the script");
+        mouseHost.Stop(mouseStore);
         std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;
     }

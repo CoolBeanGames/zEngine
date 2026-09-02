@@ -63,6 +63,7 @@ namespace zengine
         void Draw(ObjectStore& objects, const std::function<bool(GameObjectId)>& visible) { if (playing_) lifecycle_.Draw(objects, visible); }
         bool Playing() const noexcept { return playing_; }
         void SetInput(script::InputFrame frame) { input_=std::move(frame); }
+        void SetMouse(script::MouseFrame frame) { mouse_=frame; }
     private:
         struct Record
         {
@@ -87,6 +88,7 @@ namespace zengine
         BehaviorLifecycle lifecycle_;
         bool playing_ = false;
         script::InputFrame input_;
+        script::MouseFrame mouse_;
         PrefabSpawner prefabSpawner_;
         std::function<void(std::string_view)> printHandler_;
         ObjectStore* playingObjects_=nullptr;

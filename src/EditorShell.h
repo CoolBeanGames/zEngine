@@ -325,6 +325,7 @@ private:
     HWND window_ = nullptr;
     HWND consoleWindow_ = nullptr;
     HWND viewportWindow_ = nullptr;
+    bool mouseButtonsPrev_[3] = {}; // L/R/M pressed last TickInput, for just_pressed/just_released
     std::unique_ptr<Renderer> renderer_;
 
     HFONT uiFont_ = nullptr;

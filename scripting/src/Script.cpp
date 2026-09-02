@@ -461,7 +461,7 @@ class BytecodeCompiler {
                 Emit(Op::MakeVector, t, e.children.size() - 1); return "Vector3";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
-                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "Timer" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
+                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "Mouse" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "Timer" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
@@ -562,7 +562,7 @@ class BytecodeCompiler {
         Require(e.kind == Expr::Member, e.token, "Assignment target must be a variable or field");
         auto receiver = Expression(*e.children[0]);
         Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
-        Require(receiver != "InputAction",e.token,"Input state is read-only");
+        Require(receiver != "InputAction" && receiver != "Mouse",e.token,"Input state is read-only");
         const auto nativeAccessor=[&](const std::string& field){for(const auto& n:NativeTypes())if(!n.accessor.empty()&&n.accessor!="transform"&&n.accessor==field)return true;return false;};
         Require(!(program.Assignable("gameObject",receiver) && nativeAccessor(e.token.text)),e.token,"Native behavior references are read-only");
             Require(!(program.Assignable("Transform",receiver) && GlobalField(e.token.text)),e.token,"Global transform fields are read-only");
@@ -658,10 +658,15 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         Function f;f.params={"string"};f.result=std::string(name)=="action"?"InputAction":std::string(name)=="get_axis"?"float":std::string(name)=="get_vector"?"Vector3":"bool";
         input.methods.emplace(name,std::move(f));
     }
+    input.fields={{{Token::Identifier,"mouse"},"Mouse"}}; // Input.mouse
     program.classes.emplace(input.name,std::move(input));
     Class action;action.name="InputAction";action.signals={"just_pressed","just_released","is_pressed","was_just_pressed","was_just_released"};
     action.fields={{{Token::Identifier,"pressed"},"bool"},{{Token::Identifier,"axis"},"Vector3"},{{Token::Identifier,"value"},"Vector3"}};
     program.classes.emplace(action.name,std::move(action));
+    Class mouse;mouse.name="Mouse";
+    mouse.signals={"clicked","click_ended","held","was_just_moved"};
+    mouse.fields={{{Token::Identifier,"delta"},"Vector3"},{{Token::Identifier,"position"},"Vector3"}};
+    program.classes.emplace(mouse.name,std::move(mouse));
     Class physicsService;physicsService.name="PhysicsService";
     for(const auto& name:{"cast","cast_all"}){Function f;f.params={"Vector3","Vector3","int"};f.result=std::string(name)=="cast"?"gameObject":"array";physicsService.methods.emplace(name,std::move(f));}
     program.classes.emplace(physicsService.name,std::move(physicsService));
@@ -717,7 +722,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
-            if(c.base=="InputService" || c.base=="InputAction" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="Timer" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
+            if(c.base=="InputService" || c.base=="InputAction" || c.base=="Mouse" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="Timer" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -824,7 +829,11 @@ struct Runtime::Impl {
     ObjectRef inputService;
     ObjectRef physicsService;
     ObjectRef mathService;
+    ObjectRef mouseService;
     InputFrame inputFrame;
+    MouseFrame mouseFrame;
+    bool mouseSeen = false;
+    Vector3 mousePrevious;
     std::map<std::string,ObjectRef> inputActions;
     struct TimerRecord { ObjectRef object; double remaining = 0; };
     std::vector<TimerRecord> timers;
@@ -941,7 +950,7 @@ struct Runtime::Impl {
         auto& o = Resolve(ref, t); std::size_t index = 0; std::string fieldName=name;
         auto field = program->FindField(o.type->name, fieldName, &index);
         if (!field) Error(t, "Unknown field '" + name + "'");
-        if(o.type->name=="InputAction")Error(t,"Input state is read-only");
+        if(o.type->name=="InputAction" || o.type->name=="Mouse")Error(t,"Input state is read-only");
         if(program->Assignable("Transform",o.type->name) && GlobalField(fieldName))Error(t,"Global transform fields are read-only");
         if(program->Assignable("Transform",o.type->name) && DirectionField(fieldName)) {
             value=Coerce(std::move(value),"Vector3",t);
@@ -998,6 +1007,10 @@ struct Runtime::Impl {
         const auto* f = program->Method(Resolve(callback.owner, t).type->name, callback.name);
         if (!f || f->result != "void") Error(t, "Signal callback must be a void function");
         if(owner.type->name=="InputAction" && !f->params.empty())Error(t,"Input signal callbacks take no arguments");
+        if(owner.type->name=="Mouse") {
+            if((signal.name=="clicked"||signal.name=="click_ended"||signal.name=="held") && f->params!=std::vector<std::string>{"int"})Error(t,"Mouse click signal callback must take one int (button index)");
+            if(signal.name=="was_just_moved" && f->params!=std::vector<std::string>{"Vector3","Vector3"})Error(t,"Mouse was_just_moved callback must take (Vector3 old, Vector3 new)");
+        }
         if(program->Assignable("PhysicsBody",owner.type->name) && f->params!=std::vector<std::string>{"gameObject"})Error(t,"Physics signal callback must take one gameObject");
         if (program->Assignable("Transform", owner.type->name) &&
             (signal.name == "was_moved" || signal.name == "was_rotated" || signal.name == "was_scaled") && f->params != std::vector<std::string>{"Vector3"})
@@ -1279,7 +1292,14 @@ struct Runtime::Impl {
                 stack.push_back(Coerce(v, "Vector3", t)); break;
             }
             case Op::Self: stack.push_back(ref); break;
-            case Op::Input: if(!inputService.id)inputService=Create("InputService",t);stack.push_back(inputService);break;
+            case Op::Input:
+                if(!inputService.id) {
+                    inputService=Create("InputService",t);
+                    mouseService=Create("Mouse",t);
+                    std::size_t mi=0;program->FindField("InputService","mouse",&mi);Resolve(inputService).fields[mi]=mouseService;
+                    ApplyMouseFields();
+                }
+                stack.push_back(inputService);break;
             case Op::Physics: if(!physicsService.id)physicsService=Create("PhysicsService",t);stack.push_back(physicsService);break;
             case Op::Math: if(!mathService.id)mathService=Create("Mathf",t);stack.push_back(mathService);break;
             case Op::LoadLocal: stack.push_back(locals[ins.a]); break;
@@ -1352,6 +1372,31 @@ struct Runtime::Impl {
             if(s.justReleased){Signal({ref,"just_released"},"emit",{},{});Signal({ref,"was_just_released"},"emit",{},{});}
             if(s.pressed)Signal({ref,"is_pressed"},"emit",{},{});
         }
+    }
+    void ApplyMouseFields() {
+        if(!mouseService.id)return;
+        auto& fields=Resolve(mouseService).fields;
+        const Vector3 position{mouseFrame.x,mouseFrame.y,0};
+        const Vector3 delta=mouseSeen?Vector3{position.x-mousePrevious.x,position.y-mousePrevious.y,0}:Vector3{};
+        fields[0]=delta; fields[1]=position; // Mouse.delta, Mouse.position (declaration order)
+    }
+    void SetMouse(const MouseFrame& frame,bool emitEvents) {
+        if(!std::isfinite(frame.x)||!std::isfinite(frame.y)||std::abs(frame.x)>16||std::abs(frame.y)>16)Error({},"Invalid mouse position");
+        const Vector3 position{frame.x,frame.y,0};
+        const bool moved=mouseSeen && (position.x!=mousePrevious.x || position.y!=mousePrevious.y);
+        const Vector3 previous=mousePrevious;
+        mouseFrame=frame;
+        ApplyMouseFields();
+        if(emitEvents && mouseService.id) {
+            if(moved)Signal({mouseService,"was_just_moved"},"emit",{previous,position},{});
+            for(std::size_t i=0;i<frame.buttons.size();++i) {
+                const auto& b=frame.buttons[i];const auto index=static_cast<std::int64_t>(i);
+                if(b.justPressed)Signal({mouseService,"clicked"},"emit",{index},{});
+                if(b.justReleased)Signal({mouseService,"click_ended"},"emit",{index},{});
+                if(b.pressed && !b.justPressed)Signal({mouseService,"held"},"emit",{index},{});
+            }
+        }
+        mousePrevious=position; mouseSeen=true;
     }
     void AdvanceTimers(double delta) {
         const auto initial=timers.size();std::vector<ObjectRef> expired;
@@ -1434,6 +1479,7 @@ void Runtime::SetPrintCallback(PrintCallback callback){impl_->printCallback=std:
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}
+void Runtime::SetMouse(const MouseFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetMouse(frame,emitEvents);}
 void Runtime::Start(ObjectRef object) { impl_->Reset(); impl_->Start(object); }
 void Runtime::Update(ObjectRef object, double delta) {
     if (!std::isfinite(delta) || delta < 0) impl_->Error({}, "Delta must be finite and nonnegative");

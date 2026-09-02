@@ -483,8 +483,58 @@ void NativeTypeAliases() {
         }
     }
 }
+void MouseInput() {
+    auto program=Compile(R"(class Cursor : gameObject {
+        int clicks; int releases; int held; int moves;
+        Vector3 last_from; Vector3 last_to; int last_button = -1;
+        func start(){
+            Input.mouse.clicked.connect(on_click);
+            Input.mouse.click_ended.connect(on_release);
+            Input.mouse.held.connect(on_held);
+            Input.mouse.was_just_moved.connect(on_move);
+        }
+        func on_click(int b){ clicks += 1; last_button = b; }
+        func on_release(int b){ releases += 1; }
+        func on_held(int b){ held += 1; }
+        func on_move(Vector3 from, Vector3 to){ moves += 1; last_from = from; last_to = to; }
+        func position():Vector3{ return Input.mouse.position; }
+        func delta():Vector3{ return Input.mouse.delta; }
+        func clicks_count():int{ return clicks; }
+        func releases_count():int{ return releases; }
+        func held_count():int{ return held; }
+        func moves_count():int{ return moves; }
+        func button():int{ return last_button; }
+    })");
+    Runtime r(program); const auto c=r.Create("Cursor"); r.Start(c);
+    MouseFrame f; f.x=0.5; f.y=-0.25;
+    r.SetMouse(f);                    // first frame: establishes position, no delta / move event
+    Check(std::get<Vector3>(r.Call(c,"position"))==Vector3{0.5,-0.25,0},"Mouse.position not exposed");
+    Check(std::get<Vector3>(r.Call(c,"delta"))==Vector3{},"First mouse frame should have zero delta");
+    Check(Int(r.Call(c,"moves_count"))==0,"was_just_moved fired on the first frame");
+    f.x=0.75; f.y=-0.25; f.buttons[0]={true,true,false};
+    r.SetMouse(f);
+    Check(std::get<Vector3>(r.Call(c,"delta"))==Vector3{0.25,0,0},"Mouse delta not derived from successive frames");
+    Check(Int(r.Call(c,"moves_count"))==1,"was_just_moved did not fire on movement");
+    Check(Int(r.Call(c,"clicks_count"))==1 && Int(r.Call(c,"button"))==0,"clicked(button) did not fire");
+    f.buttons[0]={true,false,false};   // still held
+    r.SetMouse(f);
+    Check(Int(r.Call(c,"held_count"))==1 && Int(r.Call(c,"clicks_count"))==1,"held(button) did not fire / clicked repeated");
+    f.buttons[0]={false,false,true};   // released
+    r.SetMouse(f);
+    Check(Int(r.Call(c,"releases_count"))==1,"click_ended(button) did not fire");
+    Error([&]{Compile("class Bad : Mouse {}");},"Cannot inherit");
+    Error([&]{Compile("class Bad : gameObject { Mouse m=Mouse(); }");},"supplied by the host");
+    Error([&]{Compile("class Bad : gameObject { func f(){ Input.mouse.delta = Vector3(1,0,0); } }");},"read-only");
+    // Callback signature is checked when connect() runs (like the Transform/PhysicsBody signals).
+    { Runtime bad(Compile("class Bad : gameObject { func start(){ Input.mouse.clicked.connect(f); } func f(){} }"));
+      auto o=bad.Create("Bad"); Error([&]{bad.Start(o);},"button index"); }
+    { Runtime bad(Compile("class Bad : gameObject { func start(){ Input.mouse.was_just_moved.connect(f); } func f(Vector3 v){} }"));
+      auto o=bad.Create("Bad"); Error([&]{bad.Start(o);},"was_just_moved"); }
+    Error([&]{ Runtime bad(Compile("class X : gameObject {}")); bad.SetMouse([]{ MouseFrame m; m.x=99; return m; }()); },"Invalid mouse position");
+}
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
+        {"mouse input", MouseInput},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},

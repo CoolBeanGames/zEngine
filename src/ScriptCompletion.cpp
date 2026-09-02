@@ -61,6 +61,9 @@ Index::Index() {
     add(L"Input",L"action",L"InputAction",true);add(L"Input",L"get_axis",L"float",true);add(L"Input",L"get_vector",L"Vector3",true);
     for(const auto name:{L"just_pressed",L"just_released",L"is_pressed",L"was_just_pressed",L"was_just_released"})add(L"InputAction",name,L"signal");
     add(L"InputAction",L"pressed",L"bool");add(L"InputAction",L"axis",L"Vector3");add(L"InputAction",L"value",L"Vector3");
+    add(L"Input",L"mouse",L"Mouse");
+    add(L"Mouse",L"delta",L"Vector3");add(L"Mouse",L"position",L"Vector3");
+    for(const auto name:{L"clicked",L"click_ended",L"held",L"was_just_moved"})add(L"Mouse",name,L"signal");
     add(L"Physics",L"cast",L"gameObject",true);add(L"Physics",L"cast_all",L"array",true);
     for(const auto name:{L"lerp",L"sin",L"cos",L"tan",L"sqrt",L"exp",L"round"})add(L"Mathf",name,L"float",true);
     add(L"Mathf",L"dot",L"float",true);add(L"Mathf",L"cross",L"Vector3",true);
@@ -152,7 +155,7 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
     } else {
         if(result.prefix.empty())return result;
         candidates=variables;
-        for(const auto& [name,type]:index.types_)if(name!=L"signal" && name!=L"InputAction")candidates[name]={name,L"type"};
+        for(const auto& [name,type]:index.types_)if(name!=L"signal" && name!=L"InputAction" && name!=L"Mouse")candidates[name]={name,L"type"};
         for(const auto word:{L"class",L"func",L"return",L"if",L"else",L"while",L"for",L"true",L"false",L"null",L"export",L"multiline",L"label",L"signal",L"is",L"not",L"and",L"or",L"nor"})candidates[word]={word,L"keyword"};
         auto preceding=source.substr(0,result.start);const auto last=preceding.find_last_not_of(L" \t\r\n");
         if(last!=preceding.npos && last>=3 && preceding.substr(last-3,4)==L"func") {

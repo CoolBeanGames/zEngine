@@ -11,7 +11,7 @@ public:
     Session(const projects::Project&,const std::string& scene={});
     ~Session();
     void Start();
-    void Tick(float delta,const input::Hardware&);
+    void Tick(float delta,const input::Hardware&,const script::MouseFrame& mouse={});
     void Draw(const std::function<bool(GameObjectId)>& visible);
     const ObjectStore& Objects() const {return scene_.objects;}
     const std::map<GameObjectId,std::filesystem::path>& Models() const {return models_;}

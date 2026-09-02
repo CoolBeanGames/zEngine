@@ -39,6 +39,7 @@ inline const std::vector<NativeType>& NativeTypes() {
         {"prefab",         "",            "",               false, false, true },
         {"InputService",   "",            "",               false, false, true },
         {"InputAction",    "",            "",               false, false, true },
+        {"Mouse",          "",            "",               false, false, true },
         {"PhysicsService", "",            "",               false, false, true },
         {"Mathf",          "",            "",               false, false, true },
         {"Vector3",        "",            "",               false, false, false},

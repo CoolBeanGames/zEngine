@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -112,6 +113,11 @@ struct RuntimeLimits {
 };
 struct InputState { double x=0,y=0; bool pressed=false,justPressed=false,justReleased=false; };
 using InputFrame = std::map<std::string,InputState>;
+struct MouseButtonState { bool pressed=false,justPressed=false,justReleased=false; };
+// Host snapshot of the pointer. x/y are the viewport position normalized to -1..1
+// (0,0 = centre, +y up). Button 0 = left, 1 = right, 2 = middle. The Runtime derives
+// the movement delta and the was_just_moved signal from successive frames.
+struct MouseFrame { double x=0,y=0; bool inside=false; std::array<MouseButtonState,8> buttons{}; };
 class Runtime {
 public:
     explicit Runtime(std::shared_ptr<const Program> program, RuntimeLimits limits = {});
@@ -135,6 +141,8 @@ public:
     void Emit(SignalRef signal, const std::vector<Value>& arguments = {});
     // Host snapshot for one fixed tick, before Update. Events share one VM budget.
     void SetInput(const InputFrame& frame, bool emitEvents = true);
+    // Pointer snapshot for Input.mouse. Emits clicked/click_ended/held/was_just_moved.
+    void SetMouse(const MouseFrame& frame, bool emitEvents = true);
     // Host lookup returns same-VM scene proxies. Missing names return a null reference.
     void SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup);
     using PhysicsBodyCall = std::function<Value(ObjectRef, std::string_view, const std::vector<Value>&)>;
