@@ -184,6 +184,13 @@ int main(int argc, char**)
             SendMessageW(editor.Window(),WM_COMMAND,ScriptEditor::ErrorCommand,0);
             SendMessageW(control,EM_GETSEL,reinterpret_cast<WPARAM>(&start),reinterpret_cast<LPARAM>(&end));
             Check(start==13,"Go to error did not navigate to diagnostic");
+            // Line numbers: a right-hand gutter is reserved and repainting over it is safe.
+            const auto margins=SendMessageW(control,EM_GETMARGINS,0,0);
+            Check(HIWORD(margins)==ScriptEditor::LineNumberGutter && LOWORD(margins)==28,"Line number gutter not reserved");
+            SetWindowTextW(control,L"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+            SendMessageW(editor.Window(),WM_TIMER,1,0);
+            Check(SendMessageW(control,EM_GETLINECOUNT,0,0)==5,"Line count wrong for gutter test");
+            RedrawWindow(control,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW);
             if (argc > 1)
             {
                 SetWindowTextW(control,L"class PlayerBehavior : gameObject\r\n{\r\n    // Per-instance behavior data\r\n    float speed = 3.5;\r\n    string label = \"Player\";\r\n\r\n    func start()\r\n    {\r\n    }\r\n\r\n    func update(float delta)\r\n    {\r\n        speed = speed + delta;\r\n    }\r\n\r\n    func draw()\r\n    {\r\n    }\r\n// Missing closing brace: error highlighting demo\r\n");
