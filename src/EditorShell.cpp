@@ -41,6 +41,20 @@ namespace
         MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), count);
         return result;
     }
+    const wchar_t* KindLabel(assetLibrary::Kind kind)
+    {
+        switch (kind)
+        {
+        case assetLibrary::Kind::Script: return L"Script";
+        case assetLibrary::Kind::Prefab: return L"Prefab";
+        case assetLibrary::Kind::Scene: return L"Scene";
+        case assetLibrary::Kind::Input: return L"Input Map";
+        case assetLibrary::Kind::Image: return L"Image";
+        case assetLibrary::Kind::Model: return L"Model";
+        case assetLibrary::Kind::Folder: return L"Folder";
+        default: return L"File";
+        }
+    }
     void RestoreBehaviorState(zengine::Behavior& behavior,const zengine::scenes::BehaviorData& saved)
     {
         behavior.SetPriority(saved.priority);behavior.SetEnabled(saved.enabled);
@@ -222,6 +236,10 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     inspectorPanel_->SetPrefabHandler([this](const std::string& current) {
         try{return ChoosePrefabReference(current);}
         catch(const std::exception& error){status_=L"Cannot assign prefab: "+WideText(error.what());InvalidateRect(window_,&statusBar_,FALSE);return std::optional<std::string>{};}
+    });
+    inspectorPanel_->SetObjectPicker([this](const std::string& referenceType, zengine::GameObjectId current, RECT anchorScreen) {
+        try{return PickSceneObject(referenceType,current,anchorScreen);}
+        catch(const std::exception& error){status_=L"Cannot pick object: "+WideText(error.what());InvalidateRect(window_,&statusBar_,FALSE);return std::optional<zengine::GameObjectId>{};}
     });
     // Explicit directories support embedding/legacy projects; normal startup uses the recent-project config.
     if (!projectDirectory.empty())
@@ -1102,11 +1120,13 @@ void EditorShell::ChooseScene()
 {
     RequireProject();
     if (Playing()) throw std::runtime_error("Stop Play before opening another scene.");
-    std::array<wchar_t,32768> file{}; const auto initial=assetsDirectory_.wstring();
-    OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=window_; dialog.lpstrFile=file.data(); dialog.nMaxFile=static_cast<DWORD>(file.size());
-    dialog.lpstrFilter=L"zEngine scenes (*.zscene)\0*.zscene\0\0"; dialog.lpstrInitialDir=initial.c_str();
-    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&dialog)) OpenScene(file.data());
+    ObjectPicker::Request request;
+    request.title = L"Open a scene";
+    request.items = AssetPickerItems({assetLibrary::Kind::Scene});
+    request.current = scenePath_.empty() ? std::wstring{} : std::filesystem::relative(scenePath_, assetsDirectory_).generic_wstring();
+    request.emptyText = L"This project has no .zscene files yet.";
+    const auto choice = ObjectPicker::Window(window_, request);
+    if (choice.picked) OpenScene(assetsDirectory_ / std::filesystem::path(choice.value));
 }
 bool EditorShell::TranslateShortcut(const MSG& message)
 {
@@ -1192,18 +1212,69 @@ zengine::GameObjectId EditorShell::ScriptDropTarget(POINT point) const
     if (PtInRect(&inspector_,point)) return selectedObject_;
     return 0; // No ambiguous picking: attach to an explicit tree row or selected Inspector.
 }
+std::vector<ObjectPicker::Item> EditorShell::AssetPickerItems(std::vector<assetLibrary::Kind> kinds) const
+{
+    std::vector<ObjectPicker::Item> items;
+    if (!project_ || !std::filesystem::exists(assetsDirectory_)) return items;
+    const auto wanted = [&](assetLibrary::Kind k) { return std::find(kinds.begin(), kinds.end(), k) != kinds.end(); };
+    const auto walk = [&](auto&& self, const std::filesystem::path& folder) -> void {
+        std::vector<std::filesystem::path> entries;
+        try { entries = assetLibrary::List(assetsDirectory_, folder); } catch (const std::exception&) { return; }
+        for (const auto& entry : entries)
+        {
+            const auto kind = assetLibrary::Type(entry);
+            if (kind == assetLibrary::Kind::Folder) { self(self, std::filesystem::relative(entry, assetsDirectory_)); continue; }
+            if (!wanted(kind) || items.size() >= 2000) continue;
+            const auto storage = assetLibrary::Storage(entry);
+            ObjectPicker::Item item;
+            item.label = (kind == assetLibrary::Kind::Model ? entry.parent_path().filename() : entry.stem()).wstring();
+            item.detail = std::filesystem::relative(storage, assetsDirectory_).generic_wstring();
+            item.group = KindLabel(kind);
+            item.value = std::filesystem::relative(entry, assetsDirectory_).generic_wstring();
+            item.icon = kind;
+            items.push_back(std::move(item));
+        }
+    };
+    walk(walk, ".");
+    std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
+        return a.group != b.group ? a.group < b.group : _wcsicmp(a.label.c_str(), b.label.c_str()) < 0;
+    });
+    return items;
+}
+std::optional<zengine::GameObjectId> EditorShell::PickSceneObject(const std::string& referenceType, zengine::GameObjectId current, RECT anchorScreen) const
+{
+    ObjectPicker::Request request;
+    request.title = L"Assign " + WideText(referenceType);
+    request.allowClear = true;
+    request.current = std::to_wstring(current);
+    request.emptyText = L"No scene object has a " + WideText(referenceType) + L".";
+    for (const auto id : objects_.HierarchyOrder())
+    {
+        const auto* object = objects_.Find(id);
+        if (!object || !zengine::ScriptHost::ObjectMatchesReferenceType(*object, referenceType)) continue;
+        ObjectPicker::Item item;
+        item.label = WideText(object->Name());
+        item.detail = L"scene object";
+        item.group = WideText(referenceType);
+        item.value = std::to_wstring(id);
+        item.icon = assetLibrary::Kind::Prefab;
+        request.items.push_back(std::move(item));
+    }
+    const auto choice = ObjectPicker::Dropdown(window_, anchorScreen, request);
+    if (choice.cleared) return zengine::GameObjectId{0};
+    if (!choice.picked) return std::nullopt;
+    try { return static_cast<zengine::GameObjectId>(std::stoull(choice.value)); }
+    catch (const std::exception&) { return std::nullopt; }
+}
 void EditorShell::ChooseScript()
 {
     RequireScene();
-    std::filesystem::create_directories(assetsDirectory_);
-    std::array<wchar_t,32768> filename{};
-    const auto initial = assetsDirectory_.wstring();
-    OPENFILENAMEW dialog{}; dialog.lStructSize=sizeof(dialog); dialog.hwndOwner=window_;
-    dialog.lpstrFilter=L"zEngine scripts (*.zsh)\0*.zsh\0\0";
-    dialog.lpstrFile=filename.data(); dialog.nMaxFile=static_cast<DWORD>(filename.size());
-    dialog.lpstrInitialDir=initial.c_str(); dialog.lpstrTitle=L"Attach a script from this project's Assets directory";
-    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&dialog)) AttachScript(selectedObject_, std::filesystem::path(filename.data()));
+    ObjectPicker::Request request;
+    request.title = L"Attach a script";
+    request.items = AssetPickerItems({assetLibrary::Kind::Script});
+    request.emptyText = L"This project has no .zsh scripts yet.";
+    const auto choice = ObjectPicker::Window(window_, request);
+    if (choice.picked) AttachScript(selectedObject_, assetsDirectory_ / std::filesystem::path(choice.value));
 }
 std::vector<std::wstring> EditorShell::ProjectScriptPaths() const
 {
@@ -1223,14 +1294,16 @@ std::vector<std::wstring> EditorShell::ProjectScriptPaths() const
 std::optional<std::string> EditorShell::ChoosePrefabReference(const std::string& current)
 {
     RequireProject();
-    std::array<wchar_t,32768> filename{};
-    if(!current.empty())try{const auto initial=zengine::prefabs::Resolve(assetsDirectory_,std::filesystem::path(std::u8string(current.begin(),current.end()))).wstring();wcsncpy_s(filename.data(),filename.size(),initial.c_str(),_TRUNCATE);}catch(const std::exception&){}
-    const auto folder=AssetFolder().wstring();OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=window_;
-    dialog.lpstrFilter=L"zEngine prefabs (*.zprefab)\0*.zprefab\0\0";dialog.lpstrFile=filename.data();dialog.nMaxFile=static_cast<DWORD>(filename.size());
-    dialog.lpstrInitialDir=folder.c_str();dialog.lpstrTitle=L"Assign a prefab from this project's Assets directory";dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
-    if(!GetOpenFileNameW(&dialog))return std::nullopt;
-    const auto file=zengine::prefabs::Resolve(assetsDirectory_,filename.data());const auto relative=std::filesystem::relative(file,assetsDirectory_).generic_u8string();
-    return std::string(reinterpret_cast<const char*>(relative.data()),relative.size());
+    ObjectPicker::Request request;
+    request.title = L"Assign a prefab";
+    request.items = AssetPickerItems({assetLibrary::Kind::Prefab});
+    request.current = WideText(current);
+    request.allowClear = true;
+    request.emptyText = L"This project has no .zprefab files yet.";
+    const auto choice = ObjectPicker::Window(window_, request);
+    if (choice.cleared) return std::string{};
+    if (!choice.picked) return std::nullopt;
+    return Utf8Text(choice.value);
 }
 zengine::GameObjectId EditorShell::SpawnPrefab(std::string_view asset)
 {
@@ -1314,14 +1387,15 @@ void EditorShell::QueueModel(const std::filesystem::path& path, zengine::GameObj
 }
 void EditorShell::ChooseModel()
 {
-    std::array<wchar_t,32768> filename{};
-    const auto initial = assetsDirectory_.wstring();
-    OPENFILENAMEW dialog{}; dialog.lStructSize=sizeof(dialog); dialog.hwndOwner=window_;
-    dialog.lpstrFilter=L"Imported FBX model (*.fbx)\0*.fbx\0\0";
-    dialog.lpstrFile=filename.data(); dialog.nMaxFile=static_cast<DWORD>(filename.size());
-    dialog.lpstrInitialDir=initial.c_str(); dialog.lpstrTitle=L"Choose a model from an imported asset package";
-    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
-    if (GetOpenFileNameW(&dialog)) QueueModel(std::filesystem::path(filename.data()),selectedObject_);
+    ObjectPicker::Request request;
+    request.title = L"Choose a model";
+    request.items = AssetPickerItems({assetLibrary::Kind::Model});
+    const auto* mesh = selectedObject_ ? objects_.Find(selectedObject_) : nullptr;
+    if (mesh) if (const auto* renderer = mesh->GetBehavior<zengine::MeshRenderer>(); renderer && !renderer->Asset().empty())
+        request.current = WideText(renderer->Asset());
+    request.emptyText = L"Import an FBX model into the library first.";
+    const auto choice = ObjectPicker::Window(window_, request);
+    if (choice.picked) QueueModel(std::filesystem::path(choice.value), selectedObject_);
 }
 bool EditorShell::ConfirmScriptClose()
 {

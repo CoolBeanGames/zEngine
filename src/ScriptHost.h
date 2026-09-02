@@ -18,6 +18,9 @@ namespace zengine
         std::vector<Field> Fields(ScriptBehavior&);
         void SetField(ScriptBehavior&, const std::string& name, const std::string& text);
         void SetObjectReference(ScriptBehavior&, const std::string& name, GameObjectId target);
+        // True when the object could be assigned to a script reference field of this type
+        // (e.g. type "RigidBody" needs a RigidBody behavior; "gameObject"/"Transform" match any).
+        static bool ObjectMatchesReferenceType(const GameObject&, std::string_view type);
         std::string Error(const ScriptBehavior&) const;
         std::map<std::string,script::Value> AuthoredValues(const ScriptBehavior&) const;
         std::map<std::string,GameObjectId> AuthoredReferences(const ScriptBehavior&) const;

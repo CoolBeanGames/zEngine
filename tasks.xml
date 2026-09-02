@@ -1,5 +1,264 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="59">
+<tasks project="zEngine" nextIndex="60">
+  <task id="ZE-59">
+    <name>ZE 49 is happening again</name>
+    <prompt>this was the original prompt:
+"i connected my input signal to a function, when i press space it should call the shoot function, however instead it gets called one time (not when i press the button) then never again, my script is below:
+class new_player_move : gameObject
+{
+
+    export prefab bullet;
+    export transform shoot_point;
+    export float rot = 0;
+    export float axis = 0;
+
+    export float turn_speed = 1;
+    func start()
+    {
+        print("player script loaded");
+        Input.action("shoot").just_released.connect(shoot);
+    }
+
+    func update(float delta)
+    {
+
+        update_axis();
+
+        rot += axis * turn_speed;
+
+        if(rot &gt;= 360)
+
+        {
+
+            rot -= 360;
+        }
+
+        transform.rotation.y = rot;
+    }
+
+    func physicsUpdate(float delta)
+    {
+    }
+
+    func draw()
+    {
+    }
+
+    
+    func update_axis()
+    {
+        if(Input.is_action_pressed("left"))
+
+        {
+
+            axis = -1;
+        }
+
+        else
+
+        {
+
+            if(Input.is_action_pressed("right"))
+
+            {
+
+                axis = 1;
+            }
+
+            else
+
+            {
+
+                axis = 0;
+            }
+        }
+        
+    }
+    
+   func shoot()
+
+    {
+        print("shoot called");
+        gameObject b = bullet.spawn();
+
+        b.parent = this;
+
+        b.transform.position = transform.position;
+    }
+}"
+
+and now its happening again in my current build, this is my new script
+class player_controller : gameObject
+{
+    label ("motion")
+    export float move_speed = 10;
+    export float jump_height = 10;
+    export float turn_speed = 10;    
+    export bool is_grounded = false;
+    
+    label("references")
+    export rigidbody rb;
+    export transform shoot_point;
+    export prefab bullet;
+    
+    float delta_time = 0;
+    export Vector3 input_vector = Vector3(0,0,0);
+    
+    func start()
+    {
+        //connect signals
+        Input.action("jump").just_released.connect(jump);
+        Input.action("shoot").just_released.connect(shoot);
+    }
+
+    func update(float delta)
+    {
+        //update delta
+        delta_time = delta;
+        update_input();
+    }
+
+    func physicsUpdate(float delta)
+    {
+        Vector3 temp_velocity = rb.velocity;
+        float rot = turn_speed * input_vector.x * delta;
+        if(rot &gt; turn_speed)
+        {
+           rot = turn_speed; 
+        }
+        if(rot &lt; -turn_speed)
+        {
+           rot = -turn_speed; 
+        }
+        rb.angular_velocity.y = rot;
+
+        Vector3 velocity_change = transform.forward * move_speed * delta * input_vector.y;
+        temp_velocity += velocity_change;
+        if(input_vector.y != 0)
+        {
+           print("velocity change: " &amp; {velocity_change            }) ;
+        }
+        temp_velocity.y = rb.velocity.y;
+        rb.velocity = temp_velocity;
+
+    }
+
+    func draw()
+    {
+    }
+    
+    //returns true if the player is on the ground
+    func grounded() : bool
+    {
+         return (rb.velocity.y &lt; 0.1); 
+    }
+    
+    //process the players jump
+    func jump()
+    {
+        if(grounded())
+        {
+           rb.velocity.y = jump_height; 
+        }
+    }
+    
+    //update the input vector
+    func update_input()
+    {
+       
+        //check turning
+        if(Input.is_action_pressed("left"))
+        {
+           input_vector.x = -1; 
+        }
+        else
+        {
+            if(Input.is_action_pressed("right")) 
+            {
+               input_vector.x = 1; 
+            }           
+            else
+            {
+                input_vector.x = 0;
+            }
+        }
+        //check forward
+        if(Input.is_action_pressed("forward"))
+        {
+           input_vector.y = 1; 
+        }
+        else
+        {
+            input_vector.y=0;            
+        }
+    }
+    
+    //called when shooting
+    func shoot()
+    {
+       GameObject b = bullet.spawn();
+       if(b != null)
+        {
+           print("spawned b"); 
+        }
+       b.transform.position = shoot_point.global_position;
+       b.transform.forward = this.transform.forward;
+    }
+}
+
+and this is my new bullet script:
+class bullet : gameObject
+{
+    export float speed;
+    export rigidbody rb;
+    func start()
+    {
+        rb.collision_entered.connect(on_hit);
+    }
+
+    func update(float delta)
+    {
+    }
+
+    func physicsUpdate(float delta)
+    {
+        rb.velocity = transform.forward * speed * delta;
+    }
+
+    func draw()
+    {
+    }
+    
+    func on_hit()
+    {
+       transform.position.y = 10000 ;
+    }
+}
+
+
+when the first bullet shoots it freezes up all my input and processing (physics still runs)
+
+also the bullet spawns in the wrong position, its spawning at 0,0,0 even though shoot_points global is nowhere near there</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>true</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>bugs,scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
   <task id="ZE-56">
     <name>ScriptIntegrationEditor test no longer selects on mouse-down</name>
     <prompt>The ScriptEditorIntegration suite (zEngineAssetTests --scripts, ctest "ScriptEditorIntegration") fails at "Save/reload lost Inspector override". Cause: commit d8821c8 moved scene-tree selection from WM_LBUTTONDOWN to WM_LBUTTONUP (release-time selection, ZE-44) and updated most click tests, but ScriptIntegrationEditorTests in tests/AssetTests.cpp still sends only WM_LBUTTONDOWN at (50,140) to re-select the scripted cube. With no WM_LBUTTONUP the selection never changes, so the Inspector stays bound to the later empty GameObject (whose script keeps the default speed=2 instead of the overridden 6). Reproduce: build builds/test, run ctest -C Debug -R ScriptEditorIntegration.</prompt>
@@ -11,7 +270,7 @@
     <errorMessage></errorMessage>
     <lockKey></lockKey>
     <locked>false</locked>
-    <archived>false</archived>
+    <archived>true</archived>
     <blockedBy></blockedBy>
     <dateStarted></dateStarted>
     <dueDate></dueDate>
@@ -34,9 +293,9 @@
     <errorMessage></errorMessage>
     <lockKey></lockKey>
     <locked>false</locked>
-    <archived>false</archived>
+    <archived>true</archived>
     <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
@@ -634,180 +893,33 @@ a Breakpoint has been reached
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
-  <task id="ZE-33">
-    <name>arrays should be visable and editable in the inspector</name>
-    <prompt>we should be able to see and set valuoes for arrays in inspector, even drag in references to a specific slot if needed depending on the types</prompt>
-    <requirements>make arrays display properly</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>true</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="false">make arrays visable</subtask>
-      <subtask done="false">add new elemtns to arrays in inspector</subtask>
-      <subtask done="false">remove elements</subtask>
-      <subtask done="false">pick type for new elements</subtask>
-      <subtask done="false">drag elements in</subtask>
-      <subtask done="false">drag elements in to empy array (add new slot)</subtask>
-      <subtask done="false">auto select type based on dragged in element</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-55">
-    <name>do a commit now for safety sake</name>
-    <prompt>do a commit now for safety sake</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags></tags>
-    <notes>Committed and pushed the ZE-54 standalone-build fix (and the ZE-56 record) as part of working through the queue.</notes>
-    <filesChanged>src/runtime/GameSession.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
   <task id="ZE-34">
     <name>proper object picker</name>
     <prompt>we should build an object picker that can be used universally, it should be able to see ALL types, then gets passed a filtered version, it then lists all instances of those types. it should support both assets, and scene trees but only show whatever makes sense in the context in which its being used. should be available as a window pop-up as well as a drop down.</prompt>
     <requirements>create the picker dialogs to replace windows system dialogs.</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
     <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
-    <blockedBy>ZE-35</blockedBy>
-    <dateStarted></dateStarted>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <tags>ui,picker,assets,scripting</tags>
+    <notes>New src/ObjectPicker (Window + Dropdown, one code path) replaces the four OS file dialogs: ChooseScript, ChooseScene, ChoosePrefabReference and ChooseModel now open an in-app modal listing the matching project assets with icons, live search, Clear/Cancel and (only when more than one type is present) per-type filter chips. Script object-reference Inspector fields became click-to-pick buttons that open the Dropdown anchored to the field, listing exactly the scene objects that qualify for that reference type - the ENGINE does the type filtering via new ScriptHost::ObjectMatchesReferenceType (RigidBody field -> only rigidbodies, etc.), so the picker just shows what was passed; chips are reserved for multi-type contexts like arrays. EditorShell::AssetPickerItems / PickSceneObject build the lists. ObjectPicker::SetTestResponder lets call-site tests skip the modal. New --picker suite drives the real dialog via a timer/EnumThreadWindows (search, chips, clear, cancel, dropdown, editor integration); full ctest 29/29; on-screen screenshot verified.</notes>
+    <filesChanged>src/ObjectPicker.h; src/ObjectPicker.cpp; src/EditorShell.h; src/EditorShell.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/ScriptHost.h; src/ScriptHost.cpp; tests/AssetTests.cpp; tests/WindowCapture.h; CMakeLists.txt; tasks.xml</filesChanged>
     <image></image>
     <subtasks>
-      <subtask done="false">drop down picker</subtask>
-      <subtask done="false">window picker</subtask>
-      <subtask done="false">type filtering</subtask>
+      <subtask done="true">drop down picker</subtask>
+      <subtask done="true">window picker</subtask>
+      <subtask done="true">type filtering</subtask>
     </subtasks>
-  </task>
-  <task id="ZE-35">
-    <name>type references</name>
-    <prompt>if we dont have it already we need type reference systems. some managment system that can easily be expanded (1 line) with new system types as we make them. then to add lets say an audio player, we just make audio_player.cpp then pass the reference to the system, it will then hook up the auto-complete, reference passing, and any other connections needed</prompt>
-    <requirements>reference system built</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>big,systems,data,scripting</tags>
-    <notes>Built the "phone book": scripting/include/zscript/NativeTypes.h is now the single registry of native types (name, base, gameObject accessor field, component/physicsBody/scriptClass flags). Everything reads from it: the compiler's Canonical() alias resolver, NativeBehavior/NativeClass predicates, the built-in class prelude (gameObject accessor fields + physics-body class construction), the runtime component binding in Create()/BindNativeBehavior(), the read-only-accessor check, ScriptCompletion's type list + base chains + gameObject members + lowercase aliases, and ScriptHost's three former if/else chains (Reference, BindNative, PreviewReference) - now one NativeBindings() table on the engine side. Adding a new referenceable component (e.g. audio_player) = one row in NativeTypes.h + one row in ScriptHost::NativeBindings() + the C++ behavior class; autocomplete, canonical spelling, gameObject.&lt;accessor&gt;, drag-assignment and standalone-build binding all follow. Behaviour is byte-for-byte unchanged: full ctest 27/27 green, plus a new registry-driven check in ScriptTests that every registered type is a known class and every accessor resolves. Physics bodies keep their PhysicsBody base / owner wiring, keyed off the registry's physicsBody flag. Unblocks ZE-34.</notes>
-    <filesChanged>scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptCompletion.cpp; src/ScriptHost.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-38">
-    <name>collision layers and masks</name>
-    <prompt>rather than just typing in the bits, make them toggleable buttons</prompt>
-    <requirements>change style for collision masks and layers</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>ui,physics,inspector</tags>
-    <notes>The Inspector Collision layer/mask rows are now a 2x8 grid of numbered toggle buttons (BS_AUTOCHECKBOX|BS_PUSHLIKE) per body instead of an edit field for the raw bit value. Clicking a button sets/clears that bit via Body::SetLayer/SetMask; bits 17-32 (not shown) are read live and preserved on every edit; re-selecting an object syncs the buttons to the stored value. New InspectorPanel::CollisionBits (16) controls how many are exposed. Also added WM_PRINTCLIENT support to the Inspector and a CaptureScreen() test helper (minimize/restore to grab foreground, BitBlt the desktop) so editor panels can be visually verified - PrintWindow does not render this app's GDI panels. Verified with a new --collision-bits suite (28/28 ctest) and an on-screen screenshot of the grid.</notes>
-    <filesChanged>src/InspectorPanel.h; src/InspectorPanel.cpp; tests/AssetTests.cpp; tests/WindowCapture.h; CMakeLists.txt; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-39">
-    <name>collapse behavior</name>
-    <prompt>on the right side of the behavior add a collapse button, make it styled like the new remove behavior button and when collapsed its just the name and the expand button</prompt>
-    <requirements>collapse button added</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>true</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-40">
-    <name>add script button</name>
-    <prompt>in inspector get rid of "add script" button, replace with a script menu in add behavior, it should say add script &gt; then when you mouse over it a sub menu appears with a list of all the scripts</prompt>
-    <requirements>add script button turned into submenu</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>ui,inspector,scripting</tags>
-    <notes>Removed the standalone "+ Add Script" button from the Inspector. "Add Behavior" now opens with an "Add Script" submenu listing every .zsh in the project (by stem, sorted, capped at 400) plus a "Browse..." item that keeps the old file dialog. Choosing a script attaches it to the selected object; the list is re-read on each open so it never goes stale. New EditorShell::ProjectScriptPaths() feeds the menu via InspectorPanel::SetScriptMenu; command ids use InspectorPanel::AddScriptSubFirst. --objects test updated to drive the submenu; full ctest 28/28.</notes>
-    <filesChanged>src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
-    <image></image>
   </task>
   <task id="ZE-57">
     <name>combine disparate windows into a single screen</name>
@@ -866,6 +978,153 @@ if a new camera is spawned in it takes over as the main camera. there is a "main
     <tags>camera,rendering,3d,view</tags>
     <notes></notes>
     <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-33">
+    <name>arrays should be visable and editable in the inspector</name>
+    <prompt>we should be able to see and set valuoes for arrays in inspector, even drag in references to a specific slot if needed depending on the types</prompt>
+    <requirements>make arrays display properly</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>true</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">make arrays visable</subtask>
+      <subtask done="false">add new elemtns to arrays in inspector</subtask>
+      <subtask done="false">remove elements</subtask>
+      <subtask done="false">pick type for new elements</subtask>
+      <subtask done="false">drag elements in</subtask>
+      <subtask done="false">drag elements in to empy array (add new slot)</subtask>
+      <subtask done="false">auto select type based on dragged in element</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-39">
+    <name>collapse behavior</name>
+    <prompt>on the right side of the behavior add a collapse button, make it styled like the new remove behavior button and when collapsed its just the name and the expand button</prompt>
+    <requirements>collapse button added</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>true</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-55">
+    <name>do a commit now for safety sake</name>
+    <prompt>do a commit now for safety sake</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>Committed and pushed the ZE-54 standalone-build fix (and the ZE-56 record) as part of working through the queue.</notes>
+    <filesChanged>src/runtime/GameSession.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-35">
+    <name>type references</name>
+    <prompt>if we dont have it already we need type reference systems. some managment system that can easily be expanded (1 line) with new system types as we make them. then to add lets say an audio player, we just make audio_player.cpp then pass the reference to the system, it will then hook up the auto-complete, reference passing, and any other connections needed</prompt>
+    <requirements>reference system built</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>big,systems,data,scripting</tags>
+    <notes>Built the "phone book": scripting/include/zscript/NativeTypes.h is now the single registry of native types (name, base, gameObject accessor field, component/physicsBody/scriptClass flags). Everything reads from it: the compiler's Canonical() alias resolver, NativeBehavior/NativeClass predicates, the built-in class prelude (gameObject accessor fields + physics-body class construction), the runtime component binding in Create()/BindNativeBehavior(), the read-only-accessor check, ScriptCompletion's type list + base chains + gameObject members + lowercase aliases, and ScriptHost's three former if/else chains (Reference, BindNative, PreviewReference) - now one NativeBindings() table on the engine side. Adding a new referenceable component (e.g. audio_player) = one row in NativeTypes.h + one row in ScriptHost::NativeBindings() + the C++ behavior class; autocomplete, canonical spelling, gameObject.&lt;accessor&gt;, drag-assignment and standalone-build binding all follow. Behaviour is byte-for-byte unchanged: full ctest 27/27 green, plus a new registry-driven check in ScriptTests that every registered type is a known class and every accessor resolves. Physics bodies keep their PhysicsBody base / owner wiring, keyed off the registry's physicsBody flag. Unblocks ZE-34.</notes>
+    <filesChanged>scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptCompletion.cpp; src/ScriptHost.cpp; tasks.xml</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-38">
+    <name>collision layers and masks</name>
+    <prompt>rather than just typing in the bits, make them toggleable buttons</prompt>
+    <requirements>change style for collision masks and layers</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>ui,physics,inspector</tags>
+    <notes>The Inspector Collision layer/mask rows are now a 2x8 grid of numbered toggle buttons (BS_AUTOCHECKBOX|BS_PUSHLIKE) per body instead of an edit field for the raw bit value. Clicking a button sets/clears that bit via Body::SetLayer/SetMask; bits 17-32 (not shown) are read live and preserved on every edit; re-selecting an object syncs the buttons to the stored value. New InspectorPanel::CollisionBits (16) controls how many are exposed. Also added WM_PRINTCLIENT support to the Inspector and a CaptureScreen() test helper (minimize/restore to grab foreground, BitBlt the desktop) so editor panels can be visually verified - PrintWindow does not render this app's GDI panels. Verified with a new --collision-bits suite (28/28 ctest) and an on-screen screenshot of the grid.</notes>
+    <filesChanged>src/InspectorPanel.h; src/InspectorPanel.cpp; tests/AssetTests.cpp; tests/WindowCapture.h; CMakeLists.txt; tasks.xml</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-40">
+    <name>add script button</name>
+    <prompt>in inspector get rid of "add script" button, replace with a script menu in add behavior, it should say add script &gt; then when you mouse over it a sub menu appears with a list of all the scripts</prompt>
+    <requirements>add script button turned into submenu</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>ui,inspector,scripting</tags>
+    <notes>Removed the standalone "+ Add Script" button from the Inspector. "Add Behavior" now opens with an "Add Script" submenu listing every .zsh in the project (by stem, sorted, capped at 400) plus a "Browse..." item that keeps the old file dialog. Choosing a script attaches it to the selected object; the list is re-read on each open so it never goes stale. New EditorShell::ProjectScriptPaths() feeds the menu via InspectorPanel::SetScriptMenu; command ids use InspectorPanel::AddScriptSubFirst. --objects test updated to drive the submenu; full ctest 28/28.</notes>
+    <filesChanged>src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-52">

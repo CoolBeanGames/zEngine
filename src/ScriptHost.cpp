@@ -210,6 +210,14 @@ bool ScriptHost::IsReferenceType(std::string_view type)
     return ReferenceTypeName(type);
 }
 
+bool ScriptHost::ObjectMatchesReferenceType(const GameObject& object, std::string_view type)
+{
+    if (type == "gameObject" || type == "Transform") return true;
+    if (type == "Behavior") return object.GetBehavior<physics::Body>() != nullptr || object.GetBehavior<physics::Collider>() != nullptr;
+    if (const auto* binding = FindBinding(type)) return binding->present(object);
+    return false;
+}
+
 script::ObjectRef ScriptHost::PreviewReference(Record& record, GameObjectId id, std::string_view type)
 {
     if (!objectStore_ || !record.preview) throw std::runtime_error("Script reference editing requires an active scene.");

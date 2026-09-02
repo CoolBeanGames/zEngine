@@ -103,6 +103,8 @@ add_executable(zEngine WIN32
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
+    src/ObjectPicker.cpp
+    src/ObjectPicker.h
     src/ProjectDialog.cpp
     src/Renderer.h
 )
@@ -191,7 +193,7 @@ if(BUILD_TESTING)
     add_executable(zEngineCoreTests tests/CoreTests.cpp)
     target_link_libraries(zEngineCoreTests PRIVATE zEngineCore)
     add_test(NAME GameObjectCore COMMAND zEngineCoreTests)
-    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ProjectDialog.cpp)
+    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ObjectPicker.cpp src/ProjectDialog.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineRenderer zEngineGameRuntime)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorInput.cpp)
@@ -211,6 +213,7 @@ if(BUILD_TESTING)
     add_test(NAME EditorDragDrop COMMAND zEngineAssetTests --editor)
     add_test(NAME GameObjectInspector COMMAND zEngineAssetTests --objects)
     add_test(NAME CollisionLayerButtons COMMAND zEngineAssetTests --collision-bits)
+    add_test(NAME ObjectPicker COMMAND zEngineAssetTests --picker)
     add_test(NAME MeshRendererBehavior COMMAND zEngineAssetTests --meshes)
     add_test(NAME ScriptEditorIntegration COMMAND zEngineAssetTests --scripts)
     add_test(NAME SceneEditorIntegration COMMAND zEngineAssetTests --scenes)

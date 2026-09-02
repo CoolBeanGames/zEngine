@@ -41,6 +41,10 @@ public:
     { scriptList_ = std::move(list); attachScript_ = std::move(attach); }
     void SetMeshHandler(std::function<void(MeshAction)> handler) { meshAction_ = std::move(handler); }
     void SetPrefabHandler(std::function<std::optional<std::string>(const std::string&)> handler) { choosePrefab_ = std::move(handler); }
+    // Click on a script object-reference field -> show the scene-object picker for that
+    // reference type. Returns the picked GameObjectId (0 clears, nullopt cancels).
+    void SetObjectPicker(std::function<std::optional<zengine::GameObjectId>(const std::string& referenceType, zengine::GameObjectId current, RECT anchorScreen)> handler)
+    { pickObject_ = std::move(handler); }
     bool AssignPrefabAt(POINT screenPoint,const std::string& asset);
     bool AssignObjectReferenceAt(POINT screenPoint, zengine::GameObjectId target);
     HWND Window() const noexcept { return window_; }
@@ -66,6 +70,7 @@ private:
         enum class Style { Normal, BehaviorHeader, ScriptLabel };
         zengine::Behavior* behavior = nullptr;
         std::string name;
+        std::string type;   // script field type, for reference fields ("RigidBody", "gameObject", ...)
         std::wstring label;
         Field field;
         bool priority = false;
@@ -112,6 +117,7 @@ private:
     HWND addBehaviorButton_ = nullptr, meshEnabled_ = nullptr, chooseMesh_ = nullptr, cubeMesh_ = nullptr, clearMesh_ = nullptr;
     std::function<void(MeshAction)> meshAction_;
     std::function<std::optional<std::string>(const std::string&)> choosePrefab_;
+    std::function<std::optional<zengine::GameObjectId>(const std::string&, zengine::GameObjectId, RECT)> pickObject_;
     bool updating_ = false;
     int scroll_ = 0;
     int wheelRemainder_ = 0;

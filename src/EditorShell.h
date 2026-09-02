@@ -19,6 +19,7 @@
 #include "Project.h"
 #include "Prefab.h"
 #include "input/InputMap.h"
+#include "ObjectPicker.h"
 #include <optional>
 #include <chrono>
 #include <mutex>
@@ -150,6 +151,8 @@ private:
     zengine::GameObjectId ScriptDropTarget(POINT point) const;
     void ChooseScript();
     std::vector<std::wstring> ProjectScriptPaths() const;
+    std::vector<ObjectPicker::Item> AssetPickerItems(std::vector<assetLibrary::Kind> kinds) const;
+    std::optional<zengine::GameObjectId> PickSceneObject(const std::string& referenceType, zengine::GameObjectId current, RECT anchorScreen) const;
     std::optional<std::string> ChoosePrefabReference(const std::string& current);
     zengine::GameObjectId SpawnPrefab(std::string_view asset);
     void ChooseModel();

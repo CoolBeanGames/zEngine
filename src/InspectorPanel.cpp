@@ -143,16 +143,17 @@ void InspectorPanel::RefreshBehaviors()
     const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable, BehaviorField::Style style=BehaviorField::Style::Normal,bool multiline=false,bool prefab=false,bool objectReference=false) {
         BehaviorField entry; entry.behavior=behavior; entry.name=std::move(name); entry.label=std::move(label); entry.priority=priority;
         entry.style=style;entry.multiline=multiline;entry.prefab=prefab;entry.objectReference=objectReference;
+        const bool asButton = prefab || objectReference;
         if (field)
         {
             const auto id=FirstBehaviorField+behaviorFields_.size();
-            entry.field.window=CreateWindowExW(0,prefab?L"BUTTON":L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|(prefab?BS_PUSHBUTTON:(multiline?(ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL):ES_AUTOHSCROLL)|((editable && editData_)?0:ES_READONLY)),
+            entry.field.window=CreateWindowExW(0,asButton?L"BUTTON":L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|(asButton?BS_PUSHBUTTON:(multiline?(ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL):ES_AUTOHSCROLL)|((editable && editData_)?0:ES_READONLY)),
                 0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
             if (!entry.field.window) throw std::runtime_error("Cannot create script field.");
             SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
-            if(!prefab)SendMessageW(entry.field.window,EM_SETLIMITTEXT,multiline?65536:4096,0);
+            if(!asButton)SendMessageW(entry.field.window,EM_SETLIMITTEXT,multiline?65536:4096,0);
             SetWindowSubclass(entry.field.window,EditProcedure,1,reinterpret_cast<DWORD_PTR>(this));
-            if(prefab)EnableWindow(entry.field.window,editable&&editData_);
+            if(asButton)EnableWindow(entry.field.window,editData_ && (prefab ? editable : true));
         }
         behaviorFields_.push_back(std::move(entry));
         if (style == BehaviorField::Style::BehaviorHeader)
@@ -222,6 +223,7 @@ void InspectorPanel::RefreshBehaviors()
                 }
                 add(&behavior,field.name,field.name.empty()?Wide(field.label):Wide(field.name+" ("+field.type+")"),false,!field.name.empty(),field.editable,
                     field.name.empty()?BehaviorField::Style::ScriptLabel:BehaviorField::Style::Normal,field.multiline,field.type=="prefab",field.reference);
+                if(!field.name.empty()) behaviorFields_.back().type=field.type;
             }
         }
     }
@@ -231,7 +233,9 @@ void InspectorPanel::RefreshBehaviors()
         auto control=behaviorFields_[i].field.window; if (!control) continue;
         const auto value=BehaviorValue(i);
         if(behaviorFields_[i].combo)SendMessageW(control,CB_SETCURSEL,dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)?static_cast<int>(dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)->Shape()):0,0);
-        else SetWindowTextW(control,(behaviorFields_[i].prefab&&value.empty())?L"Choose prefab...":value.c_str()); behaviorFields_[i].field.focusText=value;
+        else if(behaviorFields_[i].objectReference) SetWindowTextW(control,(value.empty()||value==L"None")?L"None — click to pick":value.c_str());
+        else SetWindowTextW(control,(behaviorFields_[i].prefab&&value.empty())?L"Choose prefab...":value.c_str());
+        behaviorFields_[i].field.focusText=value;
     }
     updating_=false;
     EnableWindow(addBehaviorButton_, object_ != nullptr && editData_);
@@ -687,6 +691,22 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             if(!updating_ && HIWORD(w)==BN_CLICKED && entry.prefab && choosePrefab_)
             {
                 if(const auto asset=choosePrefab_(Utf8(BehaviorValue(dynamicIndex)));asset){scriptHost_->SetField(*dynamic_cast<zengine::ScriptBehavior*>(entry.behavior),entry.name,*asset);SetWindowTextW(entry.field.window,Wide(*asset).c_str());entry.field.valid=true;if(changed_)changed_();}
+                return 0;
+            }
+            if(!updating_ && HIWORD(w)==BN_CLICKED && entry.objectReference && pickObject_ && scriptHost_ && editData_)
+            {
+                auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior);
+                if(script)
+                {
+                    zengine::GameObjectId current=0;
+                    if(const auto refs=scriptHost_->AuthoredReferences(*script); refs.count(entry.name)) current=refs.at(entry.name);
+                    RECT anchor{}; GetWindowRect(entry.field.window,&anchor);
+                    if(const auto picked=pickObject_(entry.type,current,anchor))
+                    {
+                        try { scriptHost_->SetObjectReference(*script,entry.name,*picked); entry.field.valid=true; RefreshBehaviors(); if(changed_)changed_(); }
+                        catch(const std::exception&) { entry.field.valid=false; InvalidateRect(entry.field.window,nullptr,FALSE); }
+                    }
+                }
                 return 0;
             }
             if (!updating_ && HIWORD(w)==EN_CHANGE) ChangeBehaviorField(dynamicIndex);

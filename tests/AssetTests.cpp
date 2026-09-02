@@ -782,6 +782,118 @@ void HierarchyTests(bool capture) {
 void GizmoTests(bool capture);
 void PrefabTests();
 void ProjectStartupTests(const std::string& mode,bool capture);
+
+// Drives the ObjectPicker modal from a timer inside its own message loop. The handler
+// must not throw: it runs from a Win32 timer callback nested in the modal message pump.
+struct PickerDriver
+{
+    static inline PickerDriver* active=nullptr;
+    std::function<void(HWND)> onDialog;
+    int listCountSeen=-1; bool handled=false; UINT_PTR timer=0;
+    explicit PickerDriver(std::function<void(HWND)> handler):onDialog(std::move(handler))
+    {
+        MSG quit{}; while (PeekMessageW(&quit,nullptr,WM_QUIT,WM_QUIT,PM_REMOVE)) {}
+        active=this;
+        timer=SetTimer(nullptr,0,15,[](HWND,UINT,UINT_PTR,DWORD){
+            if(!active || active->handled) return;
+            EnumThreadWindows(GetCurrentThreadId(),[](HWND dialog,LPARAM)->BOOL{
+                wchar_t type[32]{}; GetClassNameW(dialog,type,32);
+                if(std::wstring(type)==L"#32770" && GetDlgItem(dialog,ObjectPicker::ResultList) && IsWindowVisible(dialog))
+                {
+                    active->handled=true;
+                    active->onDialog(dialog);
+                    active->listCountSeen=static_cast<int>(SendMessageW(GetDlgItem(dialog,ObjectPicker::ResultList),LB_GETCOUNT,0,0));
+                    return FALSE;
+                }
+                return TRUE;
+            },0);
+        });
+        Require(timer!=0,"Cannot automate the picker modal");
+    }
+    ~PickerDriver(){ KillTimer(nullptr,timer); active=nullptr; }
+};
+void ObjectPickerTests(bool capture)
+{
+    Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    const auto request=[]{
+        ObjectPicker::Request r; r.title=L"Pick a thing"; r.allowClear=true;
+        r.items={
+            {L"Player",L"Scripts/Player.zsh",L"Script",L"Scripts/Player.zsh",assetLibrary::Kind::Script},
+            {L"Enemy", L"Scripts/Enemy.zsh", L"Script",L"Scripts/Enemy.zsh", assetLibrary::Kind::Script},
+            {L"Bullet",L"Bullet.zprefab",    L"Prefab",L"Bullet.zprefab",    assetLibrary::Kind::Prefab},
+        };
+        return r;
+    };
+    const auto filterSearch=[](HWND dlg,const wchar_t* text){
+        SetDlgItemTextW(dlg,ObjectPicker::SearchField,text);
+        SendMessageW(dlg,WM_COMMAND,MAKEWPARAM(ObjectPicker::SearchField,EN_CHANGE),reinterpret_cast<LPARAM>(GetDlgItem(dlg,ObjectPicker::SearchField)));
+    };
+    const auto pickRow=[](HWND dlg,int row){
+        HWND list=GetDlgItem(dlg,ObjectPicker::ResultList);
+        SendMessageW(list,LB_SETCURSEL,row,0);
+        SendMessageW(dlg,WM_COMMAND,MAKEWPARAM(ObjectPicker::OkButton,BN_CLICKED),0);
+    };
+
+    // Window picker: live search narrows the list, then Select returns that item.
+    {
+        PickerDriver driver([&](HWND dlg){ filterSearch(dlg,L"enem"); pickRow(dlg,0); });
+        const auto choice=ObjectPicker::Window(GetDesktopWindow(),request());
+        Require(driver.listCountSeen==1,"Search did not narrow the picker to one row");
+        Require(choice.picked && choice.value==L"Scripts/Enemy.zsh","Window picker search+select failed");
+    }
+    // Type-filter chip hides a whole group (turning off "Script" leaves only the Prefab).
+    {
+        PickerDriver driver([&](HWND dlg){
+            HWND chip=GetDlgItem(dlg,ObjectPicker::FirstFilterChip); // groups in first-seen order: Script, then Prefab
+            SendMessageW(chip,BM_SETCHECK,BST_UNCHECKED,0);
+            SendMessageW(dlg,WM_COMMAND,MAKEWPARAM(ObjectPicker::FirstFilterChip,BN_CLICKED),reinterpret_cast<LPARAM>(chip));
+            if(capture){ SetForegroundWindow(dlg); Sleep(60); CaptureScreenRect(dlg,L"object-picker-qa.bmp"); }
+            pickRow(dlg,0);
+        });
+        const auto choice=ObjectPicker::Window(GetDesktopWindow(),request());
+        Require(driver.listCountSeen==1,"Filter chip did not hide the Script group");
+        Require(choice.picked && choice.value==L"Bullet.zprefab","Picker chip filter/select failed");
+    }
+    // Clear and Cancel results.
+    {
+        PickerDriver driver([&](HWND dlg){ SendMessageW(dlg,WM_COMMAND,MAKEWPARAM(ObjectPicker::ClearButton,BN_CLICKED),0); });
+        const auto choice=ObjectPicker::Window(GetDesktopWindow(),request());
+        Require(choice.cleared && !choice.picked,"Picker Clear did not report a cleared choice");
+    }
+    {
+        PickerDriver driver([&](HWND dlg){ SendMessageW(dlg,WM_COMMAND,MAKEWPARAM(IDCANCEL,0),0); });
+        const auto choice=ObjectPicker::Window(GetDesktopWindow(),request());
+        Require(!choice.cleared && !choice.picked,"Picker Cancel returned a value");
+    }
+    // Dropdown shape: frameless, still a #32770 with the same controls.
+    {
+        PickerDriver driver([&](HWND dlg){ pickRow(dlg,2); });
+        const auto choice=ObjectPicker::Dropdown(GetDesktopWindow(),RECT{100,100,320,124},request());
+        Require(choice.picked && choice.value==L"Bullet.zprefab","Dropdown picker select failed");
+    }
+    // Test responder path: the editor's Add Script -> Browse opens the picker; a responder attaches.
+    {
+        TestDirectory test;
+        ObjectPicker::SetTestResponder([](const ObjectPicker::Request& r)->ObjectPicker::Choice {
+            for(const auto& item:r.items) if(item.group==L"Script") return ObjectPicker::Choice::Pick(item.value);
+            return ObjectPicker::Choice::Cancel();
+        });
+        {
+            EditorShell editor(GetModuleHandleW(nullptr));
+            const HWND window=editor.Create(SW_HIDE,test.path/"Project");
+            editor.InitializeRenderer();
+            const auto script=editor.CreateScriptAsset(); (void)script;
+            auto& object=editor.CreateEmptyGameObject();
+            const HWND inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
+            SendMessageW(inspector,WM_COMMAND,MAKEWPARAM(InspectorPanel::AddScriptCommand,0),0); // the "Browse..." item
+            Require(object.BehaviorCount()==1 && dynamic_cast<const zengine::ScriptBehavior*>(&object.BehaviorAt(0))!=nullptr,
+                    "Add Script > Browse did not route through the object picker responder");
+        }
+        ObjectPicker::SetTestResponder(nullptr);
+    }
+    CoUninitialize();
+    std::cout<<"PASS: object picker window/dropdown, live search, type-filter chips, clear/cancel, editor integration\n";
+}
 void CollisionBitsTests(bool capture)
 {
     Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM initialization failed");
@@ -855,6 +967,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--collision-bits") CollisionBitsTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--picker") ObjectPickerTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scripts") ScriptIntegrationEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scenes") SceneEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
