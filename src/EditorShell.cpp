@@ -382,8 +382,9 @@ bool EditorShell::Play()
     auto authored=zengine::scenes::Capture(objects_,scriptHost_);playObjects_.clear();for(std::size_t i=0;i<objects_.Size();++i)playObjects_.insert(objects_.At(i).Id());
     physicsWorld_=std::make_unique<zengine::physics::World>();try{physicsWorld_->Build(objects_);}catch(const std::exception& e){physicsWorld_.reset();status_=L"Physics: "+WideText(e.what());InvalidateRect(window_,nullptr,FALSE);return false;}
     scriptHost_.SetPrefabSpawner([this](std::string_view asset){return SpawnPrefab(asset);});
-    consoleWindow_=CreateWindowExW(WS_EX_TOOLWINDOW,L"EDIT",L"zEngine Console",WS_OVERLAPPEDWINDOW|ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL,120,120,560,260,window_,nullptr,instance_,nullptr);
-    if(consoleWindow_){SendMessageW(consoleWindow_,WM_SETFONT,reinterpret_cast<WPARAM>(uiFont_),TRUE);ShowWindow(consoleWindow_,SW_SHOWNOACTIVATE);}
+    // The console docks into the bottom of the Game tab, not a separate window.
+    consoleWindow_=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_CHILD|ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL,0,0,1,1,window_,nullptr,instance_,nullptr);
+    if(consoleWindow_)SendMessageW(consoleWindow_,WM_SETFONT,reinterpret_cast<WPARAM>(uiFont_),TRUE);
     if (!scriptHost_.Play(objects_,physicsWorld_.get())) { if(consoleWindow_){DestroyWindow(consoleWindow_);consoleWindow_=nullptr;} physicsWorld_.reset();ReportScriptErrors(); return false; }
     playScene_=std::move(authored);
     paused_=false; stepDraw_=false; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
@@ -524,6 +525,23 @@ void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
     viewportPanel_ = RECT{sceneSplitter_.right, workspaceTop, inspectorSplitter_.left, upperBottom};
     viewportContent_ = viewportPanel_;
     viewportContent_.top = std::min(viewportContent_.bottom, viewportContent_.top + PanelHeaderHeight);
+
+    // A running game docks its console into the bottom of the Game tab.
+    const bool showConsole = consoleWindow_ && viewTab_ == ViewTab::Game && Playing();
+    RECT consoleRect{};
+    if (showConsole)
+    {
+        const int consoleHeight = std::clamp<int>((viewportContent_.bottom - viewportContent_.top) / 3, 60, 220);
+        consoleRect = RECT{viewportContent_.left, viewportContent_.bottom - consoleHeight, viewportContent_.right, viewportContent_.bottom};
+        viewportContent_.bottom = std::max(viewportContent_.top, consoleRect.top - 2);
+    }
+    if (consoleWindow_)
+    {
+        ShowWindow(consoleWindow_, showConsole ? SW_SHOW : SW_HIDE);
+        if (showConsole)
+            SetWindowPos(consoleWindow_, HWND_TOP, consoleRect.left, consoleRect.top,
+                         consoleRect.right - consoleRect.left, consoleRect.bottom - consoleRect.top, SWP_NOACTIVATE);
+    }
 
     const int viewportWidth = std::max<LONG>(0, viewportContent_.right - viewportContent_.left);
     const int viewportHeight = std::max<LONG>(0, viewportContent_.bottom - viewportContent_.top);
@@ -1525,6 +1543,9 @@ LRESULT EditorShell::HandleMessage(
         return 0;
     case WM_CTLCOLORLISTBOX:
         return editorStyle::ControlColor(message, wParam);
+    case WM_CTLCOLORSTATIC:
+        if (consoleWindow_ && reinterpret_cast<HWND>(lParam) == consoleWindow_) return editorStyle::ControlColor(WM_CTLCOLORLISTBOX, wParam);
+        break;
     case WM_COMMAND:
         if(LOWORD(wParam)>=AddEmptyCommand&&LOWORD(wParam)<=AddAreaObjectCommand){CreateGameObject(static_cast<ObjectPreset>(LOWORD(wParam)-AddEmptyCommand),selectedObject_);return 0;}
         if(LOWORD(wParam)==CopyObjectCommand){if(selectedObject_)CopyGameObject(selectedObject_);return 0;}
