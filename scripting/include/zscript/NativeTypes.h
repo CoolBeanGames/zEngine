@@ -26,7 +26,9 @@ struct NativeType {
 inline const std::vector<NativeType>& NativeTypes() {
     static const std::vector<NativeType> types = {
         {"gameObject",     "",            "",               false, false, true },
+        {"gameObject2D",   "",            "",               false, false, true },
         {"Transform",      "",            "transform",      false, false, true },
+        {"Transform2D",    "",            "",               false, false, true },
         {"Behavior",       "gameObject",  "",               false, false, true },
         {"PhysicsBody",    "Behavior",    "physics",        false, false, true },
         {"RigidBody",      "PhysicsBody", "rigidbody",      true,  true,  true },

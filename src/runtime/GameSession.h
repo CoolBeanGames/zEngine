@@ -19,7 +19,7 @@ public:
 private:
     void CheckErrors() const;
     GameObjectId SpawnPrefab(std::string_view asset);
-    void PrepareObject(GameObject& object);
+    void PrepareObject(ObjectCore& object);
     scenes::Instance scene_;
     input::System input_;
     std::map<GameObjectId,std::filesystem::path> models_;

@@ -39,7 +39,7 @@ void PrefabTests()
     auto expanded=p::ResolveScene(assets,scene);
     Check(expanded.scene.objects.size()==4 && expanded.generated.size()==2,"Nested expansion count/ownership wrong");
     auto runtime=s::Instantiate(expanded.scene);
-    const auto& child=runtime.objects.At(1); const auto matrix=TransformMatrix(child.GetTransform())*ParentMatrix(runtime.objects,child);
+    const auto& child=runtime.objects.At(1); const auto matrix=TransformMatrix(zengine::As3D(child).GetTransform())*ParentMatrix(runtime.objects,child);
     Check(std::abs(DirectX::XMVectorGetX(matrix.r[3])-7)<.001f,"Nested transform did not follow parent");
     auto before=s::Load(innerFile); inner.objects[0].name="Updated Inner"; p::Save(assets,innerFile,inner,&before);
     expanded=p::ResolveScene(assets,scene);
@@ -92,8 +92,8 @@ void PrefabTests()
         Check(editor.AttachScript(rootId,script),"Attach prefab script"); Check(editor.SavePrefab(),"Save prefab data");
         Check(editor.ClosePrefab() && editor.GameObjects().Size()==2,"Return to scene failed");
         Check(editor.GameObjects().At(0).Name()=="Shared Cube" && editor.GameObjects().At(1).Name()=="Customized Cube","Prefab source overwrote a per-instance name override");
-        Check(editor.GameObjects().Find(instance2)->GetTransform().Position().x==9,"Prefab update overwrote instance placement");
-        Check(editor.GameObjects().At(0).GetTransform().Scale().x==3 && editor.GameObjects().Find(instance2)->GetTransform().Scale().x==3,"Moved instance did not inherit prefab scale");
+        Check(zengine::As3D(editor.GameObjects().Find(instance2))->GetTransform().Position().x==9,"Prefab update overwrote instance placement");
+        Check(zengine::As3D(editor.GameObjects().At(0)).GetTransform().Scale().x==3 && zengine::As3D(editor.GameObjects().Find(instance2))->GetTransform().Scale().x==3,"Moved instance did not inherit prefab scale");
         Check(editor.Play(),"Linked prefab scripts cannot play"); editor.Step(); editor.Stop();
         Check(editor.SaveScene(),"Save updated scene"); Check(editor.NewScene(),"Create another scene"); secondScene=editor.ScenePath();
         auto& plain=editor.CreateEmptyGameObject(); plain.SetName("Outer prefab"); const auto outerId=plain.Id(); nestedPrefab=editor.CreatePrefab(outerId);

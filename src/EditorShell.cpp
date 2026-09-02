@@ -403,7 +403,7 @@ void EditorShell::Stop()
     for(const auto id:spawned)if(auto* object=objects_.Find(id))for(std::size_t i=0;i<object->BehaviorCount();++i)if(auto* script=dynamic_cast<zengine::ScriptBehavior*>(&object->BehaviorAt(i)))scriptHost_.Forget(*script);
     if(!spawned.empty()){objects_.Remove(spawned);for(const auto id:spawned){meshBindings_.erase(id);meshRevisions_.erase(id);}if(spawned.contains(selectedObject_)){selectedObject_=0;inspectorPanel_->Bind(nullptr);}}
     if(playScene_)for(const auto& saved:playScene_->objects)if(auto* object=objects_.Find(saved.id)){
-        object->SetName(saved.name);object->SetTags(saved.tags);object->GetTransform()=saved.transform;
+        object->SetName(saved.name);object->SetTags(saved.tags);if(auto* g=zengine::As3D(object))g->GetTransform()=saved.transform;
         for(std::size_t i=0;i<saved.behaviors.size()&&i<object->BehaviorCount();++i)RestoreBehaviorState(object->BehaviorAt(i),saved.behaviors[i]);
     }
     playScene_.reset();playObjects_.clear();
@@ -450,7 +450,8 @@ ViewportFrame EditorShell::BuildSceneFrame() const
     frame.tool=transformTool_; frame.highlightedAxis=hoveredAxis_;
     for (std::size_t i = 0; i < objects_.Size(); ++i)
     {
-        const auto& object = objects_.At(i);
+        const auto* object3d = zengine::As3D(&objects_.At(i)); if (!object3d) continue; // 2D objects draw in the 2D pass (ZE-60)
+        const auto& object = *object3d;
         const auto* mesh = object.GetBehavior<zengine::MeshRenderer>();
         if(!Playing())if(const auto* collider=object.GetBehavior<zengine::physics::Collider>();collider&&collider->Enabled()){DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));frame.colliders.push_back({collider->Shape(),object.GetTransform(),collider->Offset(),collider->Size(),parent,object.Id()==selectedObject_});}
         if(const auto* camera=object.GetBehavior<zengine::Camera>())
@@ -789,7 +790,7 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
     const int index=static_cast<int>(found-rows.begin());
     firstObject_=std::clamp(firstObject_,0,std::max(0,static_cast<int>(rows.size())-visible));
     if(index<firstObject_)firstObject_=index;else if(index>=firstObject_+visible)firstObject_=index-visible+1;
-    if (inspectorPanel_) inspectorPanel_->Bind(object,CanEdit(id),CanEdit(id,true));
+    if (inspectorPanel_) inspectorPanel_->Bind(zengine::As3D(object),CanEdit(id),CanEdit(id,true));
     selectedObject_ = id;
     if (prefabLinks_.contains(id)) status_=L"Prefab instance root: edits are saved as instance overrides; double-click the asset to edit every non-overridden instance";
     else if (prefabSources_.contains(id)) status_=L"Nested prefab content is inherited; edit its prefab asset to change it";
@@ -1148,7 +1149,7 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     ++sceneGeneration_;
     std::erase_if(assetJobs_,[](const AssetJob& job) { return job.loadMesh; });
     meshBindings_.clear(); meshRevisions_.clear();
-    prefabLinks_.clear(); for (const auto& object:authored.objects) if (!object.prefab.empty()) {prefabLinks_[object.id]=object;prefabLinks_[object.id].transform=next.objects.Find(object.id)->GetTransform();}
+    prefabLinks_.clear(); for (const auto& object:authored.objects) if (!object.prefab.empty()) {prefabLinks_[object.id]=object;if(auto* g=zengine::As3D(next.objects.Find(object.id)))prefabLinks_[object.id].transform=g->GetTransform();}
     prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects); scriptHost_.SetObjectStore(&objects_); ConfigureScriptOutput();
     scenePath_=file; sceneSource_=std::move(source); firstObject_=0; selectedObject_=0;

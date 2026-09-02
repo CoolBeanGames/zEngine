@@ -63,27 +63,28 @@ Vec3 Degrees(JPH::QuatArg q) { auto v=q.GetEulerAngles(); return {v.GetX()*180/P
 Vec3 Mul(Vec3 a,Vec3 b) { return {a.x*b.x,a.y*b.y,a.z*b.z}; }
 
 struct Pose { JPH::RVec3 position; JPH::Quat rotation; Vec3 scale{1,1,1}; };
-Pose GlobalPose(const ObjectStore& objects,const GameObject& object,unsigned depth=0) {
+Pose GlobalPose(const ObjectStore& objects,const ObjectCore& core,unsigned depth=0) {
     if(depth>64)throw std::runtime_error("Physics hierarchy exceeds 64 levels.");
-    const auto& t=object.GetTransform();Pose local{JPH::RVec3(JV(t.Position())),Q(t.Rotation()),t.Scale()};
-    if(!object.Parent())return local;
-    const auto* parent=objects.Find(object.Parent());if(!parent)throw std::runtime_error("Physics object has a missing parent.");
+    const auto& t=As3D(core).GetTransform();Pose local{JPH::RVec3(JV(t.Position())),Q(t.Rotation()),t.Scale()};
+    if(!core.Parent())return local;
+    const auto* parent=objects.Find(core.Parent());if(!parent)throw std::runtime_error("Physics object has a missing parent.");
     const auto p=GlobalPose(objects,*parent,depth+1);
     local.position=p.position+p.rotation*JV(Mul(t.Position(),p.scale));
     local.rotation=p.rotation*local.rotation;local.scale=Mul(p.scale,local.scale);return local;
 }
-void SetFromGlobal(const ObjectStore& objects,GameObject& object,JPH::RVec3Arg position,JPH::QuatArg rotation) {
-    if(!object.Parent()){object.GetTransform().SetPosition(ZV(JPH::Vec3(position)));object.GetTransform().SetRotation(Degrees(rotation));return;}
-    const auto* parent=objects.Find(object.Parent());if(!parent)return;const auto p=GlobalPose(objects,*parent);
+void SetFromGlobal(const ObjectStore& objects,ObjectCore& core,JPH::RVec3Arg position,JPH::QuatArg rotation) {
+    auto& transform=As3D(core).GetTransform();
+    if(!core.Parent()){transform.SetPosition(ZV(JPH::Vec3(position)));transform.SetRotation(Degrees(rotation));return;}
+    const auto* parent=objects.Find(core.Parent());if(!parent)return;const auto p=GlobalPose(objects,*parent);
     auto relative=p.rotation.Conjugated()*(position-p.position);Vec3 local=ZV(JPH::Vec3(relative));
     if(std::abs(p.scale.x)>1e-6f)local.x/=p.scale.x;if(std::abs(p.scale.y)>1e-6f)local.y/=p.scale.y;if(std::abs(p.scale.z)>1e-6f)local.z/=p.scale.z;
-    object.GetTransform().SetPosition(local);object.GetTransform().SetRotation(Degrees(p.rotation.Conjugated()*rotation));
+    transform.SetPosition(local);transform.SetRotation(Degrees(p.rotation.Conjugated()*rotation));
 }
-const Body* NativeBody(const GameObject& object) {
+const Body* NativeBody(const ObjectCore& object) {
     if(auto* p=object.GetBehavior<RigidBody>())return p;if(auto* p=object.GetBehavior<KinematicBody>())return p;
     if(auto* p=object.GetBehavior<StaticBody>())return p;return object.GetBehavior<Area>();
 }
-Body* NativeBody(GameObject& object) { return const_cast<Body*>(NativeBody(std::as_const(object))); }
+Body* NativeBody(ObjectCore& object) { return const_cast<Body*>(NativeBody(std::as_const(object))); }
 std::pair<GameObjectId,GameObjectId> Pair(GameObjectId a,GameObjectId b){return a<b?std::pair{a,b}:std::pair{b,a};}
 }
 

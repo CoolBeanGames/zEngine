@@ -34,7 +34,7 @@ int main()
         auto copy=scenes::Instantiate(decoded);
         Check(scenes::Encode(scenes::Capture(copy.objects,copy.scripts))==encoded,"Scene round trip changed authored data");
         auto* restored=copy.objects.Find(42); Check(restored && restored->Name()==object.Name() && restored->Tags()==object.Tags(),"Object identity/name/tags lost");
-        Check(restored->GetTransform().Scale().y==0 && restored->GetTransform().Scale().z==-1,"Zero/negative scale lost");
+        Check(As3D(restored)->GetTransform().Scale().y==0 && As3D(restored)->GetTransform().Scale().z==-1,"Zero/negative scale lost");
         auto* script=restored->GetBehavior<ScriptBehavior>();
         Check(script && !script->Enabled() && script->Priority()==3.5f,"Script flags/priority lost");
         Check(copy.scripts.Prepare(*script,code,"Mover"),"Restored script compile failed");
@@ -52,7 +52,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 8\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 9\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});
@@ -113,6 +113,22 @@ int main()
             const auto spawnedRefs=liveHost.AuthoredReferences(*spawnedScript);
             Check(spawnedRefs.count("rb")==1 && spawnedRefs.at("rb")==spawnedRoot && spawnedRefs.at("rb")!=10,
                   "Prefab self-reference was not remapped to the live object ID");
+        }
+        // ZE-73: scene v8 serializes GameObject2D (transform2d) alongside 3D objects in one store.
+        {
+            ObjectStore flatStore; ScriptHost flatHost;
+            auto& sprite=flatStore.Restore2D(7,"Sprite"); sprite.SetTags({"hud"});
+            sprite.GetTransform().SetPosition({64,-32}); sprite.GetTransform().SetRotation(45); sprite.GetTransform().SetScale({2,3});
+            auto& solid=flatStore.Create("Solid"); solid.GetTransform().SetPosition({0,1,0});
+            const auto flatEncoded=scenes::Encode(scenes::Capture(flatStore,flatHost));
+            Check(flatEncoded.find("transform2d ")!=std::string::npos,"GameObject2D transform2d was not serialized");
+            auto flatCopy=scenes::Instantiate(scenes::Decode(flatEncoded));
+            Check(scenes::Encode(scenes::Capture(flatCopy.objects,flatCopy.scripts))==flatEncoded,"2D scene round trip changed authored data");
+            auto* flatRestored=flatCopy.objects.Find(7);
+            Check(flatRestored && flatRestored->Is2D() && flatRestored->HasTag("hud"),"GameObject2D identity lost");
+            const auto& t2d=As2D(flatRestored)->GetTransform();
+            Check(t2d.Position()==Vec2{64,-32} && t2d.Rotation()==45 && t2d.Scale()==Vec2{2,3},"Transform2D values lost on restore");
+            Check(As3D(flatCopy.objects.Find(solid.Id()))->GetTransform().Position().y==1,"3D object corrupted by 2D sibling");
         }
         Reject([&]{objects.Restore(42,"Duplicate");});
         Reject([&]{objects.Restore(std::numeric_limits<GameObjectId>::max(),"Overflow");});

@@ -30,6 +30,8 @@ namespace zengine::scenes
         std::string name;
         std::vector<std::string> tags;
         Transform transform;
+        bool is2D=false;
+        Transform2D transform2d; // used when is2D
         std::vector<BehaviorData> behaviors;
         GameObjectId parent=0;
         std::string prefab;

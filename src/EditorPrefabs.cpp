@@ -37,7 +37,7 @@ void EditorShell::RequireEditable(zengine::GameObjectId id,bool transformOnly) c
 }
 void EditorShell::RecordTransformOverride(zengine::GameObjectId id)
 {
-    if (auto it=prefabLinks_.find(id);it!=prefabLinks_.end()) if(const auto* object=objects_.Find(id)) {
+    if (auto it=prefabLinks_.find(id);it!=prefabLinks_.end()) if(const auto* object=zengine::As3D(objects_.Find(id))) {
         it->second.transformMask|=TransformDifference(it->second.transform,object->GetTransform());
         it->second.transformOverride=it->second.transformMask!=0;
         it->second.transform=object->GetTransform();

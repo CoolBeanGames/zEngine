@@ -43,7 +43,7 @@ namespace zengine
         void SetArrayElementReference(ScriptBehavior&, const std::string& field, std::size_t index, GameObjectId target);
         // True when the object could be assigned to a script reference field of this type
         // (e.g. type "RigidBody" needs a RigidBody behavior; "gameObject"/"Transform" match any).
-        static bool ObjectMatchesReferenceType(const GameObject&, std::string_view type);
+        static bool ObjectMatchesReferenceType(const ObjectCore&, std::string_view type);
         std::string Error(const ScriptBehavior&) const;
         std::map<std::string,script::Value> AuthoredValues(const ScriptBehavior&) const;
         std::map<std::string,GameObjectId> AuthoredReferences(const ScriptBehavior&) const;

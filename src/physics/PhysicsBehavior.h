@@ -9,7 +9,7 @@ enum class ColliderShape { Box, Sphere, Capsule };
 
 class Collider final : public Behavior {
 public:
-    explicit Collider(GameObject& owner) : Behavior(owner) {}
+    explicit Collider(ObjectCore& owner) : Behavior(owner) {}
     ColliderShape Shape() const noexcept { return shape_; }
     const Vec3& Offset() const noexcept { return offset_; }
     const Vec3& Size() const noexcept { return size_; }
@@ -33,7 +33,7 @@ public:
     void SetFriction(float value);
     void SetBounciness(float value);
 protected:
-    explicit Body(GameObject& owner) : Behavior(owner) {}
+    explicit Body(ObjectCore& owner) : Behavior(owner) {}
 private:
     std::uint32_t layer_ = 1;
     std::uint32_t mask_ = 0xffffffffu;
@@ -52,7 +52,7 @@ public:
     void SetConstantForce(Vec3 value);
     void SetConstantTorque(Vec3 value);
 protected:
-    explicit MovingBody(GameObject& owner) : Body(owner) {}
+    explicit MovingBody(ObjectCore& owner) : Body(owner) {}
 private:
     Vec3 velocity_{};
     Vec3 angularVelocity_{}; // radians per second
@@ -62,7 +62,7 @@ private:
 
 class RigidBody final : public MovingBody {
 public:
-    explicit RigidBody(GameObject& owner) : MovingBody(owner) {}
+    explicit RigidBody(ObjectCore& owner) : MovingBody(owner) {}
     float Mass() const noexcept { return mass_; }
     float GravityScale() const noexcept { return gravityScale_; }
     void SetMass(float value);
@@ -74,17 +74,17 @@ private:
 
 class KinematicBody final : public MovingBody {
 public:
-    explicit KinematicBody(GameObject& owner) : MovingBody(owner) {}
+    explicit KinematicBody(ObjectCore& owner) : MovingBody(owner) {}
 };
 
 class StaticBody final : public Body {
 public:
-    explicit StaticBody(GameObject& owner) : Body(owner) {}
+    explicit StaticBody(ObjectCore& owner) : Body(owner) {}
 };
 
 class Area final : public Body {
 public:
-    explicit Area(GameObject& owner) : Body(owner) {}
+    explicit Area(ObjectCore& owner) : Body(owner) {}
 };
 
 } // namespace zengine::physics

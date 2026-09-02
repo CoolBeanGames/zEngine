@@ -25,6 +25,11 @@ void zengine::Transform::SetPosition(Vec3 value) { Validate(value); position_ = 
 void zengine::Transform::SetRotation(Vec3 value) { Validate(value); rotation_ = value; }
 void zengine::Transform::SetScale(Vec3 value) { Validate(value); scale_ = value; }
 
+namespace { void Validate2(zengine::Vec2 v) { if (!std::isfinite(v.x) || !std::isfinite(v.y)) throw std::invalid_argument("Transform values must be finite."); } }
+void zengine::Transform2D::SetPosition(Vec2 value) { Validate2(value); position_ = value; }
+void zengine::Transform2D::SetRotation(float degrees) { if (!std::isfinite(degrees)) throw std::invalid_argument("Transform values must be finite."); rotation_ = degrees; }
+void zengine::Transform2D::SetScale(Vec2 value) { Validate2(value); scale_ = value; }
+
 void zengine::Behavior::SetPriority(float value)
 {
     if (!std::isfinite(value)) throw std::invalid_argument("Behavior priority must be finite.");
@@ -70,18 +75,18 @@ void zengine::Behavior::Draw()
     catch (...) { error_ = "Unknown behavior draw failure."; }
 }
 
-zengine::GameObject::GameObject(ObjectStore& store,GameObjectId id, std::string name) : store_(&store),id_(id) { SetName(std::move(name)); }
-void zengine::GameObject::EnsureCollider()
+zengine::ObjectCore::ObjectCore(ObjectStore& store,GameObjectId id, std::string name, bool is2D) : store_(&store),id_(id),is2D_(is2D) { SetName(std::move(name)); }
+void zengine::ObjectCore::EnsureCollider()
 {
     if (!GetBehavior<physics::Collider>()) AddBehavior<physics::Collider>();
 }
-bool zengine::GameObject::RemoveBehavior(Behavior& behavior)
+bool zengine::ObjectCore::RemoveBehavior(Behavior& behavior)
 {
     const auto found=std::find_if(behaviors_.begin(),behaviors_.end(),[&](const auto& candidate){return candidate.get()==&behavior;});
     if(found==behaviors_.end())return false;
     behaviors_.erase(found); return true;
 }
-void zengine::GameObject::SetParent(GameObjectId parent){store_->SetParents({{id_,parent}});}
+void zengine::ObjectCore::SetParent(GameObjectId parent){store_->SetParents({{id_,parent}});}
 zengine::ObjectStore::ObjectStore(ObjectStore&& other) noexcept {*this=std::move(other);}
 zengine::ObjectStore& zengine::ObjectStore::operator=(ObjectStore&& other) noexcept {
     if(this!=&other){objects_=std::move(other.objects_);index_=std::move(other.index_);nextId_=other.nextId_;other.nextId_=1;for(auto& object:objects_)object->store_=this;}return *this;
@@ -99,13 +104,13 @@ std::vector<zengine::GameObjectId> zengine::ObjectStore::HierarchyOrder() const 
     const auto visit=[&](auto&& self,GameObjectId parent)->void{const auto it=children.find(parent);if(it==children.end())return;for(auto id:it->second){result.push_back(id);self(self,id);}};
     visit(visit,0);return result;
 }
-void zengine::GameObject::SetName(std::string name)
+void zengine::ObjectCore::SetName(std::string name)
 {
     name = Trim(std::move(name));
     if (name.empty()) throw std::invalid_argument("GameObject name cannot be empty.");
     name_ = std::move(name);
 }
-void zengine::GameObject::SetTags(std::vector<std::string> tags)
+void zengine::ObjectCore::SetTags(std::vector<std::string> tags)
 {
     std::vector<std::string> unique;
     for (auto& tag : tags)
@@ -116,24 +121,24 @@ void zengine::GameObject::SetTags(std::vector<std::string> tags)
     }
     tags_ = std::move(unique);
 }
-bool zengine::GameObject::HasTag(std::string_view tag) const
+bool zengine::ObjectCore::HasTag(std::string_view tag) const
 {
     return std::find(tags_.begin(), tags_.end(), tag) != tags_.end();
 }
-zengine::GameObject& zengine::ObjectStore::Create(std::string name)
-{
-    return Restore(nextId_,std::move(name));
-}
-zengine::GameObject& zengine::ObjectStore::Restore(GameObjectId id, std::string name)
+template<class T> T& zengine::ObjectStore::Add(GameObjectId id, std::string name)
 {
     if (!id || id==std::numeric_limits<GameObjectId>::max() || Find(id)) throw std::invalid_argument("Invalid or duplicate GameObject ID.");
-    auto object = std::unique_ptr<GameObject>(new GameObject(*this,id, std::move(name)));
-    auto& result = *object;
+    auto object = std::unique_ptr<T>(new T(*this,id, std::move(name)));
+    T& result = *object;
     objects_.push_back(std::move(object));
     index_.emplace(id,&result);
     nextId_=std::max(nextId_,id+1);
     return result;
 }
+zengine::GameObject& zengine::ObjectStore::Create(std::string name) { return Add<GameObject>(nextId_,std::move(name)); }
+zengine::GameObject& zengine::ObjectStore::Restore(GameObjectId id, std::string name) { return Add<GameObject>(id,std::move(name)); }
+zengine::GameObject2D& zengine::ObjectStore::Create2D(std::string name) { return Add<GameObject2D>(nextId_,std::move(name)); }
+zengine::GameObject2D& zengine::ObjectStore::Restore2D(GameObjectId id, std::string name) { return Add<GameObject2D>(id,std::move(name)); }
 void zengine::ObjectStore::Remove(const std::set<GameObjectId>& ids)
 {
     for(const auto id:ids)if(!Find(id))throw std::invalid_argument("Cannot remove a missing GameObject.");
@@ -141,12 +146,12 @@ void zengine::ObjectStore::Remove(const std::set<GameObjectId>& ids)
     std::erase_if(objects_,[&](const auto& object){return ids.contains(object->Id());});
     for(const auto id:ids)index_.erase(id);
 }
-zengine::GameObject* zengine::ObjectStore::Find(GameObjectId id) noexcept
+zengine::ObjectCore* zengine::ObjectStore::Find(GameObjectId id) noexcept
 {
     const auto it=index_.find(id);
     return it==index_.end()?nullptr:it->second;
 }
-const zengine::GameObject* zengine::ObjectStore::Find(GameObjectId id) const noexcept
+const zengine::ObjectCore* zengine::ObjectStore::Find(GameObjectId id) const noexcept
 {
     const auto it=index_.find(id);
     return it==index_.end()?nullptr:it->second;

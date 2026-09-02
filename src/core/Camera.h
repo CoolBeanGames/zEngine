@@ -11,7 +11,7 @@ namespace zengine
     {
     public:
         static constexpr const char* MainTag = "main";
-        explicit Camera(GameObject& owner) : Behavior(owner) {}
+        explicit Camera(ObjectCore& owner) : Behavior(owner) {}
         float FieldOfView() const noexcept { return fieldOfView_; }
         void SetFieldOfView(float degrees) { fieldOfView_ = std::clamp(degrees, 1.0f, 179.0f); }
         float NearPlane() const noexcept { return nearPlane_; }

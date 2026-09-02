@@ -10,7 +10,7 @@ using namespace zengine;
 void Check(bool value,const char* error) { if (!value) throw std::runtime_error(error); }
 struct Probe final : Behavior
 {
-    Probe(GameObject& owner,std::vector<std::string>& events,std::string name,float priority=0)
+    Probe(zengine::ObjectCore& owner,std::vector<std::string>& events,std::string name,float priority=0)
         : Behavior(owner), events(events), name(std::move(name)) { SetPriority(priority); }
     std::vector<std::string>& events;
     std::string name;
@@ -36,7 +36,7 @@ struct Probe final : Behavior
 };
 struct Empty final : Behavior
 {
-    explicit Empty(GameObject& owner):Behavior(owner) {}
+    explicit Empty(zengine::ObjectCore& owner):Behavior(owner) {}
     void OnStart() override { throw std::runtime_error("Empty Start executed"); }
     void OnUpdate(float) override { throw std::runtime_error("Empty Update executed"); }
     void OnDraw() override { throw std::runtime_error("Empty Draw executed"); }
@@ -48,9 +48,9 @@ struct FakeScript final : ScriptInstance
     bool HasStart() const noexcept override { return true; }
     bool HasUpdate() const noexcept override { return false; }
     bool HasDraw() const noexcept override { return false; }
-    void Start(GameObject&) override { ++starts; }
-    void Update(GameObject&,float) override { throw std::runtime_error("Empty script update executed"); }
-    void Draw(GameObject&) override { throw std::runtime_error("Empty script draw executed"); }
+    void Start(zengine::ObjectCore&) override { ++starts; }
+    void Update(zengine::ObjectCore&,float) override { throw std::runtime_error("Empty script update executed"); }
+    void Draw(zengine::ObjectCore&) override { throw std::runtime_error("Empty script draw executed"); }
 };
 int main()
 {

@@ -51,7 +51,7 @@ int main()
         auto& second=objects.Create().AddBehavior<ScriptBehavior>("Mover.zsh");
         Check(host.Prepare(second,source,"Mover"),"Second instance failed");
         Check(host.Play(objects),"Replay failed"); host.Tick(objects,0.5f);
-        Check(second.Owner().GetTransform().Position().x==1 && owner.GetTransform().Position().x==13.5f,"Instances share variables or transforms");
+        Check(As3D(second.Owner()).GetTransform().Position().x==1 && owner.GetTransform().Position().x==13.5f,"Instances share variables or transforms");
         host.Stop(objects);
         Check(host.Prepare(b,source+"\n// saved edit","Mover") && Value(host,b,"speed")=="3.5","Save discarded authoring overrides");
         Check(!host.Prepare(b,"class Mover { export Missing x; }","Mover") && !host.Play(objects),"Invalid compile allowed partial Play");
@@ -61,7 +61,7 @@ int main()
         Check(host.Prepare(b,R"(class Mover : gameObject { func update(float dt) { transform.position.x=99; int zero=0; int fail=1/zero; } })","Mover"),"Failure fixture compile failed");
         Check(host.Play(objects),"Failure fixture Play failed"); host.Tick(objects,0.5f);
         Check(b.Faulted() && !host.Error(b).empty() && owner.GetTransform().Position().x==10,"Failure isolation/atomic transform sync failed");
-        Check(second.Owner().GetTransform().Position().x==1,"Failed script stopped other scripts");
+        Check(As3D(second.Owner()).GetTransform().Position().x==1,"Failed script stopped other scripts");
         host.Stop(objects);
         Check(host.Prepare(b,"class Mover : gameObject { func update(float dt) { transform.position.x=9999999999999999999999999999999999999999.0; } }","Mover"),"Overflow fixture compile");
         Check(host.Play(objects),"Overflow fixture Play"); host.Tick(objects,0.1f);
@@ -171,7 +171,7 @@ int main()
         spawningHost.SetField(spawnScript,"template","Prefabs/Crate.zprefab");std::string requested;
         spawningHost.SetPrefabSpawner([&](std::string_view asset){requested=asset;return spawning.Create("Crate").Id();});
         Check(spawningHost.Play(spawning) && !spawnScript.Faulted(),"Prefab spawn failed during Start");
-        Check(requested=="Prefabs/Crate.zprefab" && spawning.Size()==2 && spawning.At(1).GetTransform().Position().x==7 && Value(spawningHost,spawnScript,"returned")=="true","Prefab spawn did not return/control the new native object");spawningHost.Stop(spawning);
+        Check(requested=="Prefabs/Crate.zprefab" && spawning.Size()==2 && As3D(spawning.At(1)).GetTransform().Position().x==7 && Value(spawningHost,spawnScript,"returned")=="true","Prefab spawn did not return/control the new native object");spawningHost.Stop(spawning);
         ObjectStore liveSpawn; ScriptHost liveSpawnHost; auto& liveOwner=liveSpawn.Create("Player"); auto& liveBehavior=liveOwner.AddBehavior<ScriptBehavior>("Player.zsh");
         Check(liveSpawnHost.Prepare(liveBehavior,R"(class Player : gameObject { export prefab template; export int updates=0; export bool spawned=false; func update(float dt){ updates+=1; if(!spawned){ template.spawn(); spawned=true; } } })","Player"),"Runtime spawn fixture compile");
         liveSpawnHost.SetField(liveBehavior,"template","Prefabs/Crate.zprefab"); liveSpawnHost.SetPrefabSpawner([&](std::string_view){ auto& bullet=liveSpawn.Create("Bullet"); auto& bulletBehavior=bullet.AddBehavior<ScriptBehavior>("Bullet.zsh"); liveSpawnHost.RestoreValues(bulletBehavior,{}); liveSpawnHost.RestoreReferences(bulletBehavior,{}); Check(liveSpawnHost.Prepare(bulletBehavior,"class Bullet : gameObject { export int updates=0; func update(float dt){ updates+=1; } }","Bullet"),"Spawned script prepare"); return bullet.Id(); });

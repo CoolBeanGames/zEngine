@@ -41,12 +41,12 @@ void EditorShell::EndGizmoDrag(bool cancel)
     if (!gizmoDrag_) return;
     if (cancel)
     {
-        if (auto* object=objects_.Find(gizmoObject_)) object->GetTransform()=gizmoDrag_->Original();
+        if (auto* object=zengine::As3D(objects_.Find(gizmoObject_))) object->GetTransform()=gizmoDrag_->Original();
         sceneDirty_=gizmoWasDirty_; UpdateSceneTitle();
     }
     if (!cancel)
     {
-        if (const auto* object=objects_.Find(gizmoObject_))
+        if (const auto* object=zengine::As3D(objects_.Find(gizmoObject_)))
         {
             const auto equal=[](zengine::Vec3 a,zengine::Vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; };
             const auto& original=gizmoDrag_->Original(); const auto& current=object->GetTransform();
@@ -62,7 +62,7 @@ void EditorShell::EndGizmoDrag(bool cancel)
 void EditorShell::UpdateGizmoDrag(gizmo::Point point)
 {
     if (!gizmoDrag_) return;
-    auto* object=objects_.Find(gizmoObject_);
+    auto* object=zengine::As3D(objects_.Find(gizmoObject_));
     if (!object || Playing()) { EndGizmoDrag(true); return; }
     object->GetTransform()=gizmoDrag_->Update(point);
     // Keep no-op clicks and drags back to the start clean.

@@ -97,12 +97,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                 }
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
-                for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id()))continue;DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));frame.meshes.push_back({meshes.at(object.Id()),object.GetTransform(),parent});}
+                for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id())||object.Is2D())continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));frame.meshes.push_back({meshes.at(object.Id()),t3d,parent});}
                 renderer.Render(frame);++rendered;
             }
             if(!report.empty()) {
                 std::ofstream out(report,std::ios::binary);out<<"ZENGINE_PLAYER_REPORT 1\nscene "<<std::quoted(session.Scene())<<"\nframes "<<rendered<<"\nmeshes "<<renderer.LastMeshCount()<<'\n';
-                for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);const auto p=object.GetTransform().Position(),r=object.GetTransform().Rotation();out<<"object "<<object.Id()<<' '<<std::quoted(object.Name())<<" parent "<<object.Parent()<<" position "<<p.x<<' '<<p.y<<' '<<p.z<<" rotation "<<r.x<<' '<<r.y<<' '<<r.z<<'\n';}
+                for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(object.Is2D())continue;const auto p=zengine::As3D(object).GetTransform().Position(),r=zengine::As3D(object).GetTransform().Rotation();out<<"object "<<object.Id()<<' '<<std::quoted(object.Name())<<" parent "<<object.Parent()<<" position "<<p.x<<' '<<p.y<<' '<<p.z<<" rotation "<<r.x<<' '<<r.y<<' '<<r.z<<'\n';}
                 out.close();if(!out)throw std::runtime_error("Could not write player test report.");
             }
             DestroyWindow(window);window=nullptr;

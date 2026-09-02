@@ -12,7 +12,7 @@ void Check(bool condition, const char* message)
 class TestBehavior final : public zengine::Behavior
 {
 public:
-    TestBehavior(zengine::GameObject& owner, bool& destroyed) : Behavior(owner), destroyed_(destroyed) {}
+    TestBehavior(zengine::ObjectCore& owner, bool& destroyed) : Behavior(owner), destroyed_(destroyed) {}
     ~TestBehavior() override { destroyed_ = true; }
 private:
     bool& destroyed_;
@@ -81,6 +81,40 @@ int main()
         zengine::ObjectStore removable;auto& kept=removable.Create("Kept");auto& removedRoot=removable.Create("Runtime root");auto& removedChild=removable.Create("Runtime child");removedChild.SetParent(removedRoot.Id());
         rejects([&]{removable.Remove({removedRoot.Id()});});Check(removable.Size()==3,"Failed group removal was not atomic");
         const auto* stable=&kept;removable.Remove({removedRoot.Id(),removedChild.Id()});Check(removable.Size()==1 && removable.Find(kept.Id())==stable,"Group removal invalidated surviving GameObjects");
+        // GameObject2D shares the store, IDs, hierarchy, tags and behaviors with 3D objects.
+        bool flatDestroyed = false;
+        {
+            zengine::ObjectStore mixed;
+            auto& solid = mixed.Create("Solid");
+            auto& sprite = mixed.Create2D("Sprite");
+            Check(!solid.Is2D() && sprite.Is2D(), "Is2D flag failed");
+            Check(sprite.Name() == "Sprite" && sprite.Tags().empty() && sprite.BehaviorCount() == 0, "GameObject2D defaults failed");
+            Check(sprite.GetTransform().Position() == zengine::Vec2{} && sprite.GetTransform().Rotation() == 0 &&
+                  sprite.GetTransform().Scale() == zengine::Vec2{1, 1}, "Transform2D defaults failed");
+            sprite.GetTransform().SetPosition({64, 128});
+            sprite.GetTransform().SetRotation(90);
+            sprite.GetTransform().SetScale({2, 3});
+            Check(sprite.GetTransform().Position() == zengine::Vec2{64, 128} && sprite.GetTransform().Rotation() == 90 &&
+                  sprite.GetTransform().Scale() == zengine::Vec2{2, 3}, "Transform2D mutation failed");
+            bool rejected2d = false;
+            try { sprite.GetTransform().SetPosition({std::numeric_limits<float>::infinity(), 0}); }
+            catch (const std::invalid_argument&) { rejected2d = true; }
+            Check(rejected2d && sprite.GetTransform().Position() == zengine::Vec2{64, 128}, "Nonfinite Transform2D must be rejected atomically");
+            sprite.SetTags({"hud", "hud", " overlay ", ""});
+            Check(sprite.Tags().size() == 2 && sprite.HasTag("hud") && sprite.HasTag("overlay"), "GameObject2D tags failed");
+            auto& flatBehavior = sprite.AddBehavior<TestBehavior>(flatDestroyed);
+            Check(&flatBehavior.Owner() == &sprite && sprite.GetBehavior<TestBehavior>() == &flatBehavior, "GameObject2D behavior ownership failed");
+            const auto spriteId = sprite.Id();
+            for (int i = 0; i < 50; ++i) mixed.Create2D("Filler");
+            Check(mixed.Find(spriteId) == &sprite && mixed.Find(spriteId)->Is2D(), "GameObject2D reference stability failed");
+            sprite.SetParent(solid.Id());
+            Check(sprite.Parent() == solid.Id() &&
+                  mixed.HierarchyOrder().front() == solid.Id() && mixed.HierarchyOrder().at(1) == spriteId,
+                  "Mixed 2D/3D hierarchy failed");
+            Check(zengine::As2D(mixed.Find(spriteId)) == &sprite && zengine::As3D(mixed.Find(spriteId)) == nullptr, "As2D/As3D discrimination failed");
+            Check(zengine::As3D(mixed.Find(solid.Id())) == &solid && zengine::As2D(mixed.Find(solid.Id())) == nullptr, "As3D/As2D discrimination failed");
+        }
+        Check(flatDestroyed, "GameObject2D must own the behavior lifetime");
         std::cout << "PASS: platform-independent GameObject defaults, stable IDs, tags, transforms, behavior ownership\n";
         return 0;
     }

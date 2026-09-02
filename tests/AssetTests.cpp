@@ -465,9 +465,9 @@ void ScriptIntegrationEditorTests(bool capture)
         auto& empty=editor.CreateEmptyGameObject(); const auto emptyId=empty.Id();
         Require(editor.AttachScript(emptyId,path),"Attach to empty object failed");
         Require(editor.Play(),"Editor Play failed"); editor.SetPaused(true);
-        Require(editor.GameObjects().Find(cube)->GetTransform().Position().y==6 && empty.GetTransform().Position().y==2,"Start/independent exported values failed");
+        Require(zengine::As3D(editor.GameObjects().Find(cube))->GetTransform().Position().y==6 && empty.GetTransform().Position().y==2,"Start/independent exported values failed");
         editor.Step(); editor.Render();
-        const auto& cubeTransform=editor.GameObjects().Find(cube)->GetTransform();
+        const auto& cubeTransform=zengine::As3D(editor.GameObjects().Find(cube))->GetTransform();
         Require(std::abs(cubeTransform.Position().x-0.2f)<0.0001f,"Script did not move rendered cube");
         Require(cubeTransform.Rotation().z==1 && empty.GetTransform().Rotation().z==0,"Draw was not gated by Mesh Renderer submission");
         editor.Render(); Require(cubeTransform.Rotation().z==1,"Paused Draw continued running");
@@ -555,11 +555,11 @@ void SceneEditorTests(bool capture)
         Require(cube->HasTag("player"),"Scene cube tags were lost");
         Require(editor.GameObjects().Find(emptyId)!=nullptr,"Scene empty object identity lost");
         Require(editor.GameObjects().Find(emptyId)->Name()=="Scene A Empty",("Scene empty name changed to: "+editor.GameObjects().Find(emptyId)->Name()).c_str());
-        Require(cube->GetTransform().Position().x==1.25f && cube->BehaviorAt(1).Priority()==1.5f,"Transform or behavior priority lost");
+        Require(zengine::As3D(cube)->GetTransform().Position().x==1.25f && cube->BehaviorAt(1).Priority()==1.5f,"Transform or behavior priority lost");
         wchar_t value[64]{}; GetWindowTextW(field(InspectorPanel::FirstBehaviorField+5),value,64);
         Require(std::wstring(value)==L"6" && editor.BuildSceneFrame().meshes.size()==1,"Script variable or mesh binding lost");
         Require(editor.Play(),"Current scene did not play"); editor.SetPaused(true); editor.Step(); editor.Render();
-        Require(std::abs(cube->GetTransform().Position().x-1.35f)<0.0001f,"Wrong scene/variable was played");
+        Require(std::abs(zengine::As3D(cube)->GetTransform().Position().x-1.35f)<0.0001f,"Wrong scene/variable was played");
         SetWindowTextW(field(InspectorPanel::NameField),L"Temporary play name");
         SetWindowTextW(field(InspectorPanel::FirstBehaviorField+3),L"99");
         SendMessageW(field(InspectorPanel::MeshEnabled),BM_SETCHECK,BST_UNCHECKED,0);
@@ -569,7 +569,7 @@ void SceneEditorTests(bool capture)
         rejected=false; try { editor.OpenScene(sceneB); } catch (...) { rejected=true; }
         Require(rejected && editor.ScenePath()==sceneA,"Scene switched during Play");
         editor.Stop();
-        Require(cube->Name()=="Scene A Cube" && cube->GetTransform().Position().x==1.25f && cube->BehaviorAt(1).Priority()==1.5f && cube->BehaviorAt(0).Enabled() && !editor.SceneDirty(),"Stop did not restore scene Inspector state");
+        Require(cube->Name()=="Scene A Cube" && zengine::As3D(cube)->GetTransform().Position().x==1.25f && cube->BehaviorAt(1).Priority()==1.5f && cube->BehaviorAt(0).Enabled() && !editor.SceneDirty(),"Stop did not restore scene Inspector state");
         SetWindowTextW(field(InspectorPanel::FirstTransformField),L"77"); Require(editor.SceneDirty(),"Scene edit did not mark dirty");
         { ScenePromptAnswer answer(window,IDCANCEL); Require(!editor.OpenScene(sceneB) && answer.handled && editor.ScenePath()==sceneA,"Cancel lost current scene"); }
         { ScenePromptAnswer answer(window,IDYES); Require(editor.OpenScene(sceneB) && answer.handled,"Save-and-switch failed"); }
@@ -643,8 +643,8 @@ void BuildTests() {
     scene.objects[0].name="Second Actor";scene.objects[0].behaviors[1].variables["speed"]=30.0;
     const auto second=assets/L"Second.zscene";zengine::scenes::Save(assets,second,zengine::scenes::Encode(scene));zengine::projects::TrackScene(project,second);zengine::projects::Save(project);
     {zengine::game::Session session(project,"Assets/First.zscene");session.Start();zengine::input::Hardware hardware;hardware.keys[VK_SPACE]=true;session.Tick(1.0f/60,hardware);session.Tick(1.0f/60,hardware);
-        Require(session.Objects().At(0).GetTransform().Position().y==3 && session.Objects().At(0).Parent()==2 && session.Objects().Size()==3 && session.Objects().At(2).GetTransform().Position().x==9,"Standalone runtime input, parenting, or prefab spawning failed");
-        Require(session.Objects().At(0).GetTransform().Position().x!=888,"Standalone build did not bind an exported scene-tree object reference");}
+        Require(zengine::As3D(session.Objects().At(0)).GetTransform().Position().y==3 && session.Objects().At(0).Parent()==2 && session.Objects().Size()==3 && zengine::As3D(session.Objects().At(2)).GetTransform().Position().x==9,"Standalone runtime input, parenting, or prefab spawning failed");
+        Require(zengine::As3D(session.Objects().At(0)).GetTransform().Position().x!=888,"Standalone build did not bind an exported scene-tree object reference");}
     unsigned progress=0;const auto executable=zengine::game::Export(project,first,{},output,zengine::game::ExecutableDirectory(),[&](unsigned value,const std::string&){Require(value>=progress,"Build progress regressed");progress=value;});
     Require(progress==100 && std::filesystem::exists(executable) && !std::filesystem::exists(executable.parent_path()/L"zEngine.exe"),"Export did not produce an editor-independent executable");
     Require(std::filesystem::exists(executable.parent_path()/L"Data"/L"Assets"/std::filesystem::relative(model,assets)),"Packaged model missing");
@@ -764,8 +764,8 @@ void HierarchyTests(bool capture) {
         editor.SetObjectParent(instance,root);Require(editor.SaveScene(),"Save parented prefab instance failed");
         const auto inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
         SetDlgItemTextW(inspector,InspectorPanel::FirstTransformField+6,L"4");
-        Require(editor.GameObjects().Find(instance)->GetTransform().Scale().x==4,"Prefab override fixture failed");
-        editor.RevertPrefabTransform(instance);Require(editor.GameObjects().Find(instance)->Parent()==root && editor.GameObjects().Find(instance)->GetTransform().Scale().x==1,"Reverting prefab transforms lost parent or retained override");
+        Require(zengine::As3D(editor.GameObjects().Find(instance))->GetTransform().Scale().x==4,"Prefab override fixture failed");
+        editor.RevertPrefabTransform(instance);Require(editor.GameObjects().Find(instance)->Parent()==root && zengine::As3D(editor.GameObjects().Find(instance))->GetTransform().Scale().x==1,"Reverting prefab transforms lost parent or retained override");
         Require(editor.SaveScene() && editor.OpenScene(path) && editor.GameObjects().Find(instance)->Parent()==root,"Prefab instance parent lost on reload");
         auto generated=zengine::GameObjectId{};for(std::size_t i=0;i<editor.GameObjects().Size();++i)if(editor.GameObjects().At(i).Parent()==instance)generated=editor.GameObjects().At(i).Id();
         Require(generated!=0,"Prefab children missing");rejected=false;try{editor.SetObjectParent(root,generated);}catch(...){rejected=true;}Require(rejected,"Generated prefab child accepted as authoring parent");
@@ -933,7 +933,7 @@ void CameraTests(bool capture)
         Require(editor.OpenScene(editor.AssetsDirectory()/L"Cam.zscene"),"Could not reload the camera scene");
         const zengine::Camera* reloaded=nullptr;
         for(std::size_t i=0;i<editor.GameObjects().Size();++i)
-            if(auto* c=const_cast<zengine::GameObject&>(editor.GameObjects().At(i)).GetBehavior<zengine::Camera>(); c && editor.GameObjects().At(i).HasTag(zengine::Camera::MainTag)) reloaded=c;
+            if(auto* c=const_cast<zengine::GameObject&>(zengine::As3D(editor.GameObjects().At(i))).GetBehavior<zengine::Camera>(); c && editor.GameObjects().At(i).HasTag(zengine::Camera::MainTag)) reloaded=c;
         Require(reloaded && std::abs(reloaded->FieldOfView()-75)<0.01f && std::abs(reloaded->NearPlane()-0.25f)<0.001f,"Camera settings were not serialised");
 
         // Camera is a referenceable script type.

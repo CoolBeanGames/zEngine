@@ -9,7 +9,7 @@ namespace zengine
     {
     public:
         static constexpr const char* CubeAsset = "builtin:cube";
-        explicit MeshRenderer(GameObject& owner, std::string asset = {})
+        explicit MeshRenderer(ObjectCore& owner, std::string asset = {})
             : Behavior(owner), asset_(std::move(asset)) {}
         const std::string& Asset() const noexcept { return asset_; }
         void SetAsset(std::string asset) { asset_ = std::move(asset); }

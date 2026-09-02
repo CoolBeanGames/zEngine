@@ -35,7 +35,7 @@ void Session::Tick(float delta,const input::Hardware& hardware,const script::Mou
     scene_.scripts.SetInput(std::move(frame));scene_.scripts.SetMouse(mouse);scene_.scripts.Tick(scene_.objects,delta);scene_.scripts.PhysicsTick(scene_.objects,delta);physics_->Step(scene_.objects,delta);scene_.scripts.DispatchPhysicsEvents(physics_->DrainEvents());CheckErrors();
 }
 void Session::Draw(const std::function<bool(GameObjectId)>& visible){scene_.scripts.Draw(scene_.objects,visible);CheckErrors();}
-void Session::PrepareObject(GameObject& object) {
+void Session::PrepareObject(ObjectCore& object) {
     if(const auto mesh=object.GetBehavior<MeshRenderer>();mesh && !mesh->Asset().empty() && mesh->Asset()!=MeshRenderer::CubeAsset) {
         const auto& value=mesh->Asset();const auto file=assetLibrary::Resolve(assets_,std::filesystem::path(std::u8string(value.begin(),value.end())));
         if(file.filename()!=L"model.fbx" || !assetLibrary::Package(file.parent_path()))throw std::runtime_error("Missing imported model package: "+mesh->Asset());

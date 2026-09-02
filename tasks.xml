@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="80">
+<tasks project="zEngine" nextIndex="81">
   <task id="ZE-59">
     <name>ZE 49 is happening again</name>
     <prompt>this was the original prompt:
@@ -893,58 +893,12 @@ a Breakpoint has been reached
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
-  <task id="ZE-71">
-    <name>autocomplete update</name>
-    <prompt>add mouse over tooltips, if i mouse over a function call (name only) show the parameters that are part of it, same for signals (hovering over a rigidbody.body_entered signal should show me the parameters that pass the body</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>true</release>
-    <tags>scripting,ui</tags>
-    <notes>Resting the pointer on an identifier in the script editor now shows a signature tooltip. scriptCompletion::Item gained a `signature` string; Index::Hover(source, caret) resolves the identifier under the caret (own methods, built-ins, chained members, signals) and returns "name(params)" for a function - with " -&gt; result" when it returns a value - or "name(params)  (signal)" for a signal; a plain field/variable yields nothing. Built-in signatures are filled for the parameterised globals (Input.*, Mathf.*, Physics.cast, gameObject.find/make_timer/print/getBehavior/find_by_type/has_tag, array/string methods, signal.connect/emit) and the native signals (Transform was_*, PhysicsBody collision_/area_ -&gt; gameObject other, Mouse clicked/held -&gt; int button, Mouse was_just_moved -&gt; two Vector3); user func signatures are reconstructed from their token run in AddSource. ScriptEditor hosts a TTS_ALWAYSTIP tooltip in TTF_TRACK mode, driven by a 350ms hover timer over the source control (EM_CHARFROMPOS + a past-line-end guard), dismissed on key/scroll/click/leave. Hover logic covered by new ScriptEditorTests cases (own function, built-in call, signal, plain field). Built to builds/debug and builds/release (zipped to builds/release/zEngine-release.zip); full ctest 32/32; committed and pushed.</notes>
-    <filesChanged>src/ScriptCompletion.h; src/ScriptCompletion.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-72">
-    <name>new Vector2 type</name>
-    <prompt>add a new global vector2 type for use with 2D and inputs, update Input stuff to use it</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>input,scripting</tags>
-    <notes>New Vector2 value type in the scripting VM, sitting alongside Vector3: Vector2(x,y) / Vector2(), .x / .y components, +/- and component-* between Vector2s, scalar * and /, unary minus, interpolation ("v=" &amp; {vec} -&gt; "x, y"), `is Vector2`, and read-only cross-type rules (cannot assign Vector2 to Vector3 or mix them in arithmetic). Registered in the phone book (NativeTypes.h, scriptClass=false like Vector3). Input APIs switched to Vector2 as the prompt asked: Input.get_vector, InputAction.axis / .value, and Mouse.delta / .position / was_just_moved(Vector2, Vector2). Engine plumbing: ScriptHost Format/Parse ("x, y")/Editable/ValueTypeName/DefaultForType/ArrayElementTypes; Scene serialization WriteValue/ReadValue ("Vector2 x y", also for array elements); InspectorPanel renders an exported Vector2 as a 2-field X/Y row (new BehaviorField::axisCount, was hard-coded 3). Autocomplete lists Vector2 + x/y and the retyped Input members/signatures. Coverage: new scripting Vector2Type suite (ctor/arith/components/is/interp/errors), InputTests + MouseInput retargeted to Vector2, SceneTests fixture gains an exported Vector2 field (round-trip + Fields parse). ctest 32/32.</notes>
-    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/include/zscript/NativeTypes.h; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/Scene.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/ScriptCompletion.cpp; tests/InputTests.cpp; tests/SceneTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
   <task id="ZE-73">
     <name>new ganeObject2D</name>
     <prompt>exactly like gameObject 3D but uses a Vector2 instead of Vector3</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -952,14 +906,14 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy>ZE-72</blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Introduced ObjectCore, a non-final base carrying identity / hierarchy / tags / behaviors / lifecycle. GameObject (3D Transform) and the new GameObject2D (Transform2D: Vec2 position + Vec2 scale + a single float z-rotation in degrees, screen-space) both derive from it. Behavior::owner_ widened to ObjectCore&amp; with an Owner3D() convenience cast for the 3D-only behaviors (mesh, physics, camera). A single ObjectStore now holds unique_ptr&lt;ObjectCore&gt;; added Create2D()/Restore2D(); Find()/At() return ObjectCore. Free helpers As3D()/As2D() do the checked downcasts; physics, renderer, gizmos, prefab overrides and the 3D scene/report paths guard with As3D() and skip Is2D() objects. Scene format bumped to v8: a 2D object serializes a "transform2d" line instead of "transform". Scripting VM gained native gameObject2D + Transform2D classes (phone-book rows in NativeTypes.h, prelude, and lifecycle/field wiring switched to IsGameObjectLike) so "class X : gameObject2D" compiles with a Vector2 transform and rejects Vector3 assignment. Tests added: CoreTests mixed 2D/3D store + Transform2D defaults/mutation/atomic-reject, SceneTests v8 2D round-trip, ScriptTests "gameObject2D scripts". Full test build green, 32/32 ctest. 2D proxy sync in BoundScript is deferred to ZE-61; actual 2D rendering is ZE-60.</notes>
+    <filesChanged>src/core/GameObject.h; src/core/GameObject.cpp; src/core/ScriptBehavior.h; src/core/Camera.h; src/core/MeshRenderer.h; src/physics/PhysicsBehavior.h; src/physics/PhysicsWorld.cpp; src/RenderTransform.h; src/Scene.h; src/Scene.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/EditorShell.h; src/EditorShell.cpp; src/EditorGizmos.cpp; src/EditorPrefabs.cpp; src/runtime/GameSession.h; src/runtime/GameSession.cpp; src/runtime/PlayerMain.cpp; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; tests/CoreTests.cpp; tests/SceneTests.cpp; tests/AssetTests.cpp; tests/GizmoTests.cpp; tests/PrefabTests.cpp; tests/PhysicsTests.cpp; tests/LifecycleTests.cpp; tests/ScriptHostTests.cpp</filesChanged>
     <image></image>
   </task>
   <task id="ZE-60">
@@ -1358,6 +1312,79 @@ this will be a large task so</prompt>
       <subtask done="false">add super.function_name(which calls the parent version of the function)</subtask>
       <subtask done="false">if something is not abstract but you still redefine it in an inherited class it is still overriden, abstract just means it CANT be used until overridden</subtask>
     </subtasks>
+  </task>
+  <task id="ZE-80">
+    <name>bottom dock</name>
+    <prompt>Earler we built a console, we also have one as part of the script renderer. At the bottom is the asset library. I want the asset library section to be sectioned off into tabs exactly like the view section, 1 is for game mode console, 1 is an editor console, and the first one is the asset library. Switching to play mode switches to the play mode console.
+
+keep the connection to the print command, and the error logs for scripts, just move where they are
+
+and make the console backgrounds black with white text.</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>true</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>ui,console, debugging,scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-71">
+    <name>autocomplete update</name>
+    <prompt>add mouse over tooltips, if i mouse over a function call (name only) show the parameters that are part of it, same for signals (hovering over a rigidbody.body_entered signal should show me the parameters that pass the body</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>scripting,ui</tags>
+    <notes>Resting the pointer on an identifier in the script editor now shows a signature tooltip. scriptCompletion::Item gained a `signature` string; Index::Hover(source, caret) resolves the identifier under the caret (own methods, built-ins, chained members, signals) and returns "name(params)" for a function - with " -&gt; result" when it returns a value - or "name(params)  (signal)" for a signal; a plain field/variable yields nothing. Built-in signatures are filled for the parameterised globals (Input.*, Mathf.*, Physics.cast, gameObject.find/make_timer/print/getBehavior/find_by_type/has_tag, array/string methods, signal.connect/emit) and the native signals (Transform was_*, PhysicsBody collision_/area_ -&gt; gameObject other, Mouse clicked/held -&gt; int button, Mouse was_just_moved -&gt; two Vector3); user func signatures are reconstructed from their token run in AddSource. ScriptEditor hosts a TTS_ALWAYSTIP tooltip in TTF_TRACK mode, driven by a 350ms hover timer over the source control (EM_CHARFROMPOS + a past-line-end guard), dismissed on key/scroll/click/leave. Hover logic covered by new ScriptEditorTests cases (own function, built-in call, signal, plain field). Built to builds/debug and builds/release (zipped to builds/release/zEngine-release.zip); full ctest 32/32; committed and pushed.</notes>
+    <filesChanged>src/ScriptCompletion.h; src/ScriptCompletion.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-72">
+    <name>new Vector2 type</name>
+    <prompt>add a new global vector2 type for use with 2D and inputs, update Input stuff to use it</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>input,scripting</tags>
+    <notes>New Vector2 value type in the scripting VM, sitting alongside Vector3: Vector2(x,y) / Vector2(), .x / .y components, +/- and component-* between Vector2s, scalar * and /, unary minus, interpolation ("v=" &amp; {vec} -&gt; "x, y"), `is Vector2`, and read-only cross-type rules (cannot assign Vector2 to Vector3 or mix them in arithmetic). Registered in the phone book (NativeTypes.h, scriptClass=false like Vector3). Input APIs switched to Vector2 as the prompt asked: Input.get_vector, InputAction.axis / .value, and Mouse.delta / .position / was_just_moved(Vector2, Vector2). Engine plumbing: ScriptHost Format/Parse ("x, y")/Editable/ValueTypeName/DefaultForType/ArrayElementTypes; Scene serialization WriteValue/ReadValue ("Vector2 x y", also for array elements); InspectorPanel renders an exported Vector2 as a 2-field X/Y row (new BehaviorField::axisCount, was hard-coded 3). Autocomplete lists Vector2 + x/y and the retyped Input members/signatures. Coverage: new scripting Vector2Type suite (ctor/arith/components/is/interp/errors), InputTests + MouseInput retargeted to Vector2, SceneTests fixture gains an exported Vector2 field (round-trip + Fields parse). ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/include/zscript/NativeTypes.h; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/Scene.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/ScriptCompletion.cpp; tests/InputTests.cpp; tests/SceneTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-33">
     <name>arrays should be visable and editable in the inspector</name>

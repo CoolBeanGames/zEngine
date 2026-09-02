@@ -103,7 +103,8 @@ public:
     void QueueModel(const std::filesystem::path& path, zengine::GameObjectId object = 0);
     ViewportFrame BuildSceneFrame() const;
     const zengine::ObjectStore& GameObjects() const noexcept { return objects_; }
-    const zengine::GameObject* SelectedGameObject() const noexcept { return objects_.Find(selectedObject_); }
+    const zengine::GameObject* SelectedGameObject() const noexcept { return zengine::As3D(objects_.Find(selectedObject_)); }
+    zengine::GameObject* SelectedGameObject() noexcept { return zengine::As3D(objects_.Find(selectedObject_)); }
 
     // The view panel is tabbed: Scene (edit), Game (Play), Script (inline editor + browser).
     enum class ViewTab { Scene, Game, Script };

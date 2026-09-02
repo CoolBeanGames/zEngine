@@ -52,7 +52,7 @@ namespace
         throw std::invalid_argument("Unknown array element value type.");
     }
     // Most-specific reference type an object satisfies, for auto-typing a dragged element.
-    std::string BestReferenceType(const GameObject& object)
+    std::string BestReferenceType(const ObjectCore& object)
     {
         for (const char* type : {"RigidBody","KinematicBody","StaticBody","Area","Camera","Collider","PhysicsBody"})
             if (ScriptHost::ObjectMatchesReferenceType(object, type)) return type;
@@ -65,18 +65,18 @@ namespace
     struct NativeBinding {
         std::string_view type;                        // script type name, e.g. "RigidBody"
         std::string_view field;                       // Runtime.Get(proxy, field) accessor
-        std::function<bool(const GameObject&)> present;
+        std::function<bool(const ObjectCore&)> present;
     };
     const std::vector<NativeBinding>& NativeBindings()
     {
         static const std::vector<NativeBinding> table = {
-            {"PhysicsBody",   "physics",        [](const GameObject& o){ return o.GetBehavior<physics::Body>()!=nullptr; }},
-            {"RigidBody",     "rigidbody",      [](const GameObject& o){ return o.GetBehavior<physics::RigidBody>()!=nullptr; }},
-            {"KinematicBody", "kinematic_body", [](const GameObject& o){ return o.GetBehavior<physics::KinematicBody>()!=nullptr; }},
-            {"StaticBody",    "static_body",    [](const GameObject& o){ return o.GetBehavior<physics::StaticBody>()!=nullptr; }},
-            {"Area",          "area",           [](const GameObject& o){ return o.GetBehavior<physics::Area>()!=nullptr; }},
-            {"Collider",      "collider",       [](const GameObject& o){ return o.GetBehavior<physics::Collider>()!=nullptr; }},
-            {"Camera",        "camera",         [](const GameObject& o){ return o.GetBehavior<Camera>()!=nullptr; }},
+            {"PhysicsBody",   "physics",        [](const ObjectCore& o){ return o.GetBehavior<physics::Body>()!=nullptr; }},
+            {"RigidBody",     "rigidbody",      [](const ObjectCore& o){ return o.GetBehavior<physics::RigidBody>()!=nullptr; }},
+            {"KinematicBody", "kinematic_body", [](const ObjectCore& o){ return o.GetBehavior<physics::KinematicBody>()!=nullptr; }},
+            {"StaticBody",    "static_body",    [](const ObjectCore& o){ return o.GetBehavior<physics::StaticBody>()!=nullptr; }},
+            {"Area",          "area",           [](const ObjectCore& o){ return o.GetBehavior<physics::Area>()!=nullptr; }},
+            {"Collider",      "collider",       [](const ObjectCore& o){ return o.GetBehavior<physics::Collider>()!=nullptr; }},
+            {"Camera",        "camera",         [](const ObjectCore& o){ return o.GetBehavior<Camera>()!=nullptr; }},
         };
         return table;
     }
@@ -191,11 +191,11 @@ namespace
         bool HasUpdate() const noexcept override { return true; }
         bool HasDraw() const noexcept override { return draw; }
         bool HasPhysicsUpdate() const noexcept override { return physicsUpdate; }
-        void Start(GameObject& owner) override { Invoke(owner,[&] { runtime.Start(object); }); }
-        void Update(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.SetInput(input); runtime.SetMouse(mouse); runtime.Update(object,delta); }); }
-        void Draw(GameObject& owner) override { Invoke(owner,[&] { runtime.Draw(object); }); }
-        void PhysicsUpdate(GameObject& owner,float delta) override { Invoke(owner,[&] { runtime.PhysicsUpdate(object,delta); }); }
-        void PhysicsEvent(GameObject& owner,const physics::ContactEvent& event) {
+        void Start(ObjectCore& owner) override { Invoke(owner,[&] { runtime.Start(object); }); }
+        void Update(ObjectCore& owner,float delta) override { Invoke(owner,[&] { runtime.SetInput(input); runtime.SetMouse(mouse); runtime.Update(object,delta); }); }
+        void Draw(ObjectCore& owner) override { Invoke(owner,[&] { runtime.Draw(object); }); }
+        void PhysicsUpdate(ObjectCore& owner,float delta) override { Invoke(owner,[&] { runtime.PhysicsUpdate(object,delta); }); }
+        void PhysicsEvent(ObjectCore& owner,const physics::ContactEvent& event) {
             Invoke(owner,[&]{const auto body=std::get<ObjectRef>(runtime.Get(object,"physics"));const char* phase=event.phase==physics::ContactPhase::Entered?"entered":event.phase==physics::ContactPhase::Stayed?"stayed":"exited";runtime.Emit({body,std::string(event.area?"area_":"collision_")+phase},{Proxy(event.other)});});
         }
         std::shared_ptr<const Program> program;
@@ -241,17 +241,19 @@ namespace
         void Synchronize(GameObjectId id,ObjectRef proxy) {
             const auto* native=scene.Find(id);if(!native)throw std::runtime_error("Scene object no longer exists.");
             runtime.Set(proxy,"parent",Proxy(native->Parent()),false);
-            const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));const auto& transform=native->GetTransform();
+            const auto* g=As3D(native); if(!g)return; // 2D script proxies are handled by the UI layer
+            const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));const auto& transform=g->GetTransform();
             runtime.Set(ref,"position",ToScript(transform.Position()),false);runtime.Set(ref,"rotation",ToScript(transform.Rotation()),false);runtime.Set(ref,"scale",ToScript(transform.Scale()),false);
         }
-        template<class F> void Invoke(GameObject& owner, F callback)
+        template<class F> void Invoke(ObjectCore& owner, F callback)
         {
             (void)owner;
             // Break old proxy links before synchronizing a potentially reparented native graph.
             for(const auto& [id,proxy]:proxies)runtime.Set(proxy,"parent",ObjectRef{},false);
             for(const auto& [id,proxy]:proxies)Synchronize(id,proxy);
             for(const auto& [id,previous]:previousTransforms) {
-                const auto ref=std::get<ObjectRef>(runtime.Get(proxies.at(id),"transform"));const auto& native=scene.Find(id)->GetTransform();
+                const auto* g=As3D(scene.Find(id)); if(!g)continue;
+                const auto ref=std::get<ObjectRef>(runtime.Get(proxies.at(id),"transform"));const auto& native=g->GetTransform();
                 const auto position=ToScript(native.Position()),rotation=ToScript(native.Rotation()),scale=ToScript(native.Scale());
                 if(position!=ToScript(previous.Position()))runtime.Emit({ref,"was_moved"},{position});
                 if(rotation!=ToScript(previous.Rotation()))runtime.Emit({ref,"was_rotated"},{rotation});
@@ -260,13 +262,14 @@ namespace
             callback();
             std::map<GameObjectId,GameObjectId> parents;std::map<GameObjectId,Transform> transforms;
             for(const auto& [id,proxy]:proxies) {
+                const auto* g=As3D(scene.Find(id)); if(!g)continue;
                 const auto parent=NativeId(std::get<ObjectRef>(runtime.Get(proxy,"parent")));
-                if(parent!=scene.Find(id)->Parent())parents[id]=parent;
+                if(parent!=g->Parent())parents[id]=parent;
                 const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));Transform next;
                 next.SetPosition(ToNative(std::get<Vector3>(runtime.Get(ref,"position"))));next.SetRotation(ToNative(std::get<Vector3>(runtime.Get(ref,"rotation"))));next.SetScale(ToNative(std::get<Vector3>(runtime.Get(ref,"scale"))));transforms[id]=next;
             }
             scene.SetParents(parents); // Validate complete graph before committing any transform.
-            for(const auto& [id,transform]:transforms)scene.Find(id)->GetTransform()=transform;
+            for(const auto& [id,transform]:transforms)As3D(*scene.Find(id)).GetTransform()=transform;
             previousTransforms=std::move(transforms);
         }
         bool draw,physicsUpdate;
@@ -283,7 +286,7 @@ bool ScriptHost::IsReferenceType(std::string_view type)
     return ReferenceTypeName(type);
 }
 
-bool ScriptHost::ObjectMatchesReferenceType(const GameObject& object, std::string_view type)
+bool ScriptHost::ObjectMatchesReferenceType(const ObjectCore& object, std::string_view type)
 {
     if (type == "gameObject" || type == "Transform") return true;
     if (type == "Behavior") return object.GetBehavior<physics::Body>() != nullptr || object.GetBehavior<physics::Collider>() != nullptr;
@@ -667,7 +670,7 @@ bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
         }
     transforms_.clear();
     parents_.clear();
-    for (std::size_t i=0;i<objects.Size();++i) transforms_.emplace(objects.At(i).Id(),objects.At(i).GetTransform());
+    for (std::size_t i=0;i<objects.Size();++i) if(auto* g=As3D(&objects.At(i))) transforms_.emplace(g->Id(),g->GetTransform());
     for (std::size_t i=0;i<objects.Size();++i) parents_.emplace(objects.At(i).Id(),objects.At(i).Parent());
     playing_=true;playingObjects_=&objects;playingPhysics_=physicsWorld;
     for (auto& [behavior,instance]:ready) behavior->BindInstance(std::move(instance));
@@ -677,7 +680,7 @@ void ScriptHost::DispatchPhysicsEvents(const std::vector<physics::ContactEvent>&
 {
     if(!playing_)return;
     for(const auto& event:events)for(const auto& [behavior,_]:records_)if(behavior->Owner().Id()==event.receiver)
-        if(auto* live=dynamic_cast<BoundScript*>(const_cast<ScriptBehavior*>(behavior)->Instance()))live->PhysicsEvent(const_cast<GameObject&>(behavior->Owner()),event);
+        if(auto* live=dynamic_cast<BoundScript*>(const_cast<ScriptBehavior*>(behavior)->Instance()))live->PhysicsEvent(const_cast<ObjectCore&>(behavior->Owner()),event);
 }
 void ScriptHost::Stop(ObjectStore& objects)
 {
@@ -687,7 +690,7 @@ void ScriptHost::Stop(ObjectStore& objects)
         auto& object=objects.At(i);
         for (std::size_t j=0;j<object.BehaviorCount();++j)
             if (auto* script=dynamic_cast<ScriptBehavior*>(&object.BehaviorAt(j))) script->BindInstance(nullptr);
-        if (auto it=transforms_.find(object.Id()); it!=transforms_.end()) object.GetTransform()=it->second;
+        if (auto* g=As3D(&object)) if (auto it=transforms_.find(g->Id()); it!=transforms_.end()) g->GetTransform()=it->second;
     }
     objects.SetParents(parents_);parents_.clear();transforms_.clear(); playing_=false;playingObjects_=nullptr;playingPhysics_=nullptr;
 }

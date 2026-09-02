@@ -343,6 +343,11 @@ struct Program::Impl {
     std::map<std::string, Class> classes;
     ProgramStats stats;
     bool IsType(const std::string& t) const { return t == "char" || t == "array" || t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || t == "Vector2" || classes.contains(t); }
+    // True for anything derived from gameObject OR gameObject2D (both are scene objects
+    // with a transform, parent and the built-in lifecycle hooks / helper methods).
+    bool IsGameObjectLike(const std::string& name) const {
+        return Assignable("gameObject", name) || Assignable("gameObject2D", name);
+    }
     bool Assignable(const std::string& target, const std::string& from) const {
         if (target == from || (target == "float" && from == "int")) return true;
         if(target=="string" && from=="char")return true;
@@ -735,6 +740,22 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Function getTags;getTags.result="array";gameObject.methods.emplace("get_tags",std::move(getTags));
     Function hasTag;hasTag.params={"string"};hasTag.result="bool";gameObject.methods.emplace("has_tag",std::move(hasTag));
     program.classes.emplace("gameObject", std::move(gameObject));
+    // gameObject2D: identical to gameObject but with a 2D (screen-space) transform.
+    Class transform2d; transform2d.name = "Transform2D";
+    transform2d.signals = {"was_moved", "was_rotated", "was_scaled"};
+    transform2d.fields.push_back({Token{Token::Identifier, "position"}, "Vector2"});
+    transform2d.fields.push_back({Token{Token::Identifier, "rotation"}, "float"});
+    transform2d.fields.push_back({Token{Token::Identifier, "scale"}, "Vector2"});
+    program.classes.emplace("Transform2D", std::move(transform2d));
+    Class gameObject2D; gameObject2D.name = "gameObject2D";
+    gameObject2D.fields.push_back({Token{Token::Identifier, "transform"}, "Transform2D"});
+    gameObject2D.fields.push_back({Token{Token::Identifier, "parent"}, "gameObject2D"});
+    gameObject2D.methods.emplace("find", [] { Function f; f.params={"string"}; f.result="gameObject2D"; return f; }());
+    gameObject2D.methods.emplace("make_timer", [] { Function f; f.params={"float"}; f.result="Timer"; return f; }());
+    gameObject2D.methods.emplace("print", [] { Function f; f.params={"string"}; f.result="void"; return f; }());
+    gameObject2D.methods.emplace("get_tags", [] { Function f; f.result="array"; return f; }());
+    gameObject2D.methods.emplace("has_tag", [] { Function f; f.params={"string"}; f.result="bool"; return f; }());
+    program.classes.emplace("gameObject2D", std::move(gameObject2D));
     Class timer;timer.name="Timer";timer.base="gameObject";timer.fields=program.classes.at("gameObject").fields;timer.signals={"finished"};program.classes.emplace(timer.name,std::move(timer));
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
     auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());
@@ -787,7 +808,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
             if (const auto* base = program.Method(c.base, method.name.text)) {
                 if (base->result != f.result || base->params != f.params) Fail(program.source, method.name, "Override must preserve the inherited signature");
             }
-            if (program.Assignable("gameObject", name)) {
+            if (program.IsGameObjectLike(name)) {
                 if (method.name.text == "start" || method.name.text == "draw") {
                     if (f.result != "void" || !f.params.empty()) Fail(program.source, method.name, "Lifecycle hook must be void with no parameters");
                 } else if (method.name.text == "update" || method.name.text == "physicsUpdate") {
@@ -806,7 +827,7 @@ ScriptError::ScriptError(Diagnostic diagnostic)
 Program::Program(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
 ProgramStats Program::Stats() const { return impl_->stats; }
 bool Program::HasClass(std::string_view name) const { return impl_->classes.contains(Canonical(std::string(name))); }
-bool Program::IsGameObject(std::string_view name) const { return impl_->Assignable("gameObject", Canonical(std::string(name))); }
+bool Program::IsGameObject(std::string_view name) const { return impl_->IsGameObjectLike(Canonical(std::string(name))); }
 bool Program::HasCode(std::string_view className, std::string_view method) const {
     const auto* f = impl_->Method(Canonical(std::string(className)), std::string(method));
     return f && !f->code.empty();
@@ -998,12 +1019,12 @@ struct Runtime::Impl {
         }
         value = Coerce(std::move(value), field->type, t);
         if(program->Assignable("PhysicsBody",o.type->name) && (name=="velocity"||name=="angular_velocity") && physicsBodyCall){physicsBodyCall(o.physicsOwner,name=="velocity"?"set_velocity":"set_angular_velocity",{value});}
-        if(fieldName=="transform" && program->Assignable("gameObject",o.type->name)){
+        if(fieldName=="transform" && program->IsGameObjectLike(o.type->name)){
             const auto next=std::get<ObjectRef>(value),previous=std::get<ObjectRef>(o.fields[index]);
             if(next.id){auto& target=Resolve(next,t);if(target.transformOwner.id && target.transformOwner!=ref)Error(t,"A Transform cannot belong to two GameObjects");target.transformOwner=ref;}
             if(previous.id && previous!=next)Resolve(previous,t).transformOwner={};
         }
-        if(fieldName=="parent" && program->Assignable("gameObject",o.type->name)) {
+        if(fieldName=="parent" && program->IsGameObjectLike(o.type->name)) {
             auto parent=std::get<ObjectRef>(value);unsigned parentDepth=0;
             while(parent.id){if(parent==ref || ++parentDepth>64)Error(t,"Parenting would create a cycle or exceed 64 levels");parent=std::get<ObjectRef>(Get(parent,"parent",t));}
         }
@@ -1090,6 +1111,9 @@ struct Runtime::Impl {
                     for(const auto& native:NativeTypes())
                         if(native.component && !native.physicsBody && program->Assignable(std::string(native.name),name)){Set(ref,std::string(native.accessor),ref,t);break;}
                 }
+            }
+            else if (program->Assignable("gameObject2D", name)) {
+                const auto transform=Create("Transform2D",t);Resolve(transform,t).transformOwner=ref;Set(ref,"transform",transform,t);
             }
             for (auto it = bases.rbegin(); it != bases.rend(); ++it) Execute(ref, (*it)->initializer, {}, t);
         } catch (...) { objects[ref.id - 1]->failed = true; throw; }
@@ -1206,13 +1230,24 @@ struct Runtime::Impl {
         if (std::holds_alternative<std::int64_t>(a) && std::holds_alternative<std::int64_t>(b)) return compare(std::get<std::int64_t>(a), std::get<std::int64_t>(b));
         return compare(Number(a), Number(b));
     }
+    // True when `type` resolves `name` to the built-in gameObject/gameObject2D method
+    // rather than a user override (so the host special-case should run).
+    bool BuiltinObjectMethod(const std::string& type, const std::string& name) const {
+        const auto* m = program->Method(type, name);
+        if (!m) return false;
+        for (const char* base : {"gameObject", "gameObject2D"}) {
+            const auto& methods = program->classes.at(base).methods;
+            if (const auto it = methods.find(name); it != methods.end() && m == &it->second) return true;
+        }
+        return false;
+    }
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
-        if(name=="print" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("print")) {
+        if(name=="print" && BuiltinObjectMethod(object.type->name,"print")) {
             if(args.size()!=1)Error(t,"print takes one string");
             const auto text=std::get<std::string>(Coerce(args[0],"string",t));if(printCallback)printCallback(text);return {};
         }
-        if(name=="make_timer" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("make_timer")) {
+        if(name=="make_timer" && BuiltinObjectMethod(object.type->name,"make_timer")) {
             if(args.size()!=1)Error(t,"make_timer takes a duration in seconds");
             const auto duration=Number(Coerce(args[0],"float",t));if(duration<0)Error(t,"Timer duration must be nonnegative");
             const auto timer=Create("Timer",t);timers.push_back({timer,duration});return timer;
@@ -1250,12 +1285,12 @@ struct Runtime::Impl {
             else if(name=="exp")result=std::exp(value);else if(name=="round")result=std::round(value);else Error(t,"Unknown Mathf method");
             if(!std::isfinite(result))Error(t,"Mathf produced a non-finite result");return result;
         }
-        if(name=="find" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("find")) {
+        if(name=="find" && BuiltinObjectMethod(object.type->name,"find")) {
             Tick(t);if(args.size()!=1)Error(t,"find takes one scene object name");
             const auto requested=std::get<std::string>(Coerce(args[0],"string",t));
             return Coerce(objectLookup?Value{objectLookup(requested)}:Value{ObjectRef{}},"gameObject",t);
         }
-        if((name=="get_tags"||name=="has_tag") && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at(name)) {
+        if((name=="get_tags"||name=="has_tag") && BuiltinObjectMethod(object.type->name,name)) {
             Tick(t);
             const std::vector<std::string> tags = tagLookup ? tagLookup(ref) : std::vector<std::string>{};
             if(name=="has_tag") {
@@ -1405,8 +1440,8 @@ struct Runtime::Impl {
                 if (auto i = std::get_if<std::int64_t>(&value)) {
                     if (*i == std::numeric_limits<std::int64_t>::min()) Error(t, "Integer overflow");
                     stack.push_back(-*i);
-                } else if (auto v = std::get_if<Vector3>(&value)) stack.push_back(Vector3{-v->x, -v->y, -v->z});
-                else if (auto v = std::get_if<Vector2>(&value)) stack.push_back(Vector2{-v->x, -v->y});
+                } else if (auto v3 = std::get_if<Vector3>(&value)) stack.push_back(Vector3{-v3->x, -v3->y, -v3->z});
+                else if (auto v2 = std::get_if<Vector2>(&value)) stack.push_back(Vector2{-v2->x, -v2->y});
                 else if (auto number = std::get_if<double>(&value)) stack.push_back(-*number);
                 else Error(t,"Invalid unary operand");
                 break;
@@ -1424,8 +1459,8 @@ struct Runtime::Impl {
                 else if (const auto* boolean=std::get_if<bool>(&value)) text<<(*boolean?"true":"false");
                 else if (const auto* string=std::get_if<std::string>(&value)) text<<*string;
                 else if (const auto* character=std::get_if<char32_t>(&value)) text<<script::text::Encode(*character);
-                else if (const auto* vector=std::get_if<Vector3>(&value)) text<<vector->x<<", "<<vector->y<<", "<<vector->z;
-                else if (const auto* vector=std::get_if<Vector2>(&value)) text<<vector->x<<", "<<vector->y;
+                else if (const auto* vector3=std::get_if<Vector3>(&value)) text<<vector3->x<<", "<<vector3->y<<", "<<vector3->z;
+                else if (const auto* vector2=std::get_if<Vector2>(&value)) text<<vector2->x<<", "<<vector2->y;
                 else Error(t,"Only scalar values can be interpolated");
                 stack.push_back(text.str()); break;
             }
@@ -1487,7 +1522,7 @@ struct Runtime::Impl {
     }
     void Behavior(ObjectRef ref) const {
         const auto& object = Resolve(ref);
-        if (!program->Assignable("gameObject", object.type->name)) Error({}, "Lifecycle hooks require a gameObject-derived behavior");
+        if (!program->IsGameObjectLike(object.type->name)) Error({}, "Lifecycle hooks require a gameObject-derived behavior");
     }
     void Start(ObjectRef ref) {
         Behavior(ref); auto& object = Resolve(ref);

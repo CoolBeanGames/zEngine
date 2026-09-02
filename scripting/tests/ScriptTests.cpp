@@ -553,6 +553,25 @@ void Vector2Type() {
     Error([&]{Compile("class A { func f(){ Vector2 a = Vector2(); Vector3 b = a; } }");},"Cannot assign 'Vector2' to 'Vector3'");
     Error([&]{Compile("class A { func f(){ Vector2 a = Vector2() + Vector3(); } }");},"Arithmetic operands");
 }
+void GameObject2DScript() {
+    auto p = Compile(R"(class Sprite : gameObject2D {
+        export Vector2 spawn = Vector2(10, 20);
+        func start() { transform.position = spawn; transform.rotation = 45; }
+        func move(float dx) { transform.position.x += dx; }
+        func where():Vector2 { return transform.position; }
+        func angle():float { return transform.rotation; }
+        func mine():bool { return this is gameObject2D && !(this is gameObject); }
+    })");
+    Check(static_cast<bool>(p), "gameObject2D-derived class did not compile");
+    Check(p->IsGameObject("Sprite"), "gameObject2D-derived class not recognised as gameObject-like");
+    Runtime r(p); auto s = r.Create("Sprite"); r.Start(s);
+    Check(std::get<Vector2>(r.Call(s, "where")) == Vector2{10, 20}, "Transform2D.position not initialised from start()");
+    Check(std::get<double>(r.Call(s, "angle")) == 45, "Transform2D.rotation (float) not set");
+    r.Call(s, "move", {2.0});
+    Check(std::get<Vector2>(r.Call(s, "where")) == Vector2{12, 20}, "Transform2D.position.x component write failed");
+    Check(std::get<bool>(r.Call(s, "mine")), "gameObject2D type identity wrong");
+    Error([&] { Compile("class B : gameObject2D { func f(){ transform.position = Vector3(1,2,3); } }"); }, "Cannot assign 'Vector3'");
+}
 void MouseInput() {
     auto program=Compile(R"(class Cursor : gameObject {
         int clicks; int releases; int held; int moves;
@@ -604,7 +623,7 @@ void MouseInput() {
 }
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"Vector2 type", Vector2Type}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
+        {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},

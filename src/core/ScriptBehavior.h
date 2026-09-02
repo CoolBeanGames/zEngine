@@ -13,16 +13,16 @@ namespace zengine
         virtual bool HasUpdate() const noexcept = 0;
         virtual bool HasDraw() const noexcept = 0;
         virtual bool HasPhysicsUpdate() const noexcept { return false; }
-        virtual void Start(GameObject&) = 0;
-        virtual void Update(GameObject&, float delta) = 0;
-        virtual void Draw(GameObject&) = 0;
-        virtual void PhysicsUpdate(GameObject&, float) {}
+        virtual void Start(ObjectCore&) = 0;
+        virtual void Update(ObjectCore&, float delta) = 0;
+        virtual void Draw(ObjectCore&) = 0;
+        virtual void PhysicsUpdate(ObjectCore&, float) {}
     };
     // Project-relative asset reference with an optional live instance during Play.
     class ScriptBehavior final : public Behavior
     {
     public:
-        ScriptBehavior(GameObject& owner, std::string asset) : Behavior(owner), asset_(std::move(asset))
+        ScriptBehavior(ObjectCore& owner, std::string asset) : Behavior(owner), asset_(std::move(asset))
         {
             if (asset_.empty()) throw std::invalid_argument("Script asset reference cannot be empty.");
         }

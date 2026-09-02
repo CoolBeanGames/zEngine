@@ -75,7 +75,9 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
     for (std::size_t i=0;i<objects.Size();++i)
     {
         const auto& object=objects.At(i);
-        ObjectData data{object.Id(),object.Name(),object.Tags(),object.GetTransform(),{}};
+        ObjectData data; data.id=object.Id(); data.name=object.Name(); data.tags=object.Tags();
+        if (const auto* g2d = dynamic_cast<const GameObject2D*>(&object)) { data.is2D=true; data.transform2d=g2d->GetTransform(); }
+        else data.transform = As3D(object).GetTransform();
         data.parent=object.Parent();
         for (std::size_t j=0;j<object.BehaviorCount();++j)
         {
@@ -104,13 +106,17 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
 std::string Encode(const Document& scene)
 {
     std::ostringstream out; out.imbue(std::locale::classic()); out<<std::setprecision(17);
-    out<<"ZENGINE_SCENE 7\nobjects "<<scene.objects.size()<<'\n';
+    out<<"ZENGINE_SCENE 8\nobjects "<<scene.objects.size()<<'\n';
     for (const auto& object:scene.objects)
     {
         out<<"object "<<object.id<<' '<<std::quoted(object.name)<<"\ntags "<<object.tags.size();
         for (const auto& tag:object.tags) out<<' '<<std::quoted(tag);
-        out<<"\ntransform";
-        for (const auto v:{object.transform.Position(),object.transform.Rotation(),object.transform.Scale()}) out<<' '<<v.x<<' '<<v.y<<' '<<v.z;
+        if (object.is2D)
+        {
+            const auto p=object.transform2d.Position(),s=object.transform2d.Scale();
+            out<<"\ntransform2d "<<p.x<<' '<<p.y<<' '<<object.transform2d.Rotation()<<' '<<s.x<<' '<<s.y;
+        }
+        else { out<<"\ntransform"; for (const auto v:{object.transform.Position(),object.transform.Rotation(),object.transform.Scale()}) out<<' '<<v.x<<' '<<v.y<<' '<<v.z; }
         out<<"\nparent "<<object.parent<<"\nprefab "<<std::quoted(object.prefab)<<' '<<(object.transformMask?object.transformMask:object.transformOverride?511:0)<<' '<<object.prefabDataMask;
         out<<"\nbehaviors "<<object.behaviors.size()<<'\n';
         for (const auto& b:object.behaviors)
@@ -164,7 +170,7 @@ Document Decode(std::string_view text)
 {
     Require(text.size()<=MaxSceneBytes,"Scene exceeds the 8 MiB limit.");
     std::istringstream in{std::string(text)}; in.imbue(std::locale::classic());
-    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,7); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
+    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,8); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
     Document scene; const auto count=Count(in,10000); std::set<GameObjectId> ids;
     for (std::size_t i=0;i<count;++i)
     {
@@ -173,7 +179,17 @@ Document Decode(std::string_view text)
         object.name=Text(in); Require(object.name.find_first_not_of(" \t\r\n")!=std::string::npos,"Scene object needs a name.");
         Token(in,"tags"); const auto tags=Count(in,256);
         for (std::size_t j=0;j<tags;++j) object.tags.push_back(Text(in));
-        Token(in,"transform"); object.transform.SetPosition(Vector(in)); object.transform.SetRotation(Vector(in)); object.transform.SetScale(Vector(in));
+        std::string transformKind; Require(static_cast<bool>(in>>transformKind),"Missing transform.");
+        if (transformKind=="transform2d")
+        {
+            Require(version>=8,"2D objects require scene version 8.");
+            object.is2D=true;
+            const double px=Number(in),py=Number(in),rot=Number(in),sx=Number(in),sy=Number(in);
+            object.transform2d.SetPosition({static_cast<float>(px),static_cast<float>(py)});
+            object.transform2d.SetRotation(static_cast<float>(rot));
+            object.transform2d.SetScale({static_cast<float>(sx),static_cast<float>(sy)});
+        }
+        else { Require(transformKind=="transform","Expected a transform."); object.transform.SetPosition(Vector(in)); object.transform.SetRotation(Vector(in)); object.transform.SetScale(Vector(in)); }
         if (version>=2)
         {
             Token(in,"parent"); Require(static_cast<bool>(in>>object.parent),"Invalid parent ID.");
@@ -269,7 +285,10 @@ Instance Instantiate(const Document& scene)
     Instance instance;
     for (const auto& data:scene.objects)
     {
-        auto& object=instance.objects.Restore(data.id,data.name); object.SetTags(data.tags); object.GetTransform()=data.transform;
+        ObjectCore& object = data.is2D ? static_cast<ObjectCore&>(instance.objects.Restore2D(data.id,data.name))
+                                       : static_cast<ObjectCore&>(instance.objects.Restore(data.id,data.name));
+        object.SetTags(data.tags);
+        if (data.is2D) As2D(object).GetTransform()=data.transform2d; else As3D(object).GetTransform()=data.transform;
         Require(data.prefab.empty(),"Resolve prefab references before instantiating scene data.");
         for (const auto& b:data.behaviors)
         {
@@ -297,7 +316,10 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
     for(const auto& data:scene.objects)
     {
         Require(data.prefab.empty(),"Resolve prefab references before spawning scene data.");
-        auto& object=objects.Create(data.name);object.SetTags(data.tags);object.GetTransform()=data.transform;
+        ObjectCore& object = data.is2D ? static_cast<ObjectCore&>(objects.Create2D(data.name))
+                                       : static_cast<ObjectCore&>(objects.Create(data.name));
+        object.SetTags(data.tags);
+        if (data.is2D) As2D(object).GetTransform()=data.transform2d; else As3D(object).GetTransform()=data.transform;
         remap.emplace(data.id,object.Id());
         if(!data.parent && !root)root=object.Id();
         for(const auto& b:data.behaviors)

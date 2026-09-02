@@ -114,7 +114,7 @@ void GizmoTests(bool capture)
             if (capture && axis==0) CaptureWindow(window,L"gizmo-mode"+std::to_wstring(mode)+L".bmp");
             Check(editor.SaveScene(),"Edited transform could not be saved");
             // Restore a clean starting point for the next axis without prompting.
-            auto& object=const_cast<zengine::GameObject&>(editor.GameObjects().At(0)); object.GetTransform()=zengine::Transform{}; Check(editor.SaveScene(),"Fixture reset failed");
+            auto& object=const_cast<zengine::GameObject&>(zengine::As3D(editor.GameObjects().At(0))); object.GetTransform()=zengine::Transform{}; Check(editor.SaveScene(),"Fixture reset failed");
         }
         editor.SetTransformTool(gizmo::Mode::Move);
         gizmo::Point start; auto shape=gizmo::Build(camera,editor.SelectedGameObject()->GetTransform(),gizmo::Mode::Move);

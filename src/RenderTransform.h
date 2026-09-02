@@ -14,12 +14,12 @@ inline DirectX::XMMATRIX TransformMatrix(const zengine::Transform& transform)
         XMMatrixTranslation(p.x, p.y, p.z);
 }
 
-inline DirectX::XMMATRIX ParentMatrix(const zengine::ObjectStore& objects,const zengine::GameObject& object)
+inline DirectX::XMMATRIX ParentMatrix(const zengine::ObjectStore& objects,const zengine::ObjectCore& object)
 {
     auto matrix=DirectX::XMMatrixIdentity(); auto parent=object.Parent();
     for (unsigned depth=0;parent && depth<64;++depth)
     {
-        const auto* ancestor=objects.Find(parent); if (!ancestor) break;
+        const auto* ancestor=zengine::As3D(objects.Find(parent)); if (!ancestor) break;
         matrix=matrix*TransformMatrix(ancestor->GetTransform()); parent=ancestor->Parent();
     }
     return matrix;
