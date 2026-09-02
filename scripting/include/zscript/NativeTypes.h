@@ -34,6 +34,7 @@ inline const std::vector<NativeType>& NativeTypes() {
         {"StaticBody",     "PhysicsBody", "static_body",    true,  true,  true },
         {"Area",           "PhysicsBody", "area",           true,  true,  true },
         {"Collider",       "Behavior",    "collider",       true,  false, true },
+        {"Camera",         "Behavior",    "camera",         true,  false, true },
         {"Timer",          "gameObject",  "",               false, false, true },
         {"prefab",         "",            "",               false, false, true },
         {"InputService",   "",            "",               false, false, true },

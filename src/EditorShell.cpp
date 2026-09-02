@@ -14,6 +14,7 @@
 #include "AssetLibrary.h"
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
+#include "core/Camera.h"
 #include <commdlg.h>
 #include <commctrl.h>
 
@@ -451,6 +452,13 @@ ViewportFrame EditorShell::BuildSceneFrame() const
         const auto& object = objects_.At(i);
         const auto* mesh = object.GetBehavior<zengine::MeshRenderer>();
         if(!Playing())if(const auto* collider=object.GetBehavior<zengine::physics::Collider>();collider&&collider->Enabled()){DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));frame.colliders.push_back({collider->Shape(),object.GetTransform(),collider->Offset(),collider->Size(),parent,object.Id()==selectedObject_});}
+        if(const auto* camera=object.GetBehavior<zengine::Camera>())
+        {
+            DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
+            CameraView view{object.GetTransform(),parent,camera->FieldOfView(),camera->NearPlane(),camera->FarPlane(),object.Id()==selectedObject_,camera->IsMain()};
+            if(!Playing()) frame.cameraGizmos.push_back(view);
+            if(view.main && (viewTab_==ViewTab::Game || Playing()) && camera->Enabled()) frame.gameView=view;
+        }
         const auto bound = meshBindings_.find(object.Id());
         if (mesh && mesh->Enabled() && !mesh->Asset().empty() && bound != meshBindings_.end() && bound->second.asset == mesh->Asset())
         {
@@ -772,6 +780,9 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
 void EditorShell::OnObjectChanged()
 {
     if (!Playing()) { RecordTransformOverride(selectedObject_); RecordPrefabDataOverride(selectedObject_); }
+    // Keep the "main" camera unique when the selected camera's tag was just changed.
+    if (const auto* selected = SelectedGameObject(); selected && selected->GetBehavior<zengine::Camera>() && selected->HasTag(zengine::Camera::MainTag))
+        SyncMainCamera(selected->Id());
     MarkSceneDirty();
     if (const auto* selected = SelectedGameObject())
         SetWindowTextW(viewportWindow_, (L"Scene Viewport - " + WideText(selected->Name())).c_str());

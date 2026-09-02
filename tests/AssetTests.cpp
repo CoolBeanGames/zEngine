@@ -2,6 +2,7 @@
 #include "Renderer.h"
 #include "EditorShell.h"
 #include "core/MeshRenderer.h"
+#include "core/Camera.h"
 #include "physics/PhysicsBehavior.h"
 #include "InspectorPanel.h"
 #include "RenderTransform.h"
@@ -893,6 +894,57 @@ void ObjectPickerTests(bool capture)
     CoUninitialize();
     std::cout<<"PASS: object picker window/dropdown, live search, type-filter chips, clear/cancel, editor integration\n";
 }
+void CameraTests(bool capture)
+{
+    Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    TestDirectory test;
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        const HWND window=editor.Create(SW_HIDE,test.path/"Project");
+        editor.InitializeRenderer();
+
+        auto& first=editor.CreateGameObject(EditorShell::ObjectPreset::Camera);
+        Require(first.GetBehavior<zengine::Camera>()!=nullptr,"Camera preset did not attach a Camera behavior");
+        Require(first.HasTag(zengine::Camera::MainTag),"A new camera did not become the main camera");
+        first.GetTransform().SetPosition({0,2,-8}); first.GetTransform().SetRotation({8,0,0});
+
+        // A second camera takes over as main.
+        auto& second=editor.CreateGameObject(EditorShell::ObjectPreset::Camera);
+        Require(second.HasTag(zengine::Camera::MainTag) && !first.HasTag(zengine::Camera::MainTag),"Spawning a second camera did not transfer the main tag");
+
+        // Re-tagging the first camera "main" via the object (as the Inspector would) flips it back exclusively.
+        first.SetTags({std::string(zengine::Camera::MainTag)});
+        second.SetTags({std::string(zengine::Camera::MainTag)}); // both tagged, as if edited directly
+        editor.SyncMainCamera(first.Id());
+        Require(first.HasTag(zengine::Camera::MainTag) && !second.HasTag(zengine::Camera::MainTag),"Enabling main on another camera did not remove it elsewhere");
+
+        // The Game tab views the scene through the main camera; the Scene tab draws its frustum.
+        editor.SetViewTab(EditorShell::ViewTab::Game);
+        const auto gameFrame=editor.BuildSceneFrame();
+        Require(gameFrame.gameView.has_value(),"Game tab did not view through the main camera");
+        editor.SetViewTab(EditorShell::ViewTab::Scene);
+        const auto sceneFrame=editor.BuildSceneFrame();
+        Require(sceneFrame.cameraGizmos.size()==2 && !sceneFrame.gameView.has_value(),"Scene tab lost the camera frustum gizmos");
+
+        // fov/near/far are editable and serialised.
+        first.GetBehavior<zengine::Camera>()->SetFieldOfView(75);
+        first.GetBehavior<zengine::Camera>()->SetNearPlane(0.25f);
+        Require(editor.SaveScene(editor.AssetsDirectory()/L"Cam.zscene"),"Could not save the camera scene");
+        Require(editor.OpenScene(editor.AssetsDirectory()/L"Cam.zscene"),"Could not reload the camera scene");
+        const zengine::Camera* reloaded=nullptr;
+        for(std::size_t i=0;i<editor.GameObjects().Size();++i)
+            if(auto* c=const_cast<zengine::GameObject&>(editor.GameObjects().At(i)).GetBehavior<zengine::Camera>(); c && editor.GameObjects().At(i).HasTag(zengine::Camera::MainTag)) reloaded=c;
+        Require(reloaded && std::abs(reloaded->FieldOfView()-75)<0.01f && std::abs(reloaded->NearPlane()-0.25f)<0.001f,"Camera settings were not serialised");
+
+        // Camera is a referenceable script type.
+        const auto probe=zengine::script::Compiler::Compile("class Rig : gameObject { export Camera view; func start(){ view; } }","Rig");
+        Require(static_cast<bool>(probe),"Camera is not a usable script reference type");
+
+        if(capture){ editor.SetViewTab(EditorShell::ViewTab::Scene); for(int i=0;i<6;++i) editor.Render(); CaptureScreen(window,L"camera-qa.bmp"); }
+    }
+    CoUninitialize();
+    std::cout<<"PASS: camera GameObject, single main-camera tag, frustum gizmos, Game-tab camera view, serialisation, script reference type\n";
+}
 void ViewTabsTests(bool capture)
 {
     Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
@@ -1018,6 +1070,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--collision-bits") CollisionBitsTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--picker") ObjectPickerTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--view-tabs") ViewTabsTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--camera") CameraTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scripts") ScriptIntegrationEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scenes") SceneEditorTests(argc > 2 && std::string(argv[2]) == "--capture");

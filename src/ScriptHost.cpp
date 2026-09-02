@@ -1,4 +1,5 @@
 #include "ScriptHost.h"
+#include "core/Camera.h"
 #include "zscript/Text.h"
 #include "zscript/NativeTypes.h"
 #include <algorithm>
@@ -41,6 +42,7 @@ namespace
             {"StaticBody",    "static_body",    [](const GameObject& o){ return o.GetBehavior<physics::StaticBody>()!=nullptr; }},
             {"Area",          "area",           [](const GameObject& o){ return o.GetBehavior<physics::Area>()!=nullptr; }},
             {"Collider",      "collider",       [](const GameObject& o){ return o.GetBehavior<physics::Collider>()!=nullptr; }},
+            {"Camera",        "camera",         [](const GameObject& o){ return o.GetBehavior<Camera>()!=nullptr; }},
         };
         return table;
     }

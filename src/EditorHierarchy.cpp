@@ -1,7 +1,9 @@
 #include "EditorShell.h"
 #include "InspectorPanel.h"
 #include "core/MeshRenderer.h"
+#include "core/Camera.h"
 #include "physics/PhysicsBehavior.h"
+#include <algorithm>
 #include <limits>
 
 std::vector<zengine::GameObjectId> EditorShell::ObjectRows() const {
@@ -32,15 +34,37 @@ void EditorShell::RevertPrefabTransform(zengine::GameObjectId id) {
     status_=L"Prefab transform overrides reverted to the source asset";InvalidateRect(window_,nullptr,FALSE);
 }
 
+void EditorShell::SyncMainCamera(zengine::GameObjectId keepMain) {
+    // Exactly one camera may carry the "main" tag. keepMain wins; otherwise the first
+    // camera already tagged "main" keeps it and the rest lose it.
+    zengine::GameObjectId main=keepMain;
+    if(!main)for(std::size_t i=0;i<objects_.Size();++i){auto& o=objects_.At(i);if(o.GetBehavior<zengine::Camera>()&&o.HasTag(zengine::Camera::MainTag)){main=o.Id();break;}}
+    for(std::size_t i=0;i<objects_.Size();++i) {
+        auto& o=objects_.At(i);
+        if(!o.GetBehavior<zengine::Camera>())continue;
+        const bool wants=o.Id()==main,has=o.HasTag(zengine::Camera::MainTag);
+        if(wants==has)continue;
+        auto tags=o.Tags();
+        if(wants)tags.push_back(zengine::Camera::MainTag);
+        else tags.erase(std::remove(tags.begin(),tags.end(),std::string(zengine::Camera::MainTag)),tags.end());
+        o.SetTags(std::move(tags));
+    }
+}
 zengine::GameObject& EditorShell::CreateGameObject(ObjectPreset preset,zengine::GameObjectId parent) {
     if(parent)RequireEditable(parent);
     auto& object=CreateEmptyGameObject();
     if(parent)SetObjectParent(object.Id(),parent);
     const auto rename=[&](std::string base){std::string name=base;for(unsigned suffix=1;;++suffix){bool used=false;for(std::size_t i=0;i<objects_.Size();++i)if(objects_.At(i).Id()!=object.Id()&&objects_.At(i).Name()==name){used=true;break;}if(!used)break;name=base+" ("+std::to_string(suffix)+")";}object.SetName(std::move(name));};
     if(preset==ObjectPreset::Cube){rename("Cube");AssignCube(object.Id());}
-    else if(preset==ObjectPreset::Camera)rename("Camera");
+    else if(preset==ObjectPreset::Camera){
+        rename("Camera");
+        object.AddBehavior<zengine::Camera>();
+        object.SetTags({zengine::Camera::MainTag}); // a new camera takes over as the main camera
+        SyncMainCamera(object.Id());
+        inspectorPanel_->RefreshBehaviors(); OnObjectChanged();
+    }
     else if(preset!=ObjectPreset::Empty){rename(preset==ObjectPreset::RigidBody?"RigidBody":preset==ObjectPreset::KinematicBody?"KinematicBody":preset==ObjectPreset::StaticBody?"StaticBody":"Area");object.AddBehavior<zengine::physics::Collider>();if(preset==ObjectPreset::RigidBody)object.AddBehavior<zengine::physics::RigidBody>();else if(preset==ObjectPreset::KinematicBody)object.AddBehavior<zengine::physics::KinematicBody>();else if(preset==ObjectPreset::StaticBody)object.AddBehavior<zengine::physics::StaticBody>();else object.AddBehavior<zengine::physics::Area>();inspectorPanel_->RefreshBehaviors();OnObjectChanged();}
-    status_=preset==ObjectPreset::Camera?L"Created Camera GameObject (camera rendering behavior will be added with the camera system)":L"Created GameObject";
+    status_=preset==ObjectPreset::Camera?L"Created Camera GameObject - it is now the main camera":L"Created GameObject";
     BeginObjectRename(object.Id());
     return object;
 }

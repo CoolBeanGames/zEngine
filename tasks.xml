@@ -962,7 +962,7 @@ it should display the frustrum and should be the primary viewport
 
 if a new camera is spawned in it takes over as the main camera. there is a "main" tag on the camera, only one camera can be main. enableing main on another camera removes it on all others and replaces the current camera.</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -970,14 +970,14 @@ if a new camera is spawned in it takes over as the main camera. there is a "main
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>camera,rendering,3d,view</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>New zengine::Camera native behavior (field of view, near, far; "main" via the owner's "main" tag). Added through the scene-tree "Camera" preset or Inspector "Add Behavior &gt; Camera"; a fresh camera claims "main" and SyncMainCamera keeps it unique (creating another camera, or re-tagging one via the Inspector, transfers it and clears the rest). Registered in the phone book (NativeTypes.h) so scripts can "export Camera cam" - the compiler builds the class from the registry, ScriptHost binds it, autocomplete and the object picker follow. Scenes serialise it (version 6). The renderer: draws each camera's frustum as an editor guide in the Scene tab (main = blue, selected = amber), and when the Game tab is active the main camera's transform+projection replace the orbit camera (ViewportFrame::gameView / cameraGizmos). Inspector shows editable fov/near/far. New --camera suite (preset, single-main enforcement, gizmos, Game-tab view, save/reload, script reference); full ctest 31/31; frustum screenshot verified.</notes>
+    <filesChanged>src/core/Camera.h; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; src/ScriptHost.cpp; src/Scene.h; src/Scene.cpp; src/RenderScene.h; src/Renderer.cpp; src/EditorShell.h; src/EditorShell.cpp; src/EditorHierarchy.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; tests/AssetTests.cpp; tests/SceneTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-33">

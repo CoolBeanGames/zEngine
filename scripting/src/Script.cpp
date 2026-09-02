@@ -698,7 +698,11 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
     auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());
     for(const auto& native:NativeTypes())if(native.physicsBody){Class body;body.name=std::string(native.name);body.base=std::string(native.base);body.fields=nativePhysics.fields;body.signals=nativePhysics.signals;program.classes.emplace(body.name,std::move(body));}
-    Class collider;collider.name="Collider";collider.base="Behavior";collider.fields=program.classes.at("gameObject").fields;program.classes.emplace(collider.name,std::move(collider));
+    // Non-physics native components (Collider, Camera, ...) are plain Behavior-derived classes.
+    for(const auto& native:NativeTypes())
+        if(native.component && !native.physicsBody && !program.classes.contains(std::string(native.name))) {
+            Class c;c.name=std::string(native.name);c.base=std::string(native.base);c.fields=program.classes.at("gameObject").fields;program.classes.emplace(c.name,std::move(c));
+        }
     std::map<std::string, const ClassAst*> byName;
     for (const auto& ast : asts) {
         if (program.classes.contains(ast.name.text)) Fail(program.source, ast.name, "Duplicate class '" + ast.name.text + "'");

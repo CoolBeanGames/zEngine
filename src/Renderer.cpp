@@ -448,7 +448,17 @@ void Renderer::Render(const ViewportFrame& frame)
     }
 
     const ViewportCamera camera(static_cast<float>(width_),static_cast<float>(height_),frame.camera);
-    const XMMATRIX view=camera.view,projection=camera.projection;
+    const float aspect=static_cast<float>(width_)/std::max(1.0f,static_cast<float>(height_));
+    XMMATRIX view=camera.view,projection=camera.projection;
+    if (frame.gameView) // look through a Camera GameObject instead of the orbit camera
+    {
+        const auto& gv=*frame.gameView;
+        XMMATRIX world=TransformMatrix(gv.transform);
+        if (gv.parentMatrix) world=world*XMLoadFloat4x4(&*gv.parentMatrix);
+        if (std::abs(XMVectorGetX(XMMatrixDeterminant(world)))>1e-12f) view=XMMatrixInverse(nullptr,world);
+        projection=XMMatrixPerspectiveFovLH(XMConvertToRadians(std::clamp(gv.fovY,1.0f,179.0f)),aspect,
+                                            std::max(0.001f,gv.nearZ),std::max(gv.nearZ+0.01f,gv.farZ));
+    }
 
     const auto setConstants = [&](const XMMATRIX& matrix, bool unlit) {
         SceneConstants constants{};
@@ -506,8 +516,19 @@ void Renderer::Render(const ViewportFrame& frame)
         }
         ++lastMeshCount_;
     }
-    if(frame.showEditorGuides && !frame.colliders.empty()) {
-        std::vector<Vertex> vertices;vertices.reserve(frame.colliders.size()*160);const auto segment=[&](Float3 a,Float3 b,Float3 color){vertices.push_back({a,{0,1,0},color});vertices.push_back({b,{0,1,0},color});};
+    if(frame.showEditorGuides && (!frame.colliders.empty() || !frame.cameraGizmos.empty())) {
+        std::vector<Vertex> vertices;vertices.reserve(frame.colliders.size()*160+frame.cameraGizmos.size()*48);const auto segment=[&](Float3 a,Float3 b,Float3 color){vertices.push_back({a,{0,1,0},color});vertices.push_back({b,{0,1,0},color});};
+        for(const auto& cam:frame.cameraGizmos){
+            const auto world=TransformMatrix(cam.transform)*(cam.parentMatrix?XMLoadFloat4x4(&*cam.parentMatrix):XMMatrixIdentity());
+            const auto point=[&](float x,float y,float z){XMFLOAT3 o;XMStoreFloat3(&o,XMVector3TransformCoord(XMVectorSet(x,y,z,1),world));return Float3{o.x,o.y,o.z};};
+            const float tv=std::tan(XMConvertToRadians(std::clamp(cam.fovY,1.0f,179.0f))*0.5f),th=tv*aspect;
+            const float n=std::max(0.001f,cam.nearZ),f=std::max(n+0.05f,std::min(cam.farZ,n+25.0f)); // clamp the drawn far plane so the gizmo stays readable
+            Float3 c[8];for(int i=0;i<8;++i){const float z=(i<4)?n:f,sx=(i&1)?1.f:-1.f,sy=(i&2)?1.f:-1.f;c[i]=point(sx*z*th,sy*z*tv,z);}
+            const Float3 color=cam.selected?Float3{1,.8f,.15f}:cam.main?Float3{.35f,.75f,1.f}:Float3{.55f,.6f,.7f};
+            const int e[][2]={{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+            for(auto edge:e)segment(c[edge[0]],c[edge[1]],color);
+            const Float3 apex=point(0,0,0);for(int i=0;i<4;++i)segment(apex,c[i],color); // lens cone back to the origin
+        }
         for(const auto& draw:frame.colliders){const Float3 color=draw.selected?Float3{1,.8f,.15f}:Float3{.2f,.85f,.65f};const auto transform=XMMatrixScaling(draw.size.x,draw.size.y,draw.size.z)*XMMatrixTranslation(draw.offset.x,draw.offset.y,draw.offset.z)*TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity());
             const auto point=[&](float x,float y,float z){XMFLOAT3 out;XMStoreFloat3(&out,XMVector3TransformCoord(XMVectorSet(x,y,z,1),transform));return Float3{out.x,out.y,out.z};};
             if(draw.shape==zengine::physics::ColliderShape::Box){const int edges[][2]={{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};Float3 p[8];for(int i=0;i<8;++i)p[i]=point((i&1)?.5f:-.5f,(i&4)?.5f:-.5f,(i&2)?.5f:-.5f);for(auto edge:edges)segment(p[edge[0]],p[edge[1]],color);}

@@ -2,6 +2,7 @@
 #include "EditorStyle.h"
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
+#include "core/Camera.h"
 #include "physics/PhysicsBehavior.h"
 #include <windowsx.h>
 #include <algorithm>
@@ -193,9 +194,11 @@ void InspectorPanel::RefreshBehaviors()
         auto& behavior=object_->BehaviorAt(i);
         auto* script=dynamic_cast<zengine::ScriptBehavior*>(&behavior);
         const auto name=script ? std::filesystem::path(Wide(script->Asset())).stem().wstring() :
-            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
+            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
         add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
+        if(dynamic_cast<zengine::Camera*>(&behavior))
+            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"fov",L"Field of view (degrees)"},{"near",L"Near plane"},{"far",L"Far plane"}})add(&behavior,key,label,false,true,true);
         if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior)){
             addShape(collider);
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"offset",L"Offset"},{"size",L"Size"}})
@@ -267,6 +270,11 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
     const auto& entry=behaviorFields_.at(index);
     if(entry.combo)return {};
     if (entry.priority) { std::wostringstream out; out<<std::setprecision(9)<<entry.behavior->Priority(); return out.str(); }
+    if (auto* camera=dynamic_cast<zengine::Camera*>(entry.behavior)) {
+        std::wostringstream out; out<<std::setprecision(9);
+        if(entry.name=="fov")out<<camera->FieldOfView(); else if(entry.name=="near")out<<camera->NearPlane(); else if(entry.name=="far")out<<camera->FarPlane();
+        return out.str();
+    }
     if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
         for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name) {
             if(entry.axis<0){auto value=Wide(field.value);if(entry.multiline){std::wstring display;for(std::size_t i=0;i<value.size();++i){if(value[i]==L'\n' && (!i || value[i-1]!=L'\r'))display+=L'\r';display+=value[i];}return display;}return value;}
@@ -324,6 +332,10 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
             const auto base=index-entry.axis;auto vector=entry.name=="offset"?collider->Offset():collider->Size();float* parts[]={&vector.x,&vector.y,&vector.z};
             for(int axis=0;axis<3;++axis)if(axis==entry.axis)*parts[axis]=value;else if(!ParseNumber(BehaviorValue(base+axis),*parts[axis]))throw std::invalid_argument("Invalid collider vector");
             if(entry.name=="offset")collider->SetOffset(vector);else collider->SetSize(vector);
+        }
+        else if(auto* camera=dynamic_cast<zengine::Camera*>(entry.behavior)) {
+            float value;if(!ParseNumber(text,value))throw std::invalid_argument("Invalid camera value");
+            if(entry.name=="fov")camera->SetFieldOfView(value);else if(entry.name=="near")camera->SetNearPlane(value);else camera->SetFarPlane(value);
         }
         else if(auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior)) {
             if(entry.name=="layer"||entry.name=="mask"){wchar_t* end=nullptr;errno=0;const auto value=std::wcstoull(text.c_str(),&end,0);while(end&&*end&&std::iswspace(*end))++end;if(!end||end==text.c_str()||*end||errno==ERANGE||value>0xffffffffull)throw std::invalid_argument("Invalid collision bits");if(entry.name=="layer")body->SetLayer(static_cast<std::uint32_t>(value));else body->SetMask(static_cast<std::uint32_t>(value));}
@@ -654,7 +666,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_CONTEXTMENU: ShowBehaviorMenu({GET_X_LPARAM(l),GET_Y_LPARAM(l)}); return 0;
     case WM_COMMAND:
     {
-        if (!editData_ && ((LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddAreaCommand) || (LOWORD(w)>=AddScriptSubFirst && LOWORD(w)<AddScriptSubFirst+400))) return 0;
+        if (!editData_ && ((LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddCameraCommand) || (LOWORD(w)>=AddScriptSubFirst && LOWORD(w)<AddScriptSubFirst+400))) return 0;
         const int toggleIndex=LOWORD(w)-FirstBehaviorToggle;
         if (toggleIndex>=0 && toggleIndex<static_cast<int>(behaviorToggles_.size()) && HIWORD(w)==BN_CLICKED)
         {
@@ -734,6 +746,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|(object_->GetBehavior<zengine::physics::Collider>()?MF_GRAYED:0),AddColliderCommand,L"Collider");
             const bool hasBody=object_->GetBehavior<zengine::physics::RigidBody>()||object_->GetBehavior<zengine::physics::KinematicBody>()||object_->GetBehavior<zengine::physics::StaticBody>()||object_->GetBehavior<zengine::physics::Area>();const UINT bodyFlags=MF_STRING|(hasBody?MF_GRAYED:0);
             AppendMenuW(menu,bodyFlags,AddRigidBodyCommand,L"Rigid Body");AppendMenuW(menu,bodyFlags,AddKinematicBodyCommand,L"Kinematic Body");AppendMenuW(menu,bodyFlags,AddStaticBodyCommand,L"Static Body");AppendMenuW(menu,bodyFlags,AddAreaCommand,L"Area");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|(object_->GetBehavior<zengine::Camera>()?MF_GRAYED:0),AddCameraCommand,L"Camera");
             RECT button{}; GetWindowRect(addBehaviorButton_,&button);
             const auto command = TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,button.left,button.bottom,0,window_,nullptr);
             DestroyMenu(menu);
@@ -748,6 +761,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             return 0;
         }
         if(LOWORD(w)>=AddColliderCommand&&LOWORD(w)<=AddAreaCommand&&object_){if(LOWORD(w)==AddColliderCommand)object_->AddBehavior<zengine::physics::Collider>();else if(LOWORD(w)==AddRigidBodyCommand)object_->AddBehavior<zengine::physics::RigidBody>();else if(LOWORD(w)==AddKinematicBodyCommand)object_->AddBehavior<zengine::physics::KinematicBody>();else if(LOWORD(w)==AddStaticBodyCommand)object_->AddBehavior<zengine::physics::StaticBody>();else object_->AddBehavior<zengine::physics::Area>();RefreshBehaviors();if(changed_)changed_();return 0;}
+        if(LOWORD(w)==AddCameraCommand&&object_&&!object_->GetBehavior<zengine::Camera>()){object_->AddBehavior<zengine::Camera>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if (LOWORD(w) == AddMeshCommand || LOWORD(w) == ChooseMeshButton || LOWORD(w) == CubeMeshButton || LOWORD(w) == ClearMeshButton)
         {
             if (object_ && meshAction_) meshAction_(LOWORD(w) == AddMeshCommand ? MeshAction::Add : LOWORD(w) == ChooseMeshButton ? MeshAction::Choose : LOWORD(w) == CubeMeshButton ? MeshAction::Cube : MeshAction::Clear);

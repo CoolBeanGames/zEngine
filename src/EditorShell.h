@@ -106,6 +106,8 @@ public:
     enum class ViewTab { Scene, Game, Script };
     ViewTab CurrentViewTab() const noexcept { return viewTab_; }
     void SetViewTab(ViewTab tab);
+    // Enforce a single "main"-tagged Camera (keepMain wins ties). Call after the tag changes.
+    void SyncMainCamera(zengine::GameObjectId keepMain = 0);
     static constexpr int ScriptListControl = 3730, FunctionListControl = 3731;
 
 private:

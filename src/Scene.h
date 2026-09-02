@@ -8,7 +8,7 @@ namespace zengine::scenes
     constexpr std::size_t MaxSceneBytes=8*1024*1024;
     struct BehaviorData
     {
-        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area };
+        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area, Camera };
         Kind kind=Kind::Mesh;
         bool enabled=true;
         float priority=0;
@@ -20,6 +20,7 @@ namespace zengine::scenes
         std::uint32_t layer=1,mask=0xffffffffu;
         float friction=.5f,bounciness=0,mass=1,gravityScale=1;
         Vec3 velocity{},angularVelocity{},constantForce{},constantTorque{};
+        float cameraFov=60,cameraNear=0.1f,cameraFar=1000;
         bool operator==(const BehaviorData&) const = default;
     };
     struct ObjectData
