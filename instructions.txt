@@ -42,6 +42,7 @@ silently fix a bug without one.
        <tags></tags>
        <notes></notes>
        <filesChanged></filesChanged>
+       <image></image>
      </task>
    <bug>true</bug> is what marks it as a bug report.
 3. If the fix has more than one step, add a <subtasks> block just before </task>
@@ -74,6 +75,19 @@ When you finish a task, clear <lockKey> (set it back to empty) at the same time
 you set <done>true</done> and <inProgress>false</inProgress>, then save.
 
 === END TASK OWNERSHIP LOCK KEY ===
+
+=== TASK IMAGES ===
+
+A task may carry an attached image. It lives in the project's task_images folder
+(a sub-folder of the project root - the same folder as tasks.xml, prompt.txt and
+this file) and is recorded on the task as an <image> element holding only the
+file name, e.g. <image>ZP-59.png</image>. When a task's <image> is non-empty,
+look at task_images/<that file name> - it is the screenshot, mockup or reference
+that belongs with the task. If a task asks you to create or update its image,
+write the file into task_images/ and set the task's <image> element to that file
+name.
+
+=== END TASK IMAGES ===
 
 read through tasks.xml and complete tasks in the order they are presented. work through the list until reaching the end or you run out of usage. as you finish a task update the xml to mark it as done, as you begin mark it as in-progress. save the xml every time you make a change.
 

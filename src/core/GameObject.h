@@ -9,6 +9,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 namespace zengine
 {
@@ -158,5 +159,8 @@ namespace zengine
     private:
         GameObjectId nextId_ = 1;
         std::vector<std::unique_ptr<GameObject>> objects_;
+        // ID -> object lookup. GameObjects are heap-owned by objects_, so these
+        // raw pointers stay valid across vector growth and store moves.
+        std::unordered_map<GameObjectId, GameObject*> index_;
     };
 }

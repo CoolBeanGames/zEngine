@@ -84,7 +84,7 @@ bool zengine::GameObject::RemoveBehavior(Behavior& behavior)
 void zengine::GameObject::SetParent(GameObjectId parent){store_->SetParents({{id_,parent}});}
 zengine::ObjectStore::ObjectStore(ObjectStore&& other) noexcept {*this=std::move(other);}
 zengine::ObjectStore& zengine::ObjectStore::operator=(ObjectStore&& other) noexcept {
-    if(this!=&other){objects_=std::move(other.objects_);nextId_=other.nextId_;other.nextId_=1;for(auto& object:objects_)object->store_=this;}return *this;
+    if(this!=&other){objects_=std::move(other.objects_);index_=std::move(other.index_);nextId_=other.nextId_;other.nextId_=1;for(auto& object:objects_)object->store_=this;}return *this;
 }
 void zengine::ObjectStore::SetParents(const std::map<GameObjectId,GameObjectId>& changes) {
     if(changes.empty())return;
@@ -130,6 +130,7 @@ zengine::GameObject& zengine::ObjectStore::Restore(GameObjectId id, std::string 
     auto object = std::unique_ptr<GameObject>(new GameObject(*this,id, std::move(name)));
     auto& result = *object;
     objects_.push_back(std::move(object));
+    index_.emplace(id,&result);
     nextId_=std::max(nextId_,id+1);
     return result;
 }
@@ -138,14 +139,15 @@ void zengine::ObjectStore::Remove(const std::set<GameObjectId>& ids)
     for(const auto id:ids)if(!Find(id))throw std::invalid_argument("Cannot remove a missing GameObject.");
     for(const auto& object:objects_)if(object->Parent() && ids.contains(object->Parent()) && !ids.contains(object->Id()))throw std::invalid_argument("Cannot remove a parent without its children.");
     std::erase_if(objects_,[&](const auto& object){return ids.contains(object->Id());});
+    for(const auto id:ids)index_.erase(id);
 }
 zengine::GameObject* zengine::ObjectStore::Find(GameObjectId id) noexcept
 {
-    for (const auto& object : objects_) if (object->Id() == id) return object.get();
-    return nullptr;
+    const auto it=index_.find(id);
+    return it==index_.end()?nullptr:it->second;
 }
 const zengine::GameObject* zengine::ObjectStore::Find(GameObjectId id) const noexcept
 {
-    for (const auto& object : objects_) if (object->Id() == id) return object.get();
-    return nullptr;
+    const auto it=index_.find(id);
+    return it==index_.end()?nullptr:it->second;
 }

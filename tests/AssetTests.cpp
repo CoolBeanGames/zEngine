@@ -467,7 +467,9 @@ void ScriptIntegrationEditorTests(bool capture)
         editor.Render(); Require(cubeTransform.Rotation().z==1,"Paused Draw continued running");
         editor.Stop(); Require(cubeTransform.Position().x==0 && cubeTransform.Position().y==0 && cubeTransform.Rotation().z==0,"Stop failed to restore scene");
         // Selection + saved source edits rebuild metadata while preserving author overrides.
+        // Scene-tree selection commits on button release, not mouse-down.
         SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(50,140));
+        SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(50,140));
         SetWindowTextW(source,(std::wstring(code)+L"\n// saved change").c_str());
         SendMessageW(scriptWindow,WM_COMMAND,ScriptEditor::SaveCommand,0);
         GetWindowTextW(field(5),text,64); Require(std::wstring(text)==L"6","Save/reload lost Inspector override");

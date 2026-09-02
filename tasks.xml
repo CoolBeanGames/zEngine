@@ -1,5 +1,51 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="54">
+<tasks project="zEngine" nextIndex="58">
+  <task id="ZE-56">
+    <name>ScriptIntegrationEditor test no longer selects on mouse-down</name>
+    <prompt>The ScriptEditorIntegration suite (zEngineAssetTests --scripts, ctest "ScriptEditorIntegration") fails at "Save/reload lost Inspector override". Cause: commit d8821c8 moved scene-tree selection from WM_LBUTTONDOWN to WM_LBUTTONUP (release-time selection, ZE-44) and updated most click tests, but ScriptIntegrationEditorTests in tests/AssetTests.cpp still sends only WM_LBUTTONDOWN at (50,140) to re-select the scripted cube. With no WM_LBUTTONUP the selection never changes, so the Inspector stays bound to the later empty GameObject (whose script keeps the default speed=2 instead of the overridden 6). Reproduce: build builds/test, run ctest -C Debug -R ScriptEditorIntegration.</prompt>
+    <requirements>zEngineAssetTests --scripts passes; full ctest suite is green again.</requirements>
+    <inProgress>true</inProgress>
+    <done>false</done>
+    <bug>true</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey>zq7v2k9m</lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>bug,tests,inspector</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-54">
+    <name>cant build</name>
+    <prompt>when i try to build a standalone app it says : Script reference editing requires a active scene, i have a scene saved and loaded up being edited so i dont know what that means.</prompt>
+    <requirements>fix it</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>true</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
   <task id="ZE-49">
     <name>issue with priority system</name>
     <prompt>i think priorities are messed up, a lot of things work now and here is my new script
@@ -147,6 +193,7 @@ everything works great until the moment i spawn a bullet, then player input stop
     <tags></tags>
     <notes>Fixed the actual blocking path: runtime prefab spawning restores script variables and references before Prepare, but ScriptHost rejected all RestoreValues/RestoreReferences calls during Play. That exception faulted the player callback and prevented the spawned bullet from being initialized. Runtime-spawned records without a compiled program are now allowed to receive both metadata restores, while existing compiled live scripts remain protected. Regression covers a scripted bullet spawned during update and verifies the player continues updating.</notes>
     <filesChanged>src/ScriptHost.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-48">
     <name>error with signals</name>
@@ -251,6 +298,7 @@ class new_player_move : gameObject
     <tags></tags>
     <notes>Verified input action just_released dispatch across repeated press/release cycles; the signal connection remains active. Added a ScriptHost regression covering two releases. If a callback prints once and then stops, inspect the script fault shown in the editor status/console (for example an unassigned bullet prefab in shoot), because faulted behaviors intentionally stop receiving updates.</notes>
     <filesChanged>tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-48">
     <name>print output disappears after scene load</name>
@@ -273,6 +321,7 @@ class new_player_move : gameObject
     <tags>bug,scripting,console</tags>
     <notes>ScriptHost print output handlers are now reattached whenever a scene rebuild replaces the host, so editor console output remains connected after opening or loading scenes. Focused prefab/editor tests pass.</notes>
     <filesChanged>src/EditorShell.cpp; src/EditorShell.h; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-43">
     <name>still adding more than one line in text editor</name>
@@ -295,6 +344,7 @@ class new_player_move : gameObject
     <tags>bug, script editor</tags>
     <notes>Enter is now consumed during WM_KEYDOWN after dismissing autocomplete, preventing RichEdit from inserting a newline before the formatted WM_CHAR path. Added a line-count regression for the real keydown/character sequence; the focused script editor suite passes.</notes>
     <filesChanged>src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-44">
     <name>cant drag gameObject from scene tree to reference drop point</name>
@@ -317,6 +367,7 @@ class new_player_move : gameObject
     <tags>selection,bug</tags>
     <notes>Scene-tree rows now retain the dragged object ID without changing selection on mouse-down. A plain click selects on release, while a drag can assign Inspector references or create/reparent prefabs without retargeting the Inspector. The focused prefab/editor asset suite passes.</notes>
     <filesChanged>src/EditorShell.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-47">
     <name>adding collapse got rid of remove behavior</name>
@@ -339,6 +390,7 @@ class new_player_move : gameObject
     <tags>bugs</tags>
     <notes>Behavior context-menu hit testing now accepts every visible row in a behavior group, not only the collapse header, so Remove Behavior remains available after adding collapse controls. Updated legacy click tests for release-time selection and verified the focused object/Inspector suite.</notes>
     <filesChanged>src/InspectorPanel.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-42">
     <name>scene deleted when i made a prefab</name>
@@ -361,6 +413,7 @@ class new_player_move : gameObject
     <tags></tags>
     <notes>Creating a prefab now survives its automatic inline rename without reloading the last saved scene over the live editor document. Asset renames and moves rewrite and rebuild the in-memory scene, preserve unsaved objects and dirty state, update prefab editing/return paths, and retain the correct disk baseline. Added a regression for creating and renaming a prefab while other scene objects are unsaved; the focused prefab suite passes.</notes>
     <filesChanged>src/EditorFolders.cpp; src/EditorShell.h; tests/PrefabTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-29">
     <name>crash when trying to remove behavior</name>
@@ -395,6 +448,7 @@ a Breakpoint has been reached
     <tags>bug,crash</tags>
     <notes>Behavior deletion remains deferred until the child context-menu callback returns. Collapse-control IDs now occupy a separate high range, the shared control subclass rejects non-Transform indices before touching the fixed field array, and scrolled context-menu hit testing uses the visible row position.</notes>
     <filesChanged>src/InspectorPanel.cpp; src/InspectorPanel.h; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-30">
     <name>Vector display messed up</name>
@@ -417,6 +471,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Vector3 X and Y entries use zero row height so all three axes share one row; they are no longer mistaken for collapsed fields. Layout now hides controls only when their behavior is actually collapsed, and collapsed labels are skipped during painting.</notes>
     <filesChanged>src/InspectorPanel.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-31">
     <name>gravity scale not working</name>
@@ -439,6 +494,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>RigidBody gravity scale is now explicitly applied to the active Jolt body after creation in addition to the creation settings. Added a regression body with gravity scale zero that must retain its vertical position across simulation steps.</notes>
     <filesChanged>src/physics/PhysicsWorld.cpp; tests/PhysicsTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-32">
     <name>velocity reset</name>
@@ -461,6 +517,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Stopping Play now restores the complete authored native physics behavior state from the play snapshot, including linear and angular velocity, constant force and torque, gravity scale, mass, collision properties, and collider settings. Runtime fall velocity can no longer leak into the next Play session.</notes>
     <filesChanged>src/EditorShell.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-27">
     <name>removing behavior crashes editor</name>
@@ -483,6 +540,7 @@ a Breakpoint has been reached
     <tags>inspector crash behaviors</tags>
     <notes>Behavior removal is now posted back to the Inspector window and runs only after the clicked child control's context-menu callback returns. The target is revalidated before deletion, scripts are forgotten safely, and the Inspector refreshes afterward.</notes>
     <filesChanged>src/InspectorPanel.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-28">
     <name>script folding repeatedly expands and collapses</name>
@@ -505,6 +563,7 @@ a Breakpoint has been reached
     <tags>script-editor folding ui</tags>
     <notes>Removed repaint-time RichEdit selection probing and replaced it with explicit per-block fold state. Gutter markers now show minus for expanded and plus for collapsed blocks, repainting is read-only, and text edits expand folded ranges once before their positions can become stale.</notes>
     <filesChanged>src/ScriptEditor.cpp; src/ScriptEditor.h; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-17">
     <name>references (again)</name>
@@ -527,6 +586,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Scene-tree dragging now assigns exported native object references in the Inspector. Native GameObject, Transform, PhysicsBody, RigidBody, KinematicBody, StaticBody, Area, Collider, and Behavior references are validated, previewed, available during Play, clearable, and persisted by stable GameObject ID in scenes.</notes>
     <filesChanged>src/EditorShell.cpp; src/InspectorPanel.cpp; src/InspectorPanel.h; src/Scene.cpp; src/Scene.h; src/ScriptHost.cpp; src/ScriptHost.h; tests/SceneTests.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-19">
     <name>scrolling inspector</name>
@@ -549,6 +609,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Inspector scrolling now accumulates partial wheel input, forwards wheel events from child edit controls, and performs an immediate clipped repaint after layout so moved controls do not leave afterimages.</notes>
     <filesChanged>src/InspectorPanel.cpp; src/InspectorPanel.h; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-16">
     <name>rigidbody / types</name>
@@ -571,6 +632,7 @@ a Breakpoint has been reached
     <tags>bugs,code,scripting</tags>
     <notes>Native behavior and component types now accept canonical and lowercase spellings throughout script parsing, Program queries, runtime construction, type checks, syntax coloring, and autocomplete. Added regression coverage for rigidbody, physicsbody, behavior, transform, staticbody, kinematicbody, area, and collider aliases.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-33">
     <name>arrays should be visable and editable in the inspector</name>
@@ -593,6 +655,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes></notes>
     <filesChanged></filesChanged>
+    <image></image>
     <subtasks>
       <subtask done="false">make arrays visable</subtask>
       <subtask done="false">add new elemtns to arrays in inspector</subtask>
@@ -603,36 +666,9 @@ a Breakpoint has been reached
       <subtask done="false">auto select type based on dragged in element</subtask>
     </subtasks>
   </task>
-  <task id="ZE-34">
-    <name>proper object picker</name>
-    <prompt>we should build an object picker that can be used universally, it should be able to see ALL types, then gets passed a filtered version, it then lists all instances of those types. it should support both assets, and scene trees but only show whatever makes sense in the context in which its being used. should be available as a window pop-up as well as a drop down.</prompt>
-    <requirements>create the picker dialogs to replace windows system dialogs.</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>true</locked>
-    <archived>false</archived>
-    <blockedBy>ZE-35</blockedBy>
-    <dateStarted></dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
-    <subtasks>
-      <subtask done="false">drop down picker</subtask>
-      <subtask done="false">window picker</subtask>
-      <subtask done="false">type filtering</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-52">
-    <name>clean up project folders</name>
-    <prompt>remove (delete) and unnessisary files, delete all old builds, and push a new build and commit</prompt>
+  <task id="ZE-55">
+    <name>do a commit now for safety sake</name>
+    <prompt>do a commit now for safety sake</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
     <done>false</done>
@@ -646,14 +682,66 @@ a Breakpoint has been reached
     <dateStarted></dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-34">
+    <name>proper object picker</name>
+    <prompt>we should build an object picker that can be used universally, it should be able to see ALL types, then gets passed a filtered version, it then lists all instances of those types. it should support both assets, and scene trees but only show whatever makes sense in the context in which its being used. should be available as a window pop-up as well as a drop down.</prompt>
+    <requirements>create the picker dialogs to replace windows system dialogs.</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-35</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">drop down picker</subtask>
+      <subtask done="false">window picker</subtask>
+      <subtask done="false">type filtering</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-52">
+    <name>clean up project folders</name>
+    <prompt>remove (delete) and unnessisary files, delete all old builds, and push a new build and commit</prompt>
+    <requirements></requirements>
+    <inProgress>true</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey>zq7v2k9m</lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
     <build>true</build>
     <release>true</release>
     <tags>builds,clean,refactor</tags>
     <notes></notes>
     <filesChanged></filesChanged>
+    <image></image>
     <subtasks>
-      <subtask done="false">remove unneeded files</subtask>
-      <subtask done="false">remove old builds</subtask>
+      <subtask done="true">remove unneeded files</subtask>
+      <subtask done="true">remove old builds</subtask>
       <subtask done="false">make new builds</subtask>
       <subtask done="false">commit</subtask>
     </subtasks>
@@ -668,7 +756,7 @@ a Breakpoint has been reached
     <error>false</error>
     <errorMessage></errorMessage>
     <lockKey></lockKey>
-    <locked>true</locked>
+    <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
     <dateStarted></dateStarted>
@@ -679,6 +767,7 @@ a Breakpoint has been reached
     <tags>big,systems,data,scripting</tags>
     <notes></notes>
     <filesChanged></filesChanged>
+    <image></image>
   </task>
   <task id="ZE-38">
     <name>collision layers and masks</name>
@@ -690,7 +779,7 @@ a Breakpoint has been reached
     <error>false</error>
     <errorMessage></errorMessage>
     <lockKey></lockKey>
-    <locked>true</locked>
+    <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
     <dateStarted></dateStarted>
@@ -701,6 +790,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes></notes>
     <filesChanged></filesChanged>
+    <image></image>
   </task>
   <task id="ZE-39">
     <name>collapse behavior</name>
@@ -723,11 +813,35 @@ a Breakpoint has been reached
     <tags></tags>
     <notes></notes>
     <filesChanged></filesChanged>
+    <image></image>
   </task>
   <task id="ZE-40">
     <name>add script button</name>
     <prompt>in inspector get rid of "add script" button, replace with a script menu in add behavior, it should say add script &gt; then when you mouse over it a sub menu appears with a list of all the scripts</prompt>
     <requirements>add script button turned into submenu</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-57">
+    <name>combine disparate windows into a single screen</name>
+    <prompt></prompt>
+    <requirements></requirements>
     <inProgress>false</inProgress>
     <done>false</done>
     <bug>false</bug>
@@ -745,6 +859,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes></notes>
     <filesChanged></filesChanged>
+    <image></image>
   </task>
   <task id="ZE-51">
     <name>add line numbers to text editor</name>
@@ -757,9 +872,9 @@ a Breakpoint has been reached
     <errorMessage></errorMessage>
     <lockKey></lockKey>
     <locked>false</locked>
-    <archived>false</archived>
+    <archived>true</archived>
     <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
@@ -767,28 +882,30 @@ a Breakpoint has been reached
     <tags>code,scripteditor</tags>
     <notes>Added a fixed right-hand line-number gutter to the script editor. RichEdit now reserves a 44px right margin (alongside the existing 28px left fold gutter) and the number strip is painted per WM_PAINT from EM_GETFIRSTVISIBLELINE downward, right-aligned, in the editor's muted gutter colors with a thin separator. Folded/hidden lines collapse onto one row so numbering matches the visible view. Horizontal and vertical scrolling keep the gutter pinned. Regression added to ScriptEditorTests verifying the reserved margins and a safe repaint over multi-line content.</notes>
     <filesChanged>src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-53">
     <name>look for bugs or optimizations</name>
     <prompt>go through the entire code base and look for any optimizations (bother for engine and game performance) speed up where possible, fix any potential bugs you see, and in general improve the code base</prompt>
     <requirements>full code base cleaned up</requirements>
-    <inProgress>true</inProgress>
-    <done>false</done>
+    <inProgress>false</inProgress>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey>zq7v2k9m</lockKey>
+    <lockKey></lockKey>
     <locked>false</locked>
-    <archived>false</archived>
+    <archived>true</archived>
     <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>cleaning,refactoring</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Targeted optimization pass over the per-frame hot path. Main win: ObjectStore::Find was a linear O(n) scan and is called many times per frame from PhysicsWorld::Step (per body, plus recursive GlobalPose parent walks), ScriptHost transform synchronization (per proxy, per script), BuildSceneFrame/ParentMatrix, and scene lookups - giving O(n^2) behaviour as scenes grow. Added an ID-&gt;GameObject* hash index (std::unordered_map) maintained by Restore/Remove/move-assignment; pointers are stable because GameObjects are heap-owned by unique_ptr, so the index survives vector growth and store moves. Find is now O(1). Deeper items were assessed and deliberately deferred as high risk relative to reward: script VM is a string-keyed tree-walker (bytecode/interned-locals rewrite), GameObject::GetBehavior uses dynamic_cast in a loop (needs a type-tag system), BehaviorLifecycle::Ordered shuffles+sorts 3x/frame (the shuffle is intentional anti-order-dependence). Verified: rebuilt and ran CoreTests, SceneTests, ScriptHostTests, PhysicsTests, LifecycleTests, ScriptEditorTests, and every zEngineAssetTests suite (objects, scenes, hierarchy, prefabs, editor, text, folders) - all pass.</notes>
+    <filesChanged>src/core/GameObject.h; src/core/GameObject.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-50">
     <name>reverse and align transform direction vectors</name>
@@ -811,6 +928,7 @@ a Breakpoint has been reached
     <tags>scripting, transform</tags>
     <notes>Transform direction properties are now writable; assignments normalize the requested vector and derive an Euler rotation that aligns the selected local axis. Zero-length directions are rejected.</notes>
     <filesChanged>scripting/src/Script.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-46">
     <name>need console log</name>
@@ -833,6 +951,7 @@ a Breakpoint has been reached
     <tags>new feature, scripting, consoles</tags>
     <notes>Completed the console logging foundation: an editor-only Play console window, live print output, debugger mirroring, output persistence after ScriptHost rebuilds, automatic close on Stop, scalar and Vector3 curly-brace interpolation, and regression coverage for repeated input releases, runtime prefab spawning, print output, and interpolation. The console remains intentionally read-only; advanced rich-text commands and console-close-to-stop behavior are outside the current runtime API.</notes>
     <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/EditorShell.h; src/EditorShell.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
+    <image></image>
     <subtasks>
       <subtask done="true">open a custom console window when playing the game (in editor only)</subtask>
       <subtask done="true">add print("text') to print to the log</subtask>
@@ -868,6 +987,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Renaming a .zsh asset now rewrites its declared class name to match the new filename, preserving the runtime filename/class contract. Invalid script identifiers are rejected, and asset-folder tests verify the renamed source content.</notes>
     <filesChanged>src/EditorFolders.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-37">
     <name>remove behavior button</name>
@@ -890,6 +1010,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>The current Inspector does not expose a standalone remove button; behavior removal is provided through the compact right-click context action. Its hit testing was repaired for all visible behavior rows and remains compatible with collapse controls, verified by the focused object/Inspector suite.</notes>
     <filesChanged>src/InspectorPanel.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-45">
     <name>still need more auto bracketing</name>
@@ -912,6 +1033,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Expanded script auto-bracketing: completing if/while/for conditions with ) now inserts a multiline body, Enter after else creates an indented block, and manually opening { creates a multiline pair with the caret inside. All subtasks are complete and the focused script editor suite passes.</notes>
     <filesChanged>src/ScriptTyping.h; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
     <subtasks>
       <subtask done="true">functions ifs and loops should insert bracks (opening and closing) on the next line as soon as the ')' is typed</subtask>
       <subtask done="true">else should insert a bracket as soon as enter is hit</subtask>
@@ -939,6 +1061,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Added the enclosing rounded frame around the Behaviors attached section. Build execution was intentionally skipped per the user's instruction to stop running builds; the source change is present locally and ready to commit, but repository staging is blocked by the session's .git/index.lock permission.</notes>
     <filesChanged>src/InspectorPanel.cpp; src/InspectorPanel.h; src/EditorShell.cpp; src/Scene.cpp; src/Scene.h; src/ScriptHost.cpp; src/ScriptHost.h; tests/SceneTests.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-18">
     <name>toggle block change</name>
@@ -961,6 +1084,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Added per-behavior +/- collapse buttons to the Inspector and per-brace +/- gutter markers to the script editor. Collapsed state is local to each block and relayout hides its controls cleanly.</notes>
     <filesChanged>src/InspectorPanel.cpp; src/InspectorPanel.h; src/ScriptEditor.cpp; src/ScriptEditor.h; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-20">
     <name>adding a rigidbody, staticbody, or kinematic body should automatically add a collider</name>
@@ -983,6 +1107,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Adding a RigidBody, KinematicBody, or StaticBody now automatically ensures the GameObject has a Collider. Scene loading and prefab append reuse that generated collider so authored shape, offset, and size are preserved without duplicates.</notes>
     <filesChanged>src/core/GameObject.h; src/core/GameObject.cpp; src/Scene.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-21">
     <name>still cant remove a behavior</name>
@@ -1005,6 +1130,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Added Remove Behavior to the Inspector's right-click menu. ScriptHost records are forgotten before script behaviors are deleted, then the Inspector rebuilds and notifies the editor.</notes>
     <filesChanged>src/core/GameObject.h; src/core/GameObject.cpp; src/InspectorPanel.cpp; src/InspectorPanel.h; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-22">
     <name>behaviors attached</name>
@@ -1027,6 +1153,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Made “Behaviors attached” a larger bold inspector header and added extra vertical spacing before the behavior section.</notes>
     <filesChanged>src/InspectorPanel.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-25">
     <name>add a border around transorm also</name>
@@ -1049,6 +1176,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Added a rounded border around the Transform inspector section, including axis labels, fields, and rotation hint.</notes>
     <filesChanged>src/InspectorPanel.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-26">
     <name>inconsistent newline</name>
@@ -1071,6 +1199,7 @@ a Breakpoint has been reached
     <tags></tags>
     <notes>Fixed multiline Inspector Enter handling by consuming keydown and allowing only the corresponding character message to insert the newline, preventing duplicate lines.</notes>
     <filesChanged>src/InspectorPanel.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-14">
     <name></name>
@@ -1094,6 +1223,7 @@ lets add a border or something around each behavior in the inspector so its easi
     <tags></tags>
     <notes>Reconciled the previously implemented inspector work: each attached behavior is surrounded by its own rounded border, with the existing field layout and scrolling preserved.</notes>
     <filesChanged>src/InspectorPanel.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-1">
     <name></name>
@@ -1117,6 +1247,7 @@ when making a new input it automatically jumps to the name section so it can be 
     <tags></tags>
     <notes>New actions now focus the action-name field and select the complete generated name for immediate replacement. Added focused UI coverage and verified zEngineInputTests.</notes>
     <filesChanged>src/input/InputMapEditor.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-2">
     <name></name>
@@ -1139,6 +1270,7 @@ when making a new input it automatically jumps to the name section so it can be 
     <tags></tags>
     <notes>InputAction.axis now has the Vector3 script type and receives X/Y values for 2D button and analog actions. Input.get_axis remains the explicit scalar API. Completion metadata and runtime tests were updated and verified.</notes>
     <filesChanged>scripting/src/Script.cpp; src/ScriptCompletion.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-3">
     <name></name>
@@ -1161,6 +1293,7 @@ when making a new input it automatically jumps to the name section so it can be 
     <tags></tags>
     <notes>Added Listen controls for button bindings. Listening detects newly pressed keyboard, mouse, or selected-controller buttons, ignores already-held inputs, assigns the matching binding, and supports Escape cancellation. Focused tests pass.</notes>
     <filesChanged>src/input/InputMap.h; src/input/InputMap.cpp; src/input/InputMapEditor.h; src/input/InputMapEditor.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-4">
     <name></name>
@@ -1184,6 +1317,7 @@ if else and loops should also auto insert brackets (and parenthesis)</prompt>
     <tags></tags>
     <notes>Typing a space after if, else, while, or for now inserts the appropriate parentheses and indented brace block, places the caret at the condition/body edit point, and ignores comments or existing delimiters. Focused tests pass.</notes>
     <filesChanged>src/ScriptTyping.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-5">
     <name></name>
@@ -1206,6 +1340,7 @@ if else and loops should also auto insert brackets (and parenthesis)</prompt>
     <tags></tags>
     <notes>Manual opening parentheses, square brackets, and braces now insert matching closers, wrap selected text, ignore comments/strings, and allow typing an existing closer to advance over it. Focused tests pass.</notes>
     <filesChanged>src/ScriptTyping.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-6">
     <name></name>
@@ -1228,6 +1363,7 @@ if else and loops should also auto insert brackets (and parenthesis)</prompt>
     <tags></tags>
     <notes>Pressing Enter now dismisses both inline and member-list autocomplete before inserting the new line, so a following Tab indents instead of accepting a stale suggestion. All 27 tests pass and the Debug editor was rebuilt in builds/debug.</notes>
     <filesChanged>src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-7">
     <name></name>
@@ -1250,6 +1386,7 @@ if else and loops should also auto insert brackets (and parenthesis)</prompt>
     <tags></tags>
     <notes>Added non-destructive brace-block folding for classes, functions, and nested blocks using RichEdit hidden formatting. The toolbar and Ctrl shortcuts toggle the current block or expand all without altering saved source or undo history. Focused tests pass.</notes>
     <filesChanged>src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-8">
     <name></name>
@@ -1273,6 +1410,7 @@ i tried making a new vector3 and multiplying it by the forward vector from trans
     <tags></tags>
     <notes>Added component-wise Vector3 multiplication in both compile-time type checking and runtime evaluation. Vector3 values can now multiply transform.forward/up/right directly; regression coverage verifies the reported forward-vector case.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-9">
     <name></name>
@@ -1296,6 +1434,7 @@ I need a way to be able to pass behaviors (and inherit from them), i for instanc
     <tags></tags>
     <notes>Added native Behavior, PhysicsBody, RigidBody, KinematicBody, StaticBody, Area, and Collider script types. They support references, parameters, inheritance, type checks, completion, and typed read-only GameObject component fields. The host binds attached native components to those references; RigidBody-derived scripts can directly control native physics. All 27 tests pass and builds/debug was refreshed.</notes>
     <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/PhysicsTests.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-10">
     <name></name>
@@ -1327,6 +1466,7 @@ I need a way to be able to pass behaviors (and inherit from them), i for instanc
     <tags></tags>
     <notes>Added the built-in Mathf script service with lerp, trigonometry, square root, exponent, rounding, dot product, and cross product. Calls are type checked, guarded against invalid or non-finite results, documented, exposed to autocomplete, and covered by runtime and editor tests.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-11">
     <name></name>
@@ -1352,6 +1492,7 @@ add a timer the idea is we would deifine it as below and it would create an invi
     <tags></tags>
     <notes>Added one-shot runtime-owned Timer GameObjects through make_timer(seconds). Timers expose the ordinary finished signal, advance on game Update time, pause with the runtime, fire once, invalidate themselves after completion, support autocomplete, and are covered by runtime and editor tests.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-12">
     <name></name>
@@ -1375,6 +1516,7 @@ add a timer the idea is we would deifine it as below and it would create an invi
     <tags></tags>
     <notes>Verified and retained symbolic ! and !=, and added equivalent not, and, and or keywords plus a short-circuit nor operator. Logical aliases type check as bool expressions, are syntax highlighted and autocompleted, documented, and covered by execution tests.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
   <task id="ZE-13">
     <name></name>
@@ -1397,5 +1539,6 @@ add a timer the idea is we would deifine it as below and it would create an invi
     <tags></tags>
     <notes>Added for(condition) as an explicit condition-controlled loop equivalent to while(condition), matching the editor's existing for-block insertion. The keyword is reserved, highlighted, autocompleted, documented, and execution tested. All 27 tests pass and builds/debug was refreshed.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+    <image></image>
   </task>
 </tasks>
