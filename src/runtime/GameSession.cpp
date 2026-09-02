@@ -13,6 +13,9 @@ Session::Session(const projects::Project& project,const std::string& scene):refe
     input_.Configure(input::Decode(input::Load(assets_)));
     const auto document=scenes::Decode(scenes::Load(projects::ScenePath(project,reference_)));
     scene_=scenes::Instantiate(prefabs::ResolveScene(assets_,document).scene);
+    // Scripts resolve their exported scene-tree references (e.g. an assigned rigidbody)
+    // against this store; without it Prepare aborts the standalone build.
+    scene_.scripts.SetObjectStore(&scene_.objects);
     script::InputFrame initial;for(const auto& [name,state]:input_.Current())initial.emplace(name,script::InputState{});scene_.scripts.SetInput(std::move(initial));
     for(std::size_t i=0;i<scene_.objects.Size();++i) {
         PrepareObject(scene_.objects.At(i));

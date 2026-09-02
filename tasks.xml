@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="58">
+<tasks project="zEngine" nextIndex="59">
   <task id="ZE-56">
     <name>ScriptIntegrationEditor test no longer selects on mouse-down</name>
     <prompt>The ScriptEditorIntegration suite (zEngineAssetTests --scripts, ctest "ScriptEditorIntegration") fails at "Save/reload lost Inspector override". Cause: commit d8821c8 moved scene-tree selection from WM_LBUTTONDOWN to WM_LBUTTONUP (release-time selection, ZE-44) and updated most click tests, but ScriptIntegrationEditorTests in tests/AssetTests.cpp still sends only WM_LBUTTONDOWN at (50,140) to re-select the scripted cube. With no WM_LBUTTONUP the selection never changes, so the Inspector stays bound to the later empty GameObject (whose script keeps the default speed=2 instead of the overridden 6). Reproduce: build builds/test, run ctest -C Debug -R ScriptEditorIntegration.</prompt>
@@ -13,7 +13,7 @@
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
+    <dateStarted></dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
@@ -28,7 +28,7 @@
     <prompt>when i try to build a standalone app it says : Script reference editing requires a active scene, i have a scene saved and loaded up being edited so i dont know what that means.</prompt>
     <requirements>fix it</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>true</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -36,14 +36,14 @@
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <tags>bug,build,scripting</tags>
+    <notes>game::Session (used to validate every scene during a standalone build) instantiated a scene but never called ScriptHost::SetObjectStore, so ScriptHost::Prepare -&gt; ApplyPreviewReferences threw "Script reference editing requires an active scene" for any script carrying an assigned scene-tree reference (e.g. an exported rigidbody/gameObject). Fixed by pointing the session's ScriptHost at its own ObjectStore right after Instantiate, mirroring EditorShell. Extended the standalone BuildTests scene with a script that has an "export gameObject" reference to verify the build validates and the reference binds at runtime. Full ctest 27/27.</notes>
+    <filesChanged>src/runtime/GameSession.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-49">
@@ -671,7 +671,7 @@ a Breakpoint has been reached
     <prompt>do a commit now for safety sake</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -679,14 +679,14 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>false</build>
     <release>false</release>
     <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Committed and pushed the ZE-54 standalone-build fix (and the ZE-56 record) as part of working through the queue.</notes>
+    <filesChanged>src/runtime/GameSession.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-34">
@@ -715,35 +715,6 @@ a Breakpoint has been reached
       <subtask done="false">drop down picker</subtask>
       <subtask done="false">window picker</subtask>
       <subtask done="false">type filtering</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-52">
-    <name>clean up project folders</name>
-    <prompt>remove (delete) and unnessisary files, delete all old builds, and push a new build and commit</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>true</release>
-    <tags>builds,clean,refactor</tags>
-    <notes>Done and pushed (commits f2d31c6, aa2de54). Deleted ~8.6 GB of stale/regenerable build output (build/, builds/debug-old/, builds/debug, builds/test, tests/debug/). Simplified .gitignore to ignore /builds/ wholesale. Regenerated clean builds from an empty tree: builds/debug (Debug zEngine.exe + zPlayer.exe), builds/release (Release zEngine.exe + zPlayer.exe), builds/test. Full ctest suite green 27/27 (after fixing a stale test, ZE-56). The commit also carries ZE-51 (editor line numbers) and ZE-53 (O(1) ObjectStore::Find).</notes>
-    <filesChanged>.gitignore; src/core/GameObject.h; src/core/GameObject.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tests/AssetTests.cpp; instructions.txt; tasks.xml</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">remove unneeded files</subtask>
-      <subtask done="true">remove old builds</subtask>
-      <subtask done="true">make new builds</subtask>
-      <subtask done="true">commit</subtask>
     </subtasks>
   </task>
   <task id="ZE-35">
@@ -869,6 +840,62 @@ this is a big project and will likey take some time, do your best at it!</prompt
     <notes></notes>
     <filesChanged></filesChanged>
     <image></image>
+  </task>
+  <task id="ZE-58">
+    <name>Add the camera</name>
+    <prompt></prompt>
+    <requirements>we are finally ready to add the camera gameObject, this can be added in the scene tree as a complete gameObject and should also be a referencable type
+
+it should display the frustrum and should be the primary viewport 
+
+if a new camera is spawned in it takes over as the main camera. there is a "main" tag on the camera, only one camera can be main. enableing main on another camera removes it on all others and replaces the current camera.</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>camera,rendering,3d,view</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-52">
+    <name>clean up project folders</name>
+    <prompt>remove (delete) and unnessisary files, delete all old builds, and push a new build and commit</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey>zq7v2k9m</lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>builds,clean,refactor</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="true">remove unneeded files</subtask>
+      <subtask done="true">remove old builds</subtask>
+      <subtask done="true">make new builds</subtask>
+      <subtask done="true">commit</subtask>
+    </subtasks>
   </task>
   <task id="ZE-51">
     <name>add line numbers to text editor</name>
