@@ -94,6 +94,9 @@ public:
     std::filesystem::path CreateScriptAsset();
     void OpenScript(const std::filesystem::path& path);
     bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);
+    // Routes a completed object drag onto the Inspector (screen point + dragged object).
+    // Same effect as releasing a scene-tree drag over the Inspector; used by tests.
+    bool DropObjectOnInspector(POINT screenPoint, zengine::GameObjectId object);
     bool AddMeshRenderer(zengine::GameObjectId object);
     void AssignCube(zengine::GameObjectId object);
     void ClearMesh(zengine::GameObjectId object);

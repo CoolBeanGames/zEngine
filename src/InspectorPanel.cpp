@@ -166,6 +166,7 @@ void InspectorPanel::RefreshBehaviors()
             if (!toggle) throw std::runtime_error("Cannot create behavior collapse control.");
             SendMessageW(toggle,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
             SetWindowSubclass(toggle,EditProcedure,1,reinterpret_cast<DWORD_PTR>(this));
+            editorStyle::Attach(toggle); // dark theme, matching the rest of the Inspector chrome
             behaviorToggles_.push_back({behavior,toggle});
         }
     };
@@ -215,8 +216,32 @@ void InspectorPanel::RefreshBehaviors()
         {
             const auto error=scriptHost_->Error(*script);
             if (!error.empty()) add(&behavior,{},L"Error: "+Wide(error),false,false,false);
+            const auto addArrayButton = [&](const wchar_t* caption) {
+                const auto id=FirstBehaviorBit + bitButtonCount_++;
+                const auto button=CreateWindowExW(0,L"BUTTON",caption,WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
+                    0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
+                if(!button)throw std::runtime_error("Cannot create array control.");
+                SendMessageW(button,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+                EnableWindow(button,editData_ && !(scriptHost_&&scriptHost_->Playing()));
+                editorStyle::Attach(button);
+                behaviorFields_.back().bits.push_back(button);
+            };
             for (const auto& field:scriptHost_->Fields(*script))
             {
+                if(field.array) {
+                    add(&behavior,field.name,Wide(field.name+" [array] — "+field.value),false,false,false,BehaviorField::Style::ScriptLabel);
+                    behaviorFields_.back().arrayHeader=true; behaviorFields_.back().type="array";
+                    addArrayButton(L"+ Add element");
+                    continue;
+                }
+                if(field.arrayIndex>=0) {
+                    const bool ref=field.reference, prefab=field.type=="prefab";
+                    add(&behavior,field.name,Wide("["+std::to_string(field.arrayIndex)+"]  "+field.type),false,true,field.editable && !ref,
+                        BehaviorField::Style::Normal,false,prefab,ref);
+                    behaviorFields_.back().type=field.type; behaviorFields_.back().arrayIndex=field.arrayIndex;
+                    addArrayButton(L"✕");
+                    continue;
+                }
                 if(field.type=="Vector3" && !field.name.empty()) {
                     for(int axis=0;axis<3;++axis) {
                         add(&behavior,field.name,Wide(field.name),false,true,field.editable);
@@ -259,6 +284,8 @@ int InspectorPanel::RowHeight(const BehaviorField& entry) const
     if (entry.style != BehaviorField::Style::BehaviorHeader && IsBehaviorCollapsed(entry)) return 0;
     if(entry.axis>=0)return entry.axis==2?72:0;
     if(entry.bitmask)return 82;
+    if(entry.arrayHeader)return 32;
+    if(entry.arrayIndex>=0)return 48;
     return entry.style==BehaviorField::Style::BehaviorHeader ? behaviorHeaderHeight_ : entry.multiline?112:entry.field.window?52:24;
 }
 bool InspectorPanel::IsBehaviorCollapsed(const BehaviorField& entry) const
@@ -276,7 +303,8 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
         return out.str();
     }
     if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
-        for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name) {
+        for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name
+            && field.array==entry.arrayHeader && (entry.arrayIndex<0 ? field.arrayIndex<0 : field.arrayIndex==entry.arrayIndex)) {
             if(entry.axis<0){auto value=Wide(field.value);if(entry.multiline){std::wstring display;for(std::size_t i=0;i<value.size();++i){if(value[i]==L'\n' && (!i || value[i-1]!=L'\r'))display+=L'\r';display+=value[i];}return display;}return value;}
             auto values=Wide(field.value);std::replace(values.begin(),values.end(),L',',L' ');
             std::wistringstream input(values);double v=0;
@@ -314,7 +342,8 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
             entry.behavior->SetPriority(value);
         }
         else if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_) {
-            if(entry.axis<0){auto value=Utf8(text);if(entry.multiline){std::string normalized;for(std::size_t i=0;i<value.size();++i){if(value[i]=='\r' && i+1<value.size() && value[i+1]=='\n')continue;normalized+=value[i];}value=std::move(normalized);}scriptHost_->SetField(*script,entry.name,value);}
+            if(entry.arrayIndex>=0){scriptHost_->SetArrayElement(*script,entry.name,static_cast<std::size_t>(entry.arrayIndex),Utf8(text));}
+            else if(entry.axis<0){auto value=Utf8(text);if(entry.multiline){std::string normalized;for(std::size_t i=0;i<value.size();++i){if(value[i]=='\r' && i+1<value.size() && value[i+1]=='\n')continue;normalized+=value[i];}value=std::move(normalized);}scriptHost_->SetField(*script,entry.name,value);}
             else {
                 wchar_t* end=nullptr;errno=0;const double value=std::wcstod(text.c_str(),&end);
                 if(end==text.c_str())throw std::invalid_argument("Invalid vector component");
@@ -367,6 +396,37 @@ void InspectorPanel::ToggleCollisionBit(std::size_t fieldIndex,int bit)
     if(on)value|=(1u<<bit); else value&=~(1u<<bit);
     if(entry.name=="layer")body->SetLayer(value); else body->SetMask(value);
     if(changed_)changed_();
+}
+void InspectorPanel::ShowAddArrayElementMenu(std::size_t fieldIndex)
+{
+    if(!editData_ || fieldIndex>=behaviorFields_.size() || !scriptHost_ || scriptHost_->Playing())return;
+    auto& entry=behaviorFields_[fieldIndex];
+    auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior);
+    if(!script)return;
+    const auto& types=zengine::ScriptHost::ArrayElementTypes();
+    HMENU menu=CreatePopupMenu();
+    for(std::size_t i=0;i<types.size();++i)
+    {
+        if(i==7)AppendMenuW(menu,MF_SEPARATOR,0,nullptr); // value types | reference types
+        AppendMenuW(menu,MF_STRING,static_cast<UINT_PTR>(i+1),Wide(types[i]).c_str());
+    }
+    RECT r{};if(!entry.bits.empty())GetWindowRect(entry.bits[0],&r);
+    const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,r.left,r.bottom,0,window_,nullptr);
+    DestroyMenu(menu);
+    if(command>=1 && command<=static_cast<int>(types.size()))
+    {
+        try { scriptHost_->AddArrayElement(*script,entry.name,types[command-1]); RefreshBehaviors(); if(changed_)changed_(); }
+        catch(const std::exception&) {}
+    }
+}
+void InspectorPanel::RemoveArrayElementAt(std::size_t fieldIndex)
+{
+    if(!editData_ || fieldIndex>=behaviorFields_.size() || !scriptHost_ || scriptHost_->Playing())return;
+    auto& entry=behaviorFields_[fieldIndex];
+    auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior);
+    if(!script || entry.arrayIndex<0)return;
+    try { scriptHost_->RemoveArrayElement(*script,entry.name,static_cast<std::size_t>(entry.arrayIndex)); RefreshBehaviors(); if(changed_)changed_(); }
+    catch(const std::exception&) {}
 }
 void InspectorPanel::FinishBehaviorField(std::size_t index, bool cancel)
 {
@@ -536,12 +596,20 @@ void InspectorPanel::Layout()
                 if (toggle.behavior == entry.behavior && toggle.window)
                 {
                     SetWindowTextW(toggle.window,collapsedBehaviors_.contains(entry.behavior)?L"+":L"-");
-                    place(toggle.window,4,y+4,22,std::max(20,rowHeight-8));
+                    place(toggle.window,width-28,y+5,20,std::max(18,rowHeight-10));
                     ShowWindow(toggle.window,SW_SHOW);
                     break;
                 }
         }
-        if (!entry.bits.empty()) {
+        if (entry.arrayHeader && !entry.bits.empty()) {
+            ShowWindow(entry.bits[0],collapsed?SW_HIDE:SW_SHOW);
+            if (!collapsed) place(entry.bits[0],width-124,y+3,112,22);
+        }
+        else if (entry.arrayIndex>=0 && !entry.bits.empty()) {
+            ShowWindow(entry.bits[0],collapsed?SW_HIDE:SW_SHOW);
+            if (!collapsed) place(entry.bits[0],width-36,y+21,24,24);
+        }
+        else if (!entry.bits.empty()) {
             const int perRow=(CollisionBits+1)/2;
             const int span=std::max(perRow*18, width-24);
             const int cellW=std::max(16,(span-(perRow-1)*3)/perRow);
@@ -556,6 +624,7 @@ void InspectorPanel::Layout()
             ShowWindow(entry.field.window,collapsed?SW_HIDE:SW_SHOW);
             if (collapsed) { y+=rowHeight; continue; }
             if(entry.axis>=0) {const int cell=std::max(30,(width-36)/3);place(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24);}
+            else if(entry.arrayIndex>=0) place(entry.field.window,12,y+21,std::max(30,width-52),24);
             else place(entry.field.window,12,y+21,std::max(30,width-24),entry.multiline?84:24);
         }
         y+=rowHeight;
@@ -623,8 +692,8 @@ void InspectorPanel::Paint(HDC into)
         if(IsBehaviorCollapsed(entry))continue;
         SelectObject(dc,entry.style==BehaviorField::Style::BehaviorHeader ? behaviorFont_ :
             entry.style==BehaviorField::Style::ScriptLabel ? labelFont_ : font_);
-        const int left=entry.style==BehaviorField::Style::BehaviorHeader?32:12;
-        RECT row{left,rowY-scroll_,width-12,rowY-scroll_+(entry.style==BehaviorField::Style::BehaviorHeader?RowHeight(entry):20)};
+        const int left=12;
+        RECT row{left,rowY-scroll_,entry.style==BehaviorField::Style::BehaviorHeader?width-34:width-12,rowY-scroll_+(entry.style==BehaviorField::Style::BehaviorHeader?RowHeight(entry):20)};
         if(entry.axis<=0)DrawTextW(dc,entry.label.c_str(),-1,&row,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
         if(entry.axis>=0) {
             const int cell=std::max(30,(width-36)/3);
@@ -682,7 +751,12 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             const auto target=reinterpret_cast<HWND>(l);
             for (std::size_t f=0;f<behaviorFields_.size();++f)
                 for (int bit=0;bit<static_cast<int>(behaviorFields_[f].bits.size());++bit)
-                    if (behaviorFields_[f].bits[bit]==target) { ToggleCollisionBit(f,bit); return 0; }
+                    if (behaviorFields_[f].bits[bit]==target) {
+                        if (behaviorFields_[f].arrayHeader) ShowAddArrayElementMenu(f);
+                        else if (behaviorFields_[f].arrayIndex>=0) RemoveArrayElementAt(f);
+                        else ToggleCollisionBit(f,bit);
+                        return 0;
+                    }
             return 0;
         }
         if(LOWORD(w)==RemoveBehaviorCommand)
@@ -702,7 +776,14 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             auto& entry=behaviorFields_[dynamicIndex];
             if(!updating_ && HIWORD(w)==BN_CLICKED && entry.prefab && choosePrefab_)
             {
-                if(const auto asset=choosePrefab_(Utf8(BehaviorValue(dynamicIndex)));asset){scriptHost_->SetField(*dynamic_cast<zengine::ScriptBehavior*>(entry.behavior),entry.name,*asset);SetWindowTextW(entry.field.window,Wide(*asset).c_str());entry.field.valid=true;if(changed_)changed_();}
+                auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior);
+                if(const auto asset=choosePrefab_(Utf8(BehaviorValue(dynamicIndex)));asset && script){
+                    try {
+                        if(entry.arrayIndex>=0) scriptHost_->SetArrayElement(*script,entry.name,static_cast<std::size_t>(entry.arrayIndex),*asset);
+                        else scriptHost_->SetField(*script,entry.name,*asset);
+                        SetWindowTextW(entry.field.window,Wide(*asset).c_str());entry.field.valid=true;if(changed_)changed_();
+                    } catch(const std::exception&) { entry.field.valid=false; InvalidateRect(entry.field.window,nullptr,FALSE); }
+                }
                 return 0;
             }
             if(!updating_ && HIWORD(w)==BN_CLICKED && entry.objectReference && pickObject_ && scriptHost_ && editData_)
@@ -711,11 +792,15 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
                 if(script)
                 {
                     zengine::GameObjectId current=0;
-                    if(const auto refs=scriptHost_->AuthoredReferences(*script); refs.count(entry.name)) current=refs.at(entry.name);
+                    if(entry.arrayIndex<0) { if(const auto refs=scriptHost_->AuthoredReferences(*script); refs.count(entry.name)) current=refs.at(entry.name); }
                     RECT anchor{}; GetWindowRect(entry.field.window,&anchor);
                     if(const auto picked=pickObject_(entry.type,current,anchor))
                     {
-                        try { scriptHost_->SetObjectReference(*script,entry.name,*picked); entry.field.valid=true; RefreshBehaviors(); if(changed_)changed_(); }
+                        try {
+                            if(entry.arrayIndex>=0) scriptHost_->SetArrayElementReference(*script,entry.name,static_cast<std::size_t>(entry.arrayIndex),*picked);
+                            else scriptHost_->SetObjectReference(*script,entry.name,*picked);
+                            entry.field.valid=true; RefreshBehaviors(); if(changed_)changed_();
+                        }
                         catch(const std::exception&) { entry.field.valid=false; InvalidateRect(entry.field.window,nullptr,FALSE); }
                     }
                 }
@@ -856,13 +941,42 @@ void InspectorPanel::ShowBehaviorMenu(POINT screenPoint)
 bool InspectorPanel::AssignObjectReferenceAt(POINT point, zengine::GameObjectId target)
 {
     const auto control=WindowFromPoint(point);
+    // Geometric fallback: which behavior row is the drop point over? (WindowFromPoint
+    // skips child windows whose top-level ancestor is hidden, e.g. in tests.)
+    POINT client=point; ScreenToClient(window_,&client);
+    RECT bounds{}; GetClientRect(window_,&bounds);
+    const bool inPanel = PtInRect(&bounds,client);
+    int rowTop=(bounds.right>=250?329:378)-scroll_; int hoveredRow=-1;
+    for (std::size_t r=0;r<behaviorFields_.size();++r)
+    { const int h=RowHeight(behaviorFields_[r]); if (inPanel && h>0 && client.y>=rowTop && client.y<rowTop+h) { hoveredRow=static_cast<int>(r); } rowTop+=h; }
+
     for (std::size_t i=0;i<behaviorFields_.size();++i)
     {
         auto& entry=behaviorFields_[i];
-        if (!entry.objectReference || !entry.field.window || (control!=entry.field.window && !IsChild(entry.field.window,control))) continue;
-        if (!editData_ || !IsWindowEnabled(entry.field.window)) return false;
         auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior);
+        const bool overRow = static_cast<int>(i)==hoveredRow;
+
+        // Drop onto an array's "+ Add element" row appends a new object-reference slot.
+        if (entry.arrayHeader && (overRow || (!entry.bits.empty() && (control==entry.bits[0] || IsChild(entry.bits[0],control)))))
+        {
+            if (!editData_ || !script || !scriptHost_ || scriptHost_->Playing()) return false;
+            try { scriptHost_->SetArrayElementReference(*script,entry.name,static_cast<std::size_t>(-1),target); } // -1 clamps to append
+            catch (const std::exception&) { return false; }
+            RefreshBehaviors(); if (changed_) changed_(); return true;
+        }
+
+        const bool overField = entry.field.window && (control==entry.field.window || IsChild(entry.field.window,control) || overRow);
+        if (!entry.objectReference || !overField) continue;
+        if (!editData_ || !IsWindowEnabled(entry.field.window)) return false;
         if (!script || !scriptHost_) return false;
+
+        if (entry.arrayIndex>=0)
+        {
+            try { scriptHost_->SetArrayElementReference(*script,entry.name,static_cast<std::size_t>(entry.arrayIndex),target); }
+            catch (const std::exception&) { return false; }
+            RefreshBehaviors(); if (changed_) changed_(); return true;
+        }
+
         scriptHost_->SetObjectReference(*script,entry.name,target);
         const auto fields=scriptHost_->Fields(*script);
         for (const auto& field:fields) if (field.name==entry.name) { updating_=true;SetWindowTextW(entry.field.window,Wide(field.value).c_str());updating_=false;entry.field.focusText=Wide(field.value);break; }

@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <optional>
 #include <sstream>
 
 namespace zengine
@@ -24,6 +25,37 @@ namespace
     }
     bool Editable(const std::string& type) { return type=="char" || type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3" || type=="prefab"; }
     bool ReferenceTypeName(std::string_view type) { return !Editable(std::string(type)) && type!="array"; }
+
+    // Runtime variant tag -> editor value-type name (empty for object references / void).
+    std::string ValueTypeName(const Value& value)
+    {
+        if (std::holds_alternative<std::int64_t>(value)) return "int";
+        if (std::holds_alternative<double>(value)) return "float";
+        if (std::holds_alternative<bool>(value)) return "bool";
+        if (std::holds_alternative<std::string>(value)) return "string";
+        if (std::holds_alternative<char32_t>(value)) return "char";
+        if (std::holds_alternative<Vector3>(value)) return "Vector3";
+        if (std::holds_alternative<PrefabRef>(value)) return "prefab";
+        return {};
+    }
+    Value DefaultForType(const std::string& type)
+    {
+        if (type=="int") return std::int64_t{0};
+        if (type=="float") return 0.0;
+        if (type=="bool") return false;
+        if (type=="string") return std::string{};
+        if (type=="char") return char32_t{0};
+        if (type=="Vector3") return Vector3{};
+        if (type=="prefab") return PrefabRef{};
+        throw std::invalid_argument("Unknown array element value type.");
+    }
+    // Most-specific reference type an object satisfies, for auto-typing a dragged element.
+    std::string BestReferenceType(const GameObject& object)
+    {
+        for (const char* type : {"RigidBody","KinematicBody","StaticBody","Area","Camera","Collider","PhysicsBody"})
+            if (ScriptHost::ObjectMatchesReferenceType(object, type)) return type;
+        return "gameObject";
+    }
 
     // Engine half of the native-type phone book: maps a script type name to how the host
     // detects the component on a GameObject and which Runtime accessor field exposes it.
@@ -90,7 +122,7 @@ namespace
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const std::map<std::string,std::vector<ScriptArrayElement>>& arrays, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
               draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),scene(objects)
         {
@@ -115,6 +147,26 @@ namespace
                     for (const auto& entry : program->InspectorLayout(name))
                         if (entry.kind == InspectorEntry::Kind::Field && entry.name == field && ReferenceTypeName(entry.type))
                         { runtime.Set(object, field, Reference(id, entry.type)); break; }
+            for (const auto& entry : program->InspectorLayout(name))
+            {
+                if (entry.kind != InspectorEntry::Kind::Field || entry.type != "array") continue;
+                const auto found = arrays.find(entry.name);
+                if (found == arrays.end() || found->second.empty()) continue;
+                const auto arrayRef = std::get<ArrayRef>(runtime.Get(object, entry.name));
+                for (const auto& element : found->second)
+                {
+                    if (!element.referenceType.empty())
+                    {
+                        script::ObjectRef value{};
+                        if (element.reference) try { value = Reference(element.reference, element.referenceType); } catch (const std::exception&) {}
+                        runtime.AppendArrayElement(arrayRef, value);
+                    }
+                    else if (std::holds_alternative<PrefabRef>(element.value))
+                        runtime.AppendArrayElement(arrayRef, Value{runtime.CreatePrefab(std::get<PrefabRef>(element.value).asset)});
+                    else
+                        runtime.AppendArrayElement(arrayRef, element.value);
+                }
+            }
         }
         bool HasStart() const noexcept override { return true; }
         // Synchronize native transform signals even for a listener with no update body.
@@ -299,10 +351,37 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
                 if (const auto it = record.references.find(entry.name); it != record.references.end() && it->second)
                     keptReferences.emplace(entry.name, it->second);
         record.references=std::move(keptReferences);
+        std::map<std::string,std::vector<ScriptArrayElement>> keptArrays;
+        for (const auto& entry : compiled.program->InspectorLayout(record.className))
+            if (entry.kind==script::InspectorEntry::Kind::Field && entry.type=="array")
+                if (const auto it=record.arrays.find(entry.name); it!=record.arrays.end() && !it->second.empty())
+                    keptArrays.emplace(entry.name, it->second);
+        record.arrays=std::move(keptArrays);
+        // Seed authoring data from the script's own array initializer (export array a=[1,2,3];)
+        // so the inspector shows those elements the way it shows scalar defaults.
+        for (const auto& entry : compiled.program->InspectorLayout(record.className))
+        {
+            if (entry.kind!=script::InspectorEntry::Kind::Field || entry.type!="array" || record.arrays.count(entry.name)) continue;
+            const auto arrayRef = std::get<script::ArrayRef>(preview->Get(ref, entry.name));
+            const auto n = preview->ArrayLength(arrayRef);
+            if (!n) continue;
+            std::vector<ScriptArrayElement> seed;
+            for (std::size_t i=0;i<n;++i)
+            {
+                const auto v = preview->ArrayElement(arrayRef, i);
+                ScriptArrayElement element;
+                if (std::holds_alternative<script::ObjectRef>(v)) element.referenceType = "gameObject"; // runtime object from a literal: an empty slot
+                else if (!ValueTypeName(v).empty()) element.value = v;
+                else continue;
+                seed.push_back(std::move(element));
+            }
+            if (!seed.empty()) record.arrays.emplace(entry.name, std::move(seed));
+        }
         record.overrides=std::move(kept); record.object=ref;
         record.preview=std::move(preview); record.program=compiled.program;
         ApplyPreviewReferences(record);
-        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,input_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_));}
+        for (const auto& [field, elements] : record.arrays) { (void)elements; SyncPreviewArray(record, field); }
+        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,record.arrays,input_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_));}
         return true;
     }
     catch (const std::exception& e) { record.overrides=std::move(previousValues); record.error=e.what(); return false; }
@@ -317,6 +396,33 @@ std::vector<ScriptHost::Field> ScriptHost::Fields(ScriptBehavior& behavior)
     for (const auto& entry:r.program->InspectorLayout(r.className))
     {
         if (entry.kind==script::InspectorEntry::Kind::Label) result.push_back({{},{},entry.text,{},false});
+        else if (entry.type=="array")
+        {
+            const auto& elements = r.arrays[entry.name];
+            const auto count = elements.size();
+            result.push_back({entry.name,"array",entry.name,std::to_string(count)+(count==1?" element":" elements"),false,false,false,true,-1,count});
+            for (std::size_t i=0;i<count;++i)
+            {
+                const auto& element = elements[i];
+                if (!element.referenceType.empty())
+                {
+                    std::string value = "None";
+                    if (element.reference)
+                    {
+                        if (objectStore_ && objectStore_->Find(element.reference))
+                            value = objectStore_->Find(element.reference)->Name()+" ("+element.referenceType+")";
+                        else value = "Missing GameObject ("+std::to_string(element.reference)+")";
+                    }
+                    result.push_back({entry.name,element.referenceType,entry.name,std::move(value),false,false,true,false,static_cast<int>(i),count});
+                }
+                else
+                {
+                    auto type = ValueTypeName(element.value);
+                    if (type.empty()) type = "int";
+                    result.push_back({entry.name,type,entry.name,Format(element.value),true,false,false,false,static_cast<int>(i),count});
+                }
+            }
+        }
         else if (IsReferenceType(entry.type))
         {
             std::string value="None";
@@ -350,10 +456,119 @@ void ScriptHost::SetObjectReference(ScriptBehavior& behavior, const std::string&
     catch (...) { if(old)record.references[name]=old; else record.references.erase(name); throw; }
     if(target)record.references[name]=target;else record.references.erase(name);
 }
+const std::vector<std::string>& ScriptHost::ArrayElementTypes()
+{
+    static const std::vector<std::string> types = {
+        "int","float","bool","string","char","Vector3","prefab",
+        "gameObject","Transform","RigidBody","KinematicBody","StaticBody","Area","Collider","Camera","PhysicsBody","Behavior",
+    };
+    return types;
+}
+ScriptHost::Record& ScriptHost::ArrayRecord(ScriptBehavior& behavior, const std::string& field)
+{
+    if (playing_) throw std::logic_error("Stop Play before editing a script array.");
+    auto& record = records_.at(&behavior);
+    if (!record.program || !record.preview) throw std::logic_error("Prepare the script before editing an array.");
+    const auto& layout = record.program->InspectorLayout(record.className);
+    const auto found = std::find_if(layout.begin(), layout.end(), [&](const script::InspectorEntry& e){
+        return e.kind==script::InspectorEntry::Kind::Field && e.name==field && e.type=="array"; });
+    if (found == layout.end()) throw std::invalid_argument("Field is not an exported array.");
+    return record;
+}
+void ScriptHost::SyncPreviewArray(Record& record, const std::string& field)
+{
+    if (!record.preview || !record.program) return;
+    const auto arrayRef = std::get<script::ArrayRef>(record.preview->Get(record.object, field));
+    while (record.preview->ArrayLength(arrayRef) > 0)
+        record.preview->RemoveArrayElement(arrayRef, record.preview->ArrayLength(arrayRef) - 1);
+    const auto found = record.arrays.find(field);
+    if (found == record.arrays.end()) return;
+    for (const auto& element : found->second)
+    {
+        if (!element.referenceType.empty())
+        {
+            script::ObjectRef value{};
+            if (element.reference) try { value = PreviewReference(record, element.reference, element.referenceType); } catch (const std::exception&) {}
+            record.preview->AppendArrayElement(arrayRef, value);
+        }
+        else if (std::holds_alternative<script::PrefabRef>(element.value))
+            record.preview->AppendArrayElement(arrayRef, script::Value{record.preview->CreatePrefab(std::get<script::PrefabRef>(element.value).asset)});
+        else
+            record.preview->AppendArrayElement(arrayRef, element.value);
+    }
+}
+void ScriptHost::AddArrayElement(ScriptBehavior& behavior, const std::string& field, const std::string& elementType)
+{
+    auto& record = ArrayRecord(behavior, field);
+    const auto& known = ArrayElementTypes();
+    if (std::find(known.begin(), known.end(), elementType) == known.end())
+        throw std::invalid_argument("Unknown array element type '" + elementType + "'.");
+    ScriptArrayElement element;
+    if (elementType=="gameObject" || IsReferenceType(elementType)) element.referenceType = elementType;
+    else element.value = DefaultForType(elementType);
+    auto& elements = record.arrays[field];
+    elements.push_back(std::move(element));
+    try { SyncPreviewArray(record, field); }
+    catch (...) { elements.pop_back(); if (elements.empty()) record.arrays.erase(field); else SyncPreviewArray(record, field); throw; }
+}
+void ScriptHost::RemoveArrayElement(ScriptBehavior& behavior, const std::string& field, std::size_t index)
+{
+    auto& record = ArrayRecord(behavior, field);
+    auto& elements = record.arrays[field];
+    if (index >= elements.size()) throw std::out_of_range("Array element index is out of range.");
+    elements.erase(elements.begin() + static_cast<std::ptrdiff_t>(index));
+    if (elements.empty()) record.arrays.erase(field);
+    SyncPreviewArray(record, field);
+}
+void ScriptHost::SetArrayElement(ScriptBehavior& behavior, const std::string& field, std::size_t index, const std::string& text)
+{
+    auto& record = ArrayRecord(behavior, field);
+    auto& elements = record.arrays[field];
+    if (index >= elements.size()) throw std::out_of_range("Array element index is out of range.");
+    auto& element = elements[index];
+    if (!element.referenceType.empty()) throw std::invalid_argument("This element is an object reference; assign it by dragging a scene object.");
+    auto type = ValueTypeName(element.value);
+    if (type.empty()) type = "int";
+    const auto parsed = Parse(type, text);
+    const auto previous = element.value;
+    element.value = parsed;
+    try { SyncPreviewArray(record, field); }
+    catch (...) { element.value = previous; SyncPreviewArray(record, field); throw; }
+}
+void ScriptHost::SetArrayElementReference(ScriptBehavior& behavior, const std::string& field, std::size_t index, GameObjectId target)
+{
+    auto& record = ArrayRecord(behavior, field);
+    auto& elements = record.arrays[field];
+    if (index > elements.size()) index = elements.size(); // clamp: append a new slot
+    std::string type;
+    if (target)
+    {
+        if (!objectStore_ || !objectStore_->Find(target)) throw std::invalid_argument("The dragged GameObject no longer exists.");
+        // Keep the slot's declared type if it already matches; otherwise auto-pick.
+        if (index < elements.size() && !elements[index].referenceType.empty()
+            && ObjectMatchesReferenceType(*objectStore_->Find(target), elements[index].referenceType))
+            type = elements[index].referenceType;
+        else type = BestReferenceType(*objectStore_->Find(target));
+    }
+    else if (index < elements.size()) type = elements[index].referenceType;
+    if (type.empty()) type = "gameObject";
+
+    ScriptArrayElement element; element.reference = target; element.referenceType = type;
+    std::optional<ScriptArrayElement> previous;
+    if (index < elements.size()) { previous = elements[index]; elements[index] = std::move(element); }
+    else elements.push_back(std::move(element));
+    try { SyncPreviewArray(record, field); }
+    catch (...)
+    {
+        if (previous) elements[index] = *previous; else elements.pop_back();
+        if (elements.empty()) record.arrays.erase(field); else SyncPreviewArray(record, field);
+        throw;
+    }
+}
 void ScriptHost::SetField(ScriptBehavior& behavior, const std::string& name, const std::string& text)
 {
     auto& r=records_.at(&behavior);
-    for (const auto& field:Fields(behavior)) if (field.name==name && field.editable)
+    for (const auto& field:Fields(behavior)) if (field.name==name && field.editable && field.arrayIndex<0 && !field.array)
     {
         const auto value=Parse(field.type,text);
         if (auto* live=dynamic_cast<BoundScript*>(behavior.Instance())) live->runtime.Set(live->object,name,std::holds_alternative<script::PrefabRef>(value)?script::Value{live->runtime.CreatePrefab(std::get<script::PrefabRef>(value).asset)}:value);
@@ -385,6 +600,21 @@ std::map<std::string,GameObjectId> ScriptHost::AuthoredReferences(const ScriptBe
     const auto it=records_.find(&behavior);
     return it==records_.end()?std::map<std::string,GameObjectId>{}:it->second.references;
 }
+std::map<std::string,std::vector<ScriptArrayElement>> ScriptHost::AuthoredArrays(const ScriptBehavior& behavior) const
+{
+    const auto it=records_.find(&behavior);
+    if (it==records_.end()) return {};
+    std::map<std::string,std::vector<ScriptArrayElement>> result;
+    for (const auto& [field,elements] : it->second.arrays) if (!elements.empty()) result.emplace(field,elements);
+    return result;
+}
+void ScriptHost::RestoreArrays(ScriptBehavior& behavior, std::map<std::string,std::vector<ScriptArrayElement>> arrays)
+{
+    auto found=records_.find(&behavior);
+    if (found!=records_.end() && found->second.program)
+        throw std::logic_error("Restore scene arrays before compiling or playing.");
+    records_[&behavior].arrays=std::move(arrays);
+}
 void ScriptHost::RestoreValues(ScriptBehavior& behavior, std::map<std::string,script::Value> values)
 {
     auto found=records_.find(&behavior);
@@ -413,7 +643,7 @@ bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,input_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_)); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,r.arrays,input_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_)); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();

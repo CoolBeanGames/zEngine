@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="60">
+<tasks project="zEngine" nextIndex="79">
   <task id="ZE-59">
     <name>ZE 49 is happening again</name>
     <prompt>this was the original prompt:
@@ -247,9 +247,9 @@ also the bullet spawns in the wrong position, its spawning at 0,0,0 even though 
     <errorMessage></errorMessage>
     <lockKey></lockKey>
     <locked>false</locked>
-    <archived>false</archived>
+    <archived>true</archived>
     <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
@@ -893,10 +893,10 @@ a Breakpoint has been reached
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
-  <task id="ZE-34">
-    <name>proper object picker</name>
-    <prompt>we should build an object picker that can be used universally, it should be able to see ALL types, then gets passed a filtered version, it then lists all instances of those types. it should support both assets, and scene trees but only show whatever makes sense in the context in which its being used. should be available as a window pop-up as well as a drop down.</prompt>
-    <requirements>create the picker dialogs to replace windows system dialogs.</requirements>
+  <task id="ZE-33">
+    <name>arrays should be visable and editable in the inspector</name>
+    <prompt>we should be able to see and set valuoes for arrays in inspector, even drag in references to a specific slot if needed depending on the types</prompt>
+    <requirements>make arrays display properly</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
     <bug>false</bug>
@@ -911,8 +911,597 @@ a Breakpoint has been reached
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
+    <notes>Exported script `array` fields are now first-class in the Inspector. Scripting lib gained a public element API on Runtime (ArrayLength/ArrayElement/SetArrayElement/AppendArrayElement/RemoveArrayElement). ScriptHost surfaces each exported array as a header row plus one row per element via Fields() (new array/arrayIndex/arrayCount on ScriptHost::Field); AddArrayElement/RemoveArrayElement/SetArrayElement/SetArrayElementReference edit them (edit mode only), AuthoredArrays/RestoreArrays persist them, Prepare seeds from the script's own `[...]` initializer and reconciles on recompile, Play/BoundScript rebuilds the live array. New ScriptHost::ScriptArrayElement (scalar value OR GameObjectId+auto-picked reference type). Scene format bumped to v7: arrays/array/element/`element ref &lt;id&gt; &lt;type&gt;` blocks; Instantiate + Append (with prefab-internal id remap, mirroring ZE-59) restore them. InspectorPanel renders an "+ Add element" button (type menu: value types then reference types), per-element edit fields (scalars) or pick buttons (references/prefab), a per-element remove button, and accepts a dragged scene object onto an element slot or the array's add row - auto-typing the reference to the most specific match (RigidBody, Collider, Camera, ... else gameObject). AssignObjectReferenceAt gained a geometric row hit-test so drops land even when WindowFromPoint can't see the control. EditorShell::DropObjectOnInspector exposes the drop path for tests. Coverage: scripting ArraysTypesAndLocals extended, ScriptHostTests array block, SceneTests v7 round-trip, new --arrays / ArrayInspector ctest. Full ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/Scene.h; src/Scene.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; tests/ScriptHostTests.cpp; tests/SceneTests.cpp; tests/AssetTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="true">make arrays visable</subtask>
+      <subtask done="true">add new elemtns to arrays in inspector</subtask>
+      <subtask done="true">remove elements</subtask>
+      <subtask done="true">pick type for new elements</subtask>
+      <subtask done="true">drag elements in</subtask>
+      <subtask done="true">drag elements in to empy array (add new slot)</subtask>
+      <subtask done="true">auto select type based on dragged in element</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-39">
+    <name>collapse behavior</name>
+    <prompt>on the right side of the behavior add a collapse button, make it styled like the new remove behavior button and when collapsed its just the name and the expand button</prompt>
+    <requirements>collapse button added</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags></tags>
+    <notes>The per-behavior collapse toggle moved from the left of the header to the right edge (place at width-28), so the behavior name now starts flush at x=12 like every other label; the button is dark-themed via editorStyle::Attach to match the rest of the Inspector chrome (the old "remove behavior" button it was meant to mirror is now a right-click action). Collapsing still hides every non-header row of that behavior (RowHeight 0 + ShowWindow(SW_HIDE)), leaving just the name and the "+" expand button. The new ZE-33 array +/- buttons are dark-themed the same way. Regression added to the CollisionLayerButtons suite: toggle is right-of-centre, a click hides the behavior's rows and keeps the toggle visible, a second click restores them. Built to builds/debug and builds/release (release zipped to builds/release/zEngine-release.zip); full ctest 32/32; committed and pushed.</notes>
+    <filesChanged>src/InspectorPanel.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-62">
+    <name>Mouse Delta</name>
+    <prompt>We need a simple way to get access to mouse data, it should be just a global part of Input as Input.mouse</prompt>
+    <requirements>all subtasks complete</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>input,new system</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">mouse.delta (returns a Vector3 of how much it moved)</subtask>
+      <subtask done="false">mouse.position (returns its position in screen coordinates from -1.-1.0 to 1,1,0)</subtask>
+      <subtask done="false">mouse.signals(clicked(button_index),click_ended(button_index),held(button_index))</subtask>
+      <subtask done="false">mouse.was_just_moved(old_position,new_position)</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-68">
+    <name>get behavior</name>
+    <prompt>by passing a type in it should return a component of that type attached to the gameObject, is a method of gameObject.
+rigidbody rb = gameObject.getBehavior(rigidbody);</prompt>
+    <requirements>can now get references like this</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scritping</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-70">
+    <name>find</name>
+    <prompt>two flavors (both static members of the base gameObject)
+GameObject.find("name") - returns the first gameobject in the scene with that name
+GameObject.find_by_type(type) - returns the first gameobject in the scene with that behavior</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-69">
+    <name>get tags</name>
+    <prompt>member of game object, returns the tag field seperated by by commas into an array. also add has_tag("tag") which returns bool if the object uses that tag</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-71">
+    <name>autocomplete update</name>
+    <prompt>add mouse over tooltips, if i mouse over a function call (name only) show the parameters that are part of it, same for signals (hovering over a rigidbody.body_entered signal should show me the parameters that pass the body</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>scripting,ui</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-72">
+    <name>new Vector2 type</name>
+    <prompt>add a new global vector2 type for use with 2D and inputs, update Input stuff to use it</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>input,scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-73">
+    <name>new ganeObject2D</name>
+    <prompt>exactly like gameObject 3D but uses a Vector2 instead of Vector3</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-72</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-60">
+    <name>start work on 2D Rendering</name>
+    <prompt>we need a way to render 2D on top of everything else, right now this will mostly be used for the UI though eventually will be used for a dedicated 2D mode so make it flexible</prompt>
+    <requirements>UI rendering framework</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-73</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>2D,rendering,scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">tasks required for rendering 2D on the screen</subtask>
+      <subtask done="false">tasks required for rendering text on the screen</subtask>
+      <subtask done="false">everything uses screen coordinates</subtask>
+      <subtask done="false">prepared for the material and material instance systems we will build later, although it should have its own way to add textures. I want it to use materials/material instances on the back end but i dont want to have to make one for every ui texture</subtask>
+      <subtask done="false">should be ready to support, 9 slices, reggions, scaling, cropping, z axis rotation</subtask>
+      <subtask done="false">shoudl be unaffected by the later lighting systems</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-61">
+    <name>Start on a UI subsystem</name>
+    <prompt>use inheritance and the 2D rendering, we will need to make several types. parenting will be very important. later we will make other styles of UI and more controls.</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-72</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">supports anchors (with auto anchor modes (ie top left, filll, bottom half, etc)</subtask>
+      <subtask done="false">container base (controls children position/size, has parameters for adjusting)</subtask>
+      <subtask done="false">hTileBoxContainer (positions children in a row horizontally, can fill vertically or not)</subtask>
+      <subtask done="false">vTileBoxContainer (positions children in a row vertically, can fill horizontally or not)</subtask>
+      <subtask done="false">centerContainer (keep chilcdren exactly centered)</subtask>
+      <subtask done="false">marginContainer (keeys a configurable margin around the edge)</subtask>
+      <subtask done="false">panelContainer (basic contailer that renders a sprite)</subtask>
+      <subtask done="false">text (simple single line text field)</subtask>
+      <subtask done="false">longText (multiline text field)</subtask>
+      <subtask done="false">textEntery (allows user to enter text, can be queried for value)</subtask>
+      <subtask done="false">textureRect (displays a texture)</subtask>
+      <subtask done="false">colorRect (like a texture rect but fills the entire rect with a solid color)</subtask>
+      <subtask done="false">progressBar (displays a configurable scrollable horizontal or vertical progress bar)</subtask>
+      <subtask done="false">signals on all of this for if it was clicked by the mouse</subtask>
+      <subtask done="false">ordering settings</subtask>
+      <subtask done="false">batch entire UI draw as a single object</subtask>
+      <subtask done="false">all of these support prefabs, and all are created through the scene tree</subtask>
+      <subtask done="false">they can also be spawned and the base control inherits from gameObject2D</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-63">
+    <name>Add in Scene Managment</name>
+    <prompt>a Base class Scene with methods to load new scenes by passing the stringName of the scene, resolve same names by warning and just picking the first.</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scene managment</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-64">
+    <name>Materials</name>
+    <prompt>the first half of the Material system, it is esentially a shader. Later though we will build a visual editor for now just support HLSL.</prompt>
+    <requirements>we can now create and compile HLSL code.</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>rendering</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">use text editor for HLSL</subtask>
+      <subtask done="false">call the extension .shader</subtask>
+      <subtask done="false">only defines code and parameters, cannot be applied to objefcts</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-65">
+    <name>Material Instances</name>
+    <prompt>take a  shader and applies values to parameters, this is what the objects (2D and 3D) actually accept. these are created as asset files in the library (through right click)</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-64</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>rendering</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">Inspector for assigning values</subtask>
+      <subtask done="false">basic Material Instance 3D (albedo and UVs for now)</subtask>
+      <subtask done="false">basic Material Instance 3D (also Albedo and UVs)</subtask>
+      <subtask done="false">connect to they can be set on Models (and optionally UI elements)</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-66">
+    <name>UI 2</name>
+    <prompt>add more types to the UI, and additional options for it</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-61</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>scripting, UI</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">scrolling container (allows scrolling through the contents, they still support clicking, and other subcontainers. use the parent/child relationship)</subtask>
+      <subtask done="false">video texture (play a video as a standard texture)</subtask>
+      <subtask done="false">button (reusable button with, clicked, down, up states and visuals)</subtask>
+      <subtask done="false">Add a UI HTML interpreter</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-67">
+    <name>Audio</name>
+    <prompt>Ability to import and play audio files</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>audio,scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">support various codects (mp3, wma, wav, ogg)</subtask>
+      <subtask done="false">audio player gameObject type</subtask>
+      <subtask done="false">can play globally (2D) or positionally (3D) with distance fall off</subtask>
+      <subtask done="false">can loop or play once</subtask>
+      <subtask done="false">has signals for started looped and finished</subtask>
+      <subtask done="false">supports, volume, pitch, attenuation</subtask>
+      <subtask done="false">new Audio Filter Volume type that supports reverb and other effects for any audio player (3D) played within it.</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-74">
+    <name>Lights</name>
+    <prompt>we now need to add basic vertex lighting although still complex im keeping this as sinmple as possible</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-65</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>rendering,lighting,materials</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">basic shadows</subtask>
+      <subtask done="false">vertex lighting</subtask>
+      <subtask done="false">can be toggled off fully per object via material instances</subtask>
+      <subtask done="false">omni light</subtask>
+      <subtask done="false">direction light</subtask>
+      <subtask done="false">spot light</subtask>
+      <subtask done="false">can be baked (must be set to static in the objects renderer and the light itself)</subtask>
+      <subtask done="false">lightmaps saved to the asset library as .lightmap</subtask>
+      <subtask done="false">can be colored</subtask>
+      <subtask done="false">strength and falloff can be adjusted</subtask>
+      <subtask done="false">should not be processed at ALL of its turned off for an object, just move on to the next object</subtask>
+      <subtask done="false">not supported at all for 2D</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-75">
+    <name>Lights 2</name>
+    <prompt>support for more lighting stuff</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-74</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>rendering,lights</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">basic distance fog</subtask>
+      <subtask done="false">basic height fog</subtask>
+      <subtask done="false">basic volumentric fog</subtask>
+      <subtask done="false">lights can toggle if the affect voluem fog and if so by how much</subtask>
+      <subtask done="false">roughness / specularity</subtask>
+      <subtask done="false">dithering</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-76">
+    <name>projectors / decals</name>
+    <prompt>I should be able to spawn a cube with a decal component and project a texture on all surfaces it hits (for bullet holes, or blood spatter)</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-65</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>rendering</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-77">
+    <name>preformance</name>
+    <prompt>performance updates to rendering</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>rendering,performance</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">batching models (keep in mind were adding animations later)</subtask>
+      <subtask done="false">batching unlit models</subtask>
+      <subtask done="false">backface culling</subtask>
+      <subtask done="false">frustrum culling</subtask>
+      <subtask done="false">distance culling</subtask>
+      <subtask done="false">2D batching</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-78">
+    <name>potential performance boost</name>
+    <prompt>I was thinking of a system where we keep lists of objects that have various functions
+so a list of objects with code in update
+a list of objects with code in draw etc
+then we only execute the updates that are in those lists, basically batching the updates and starts
+starts would have to be just the ones that are already present in the scene but i feel like it would have some gains. feel free to ignore me and close this if it wouldnt work.</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>performance</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-34">
+    <name>proper object picker</name>
+    <prompt>we should build an object picker that can be used universally, it should be able to see ALL types, then gets passed a filtered version, it then lists all instances of those types. it should support both assets, and scene trees but only show whatever makes sense in the context in which its being used. should be available as a window pop-up as well as a drop down.</prompt>
+    <requirements>create the picker dialogs to replace windows system dialogs.</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
     <tags>ui,picker,assets,scripting</tags>
-    <notes>New src/ObjectPicker (Window + Dropdown, one code path) replaces the four OS file dialogs: ChooseScript, ChooseScene, ChoosePrefabReference and ChooseModel now open an in-app modal listing the matching project assets with icons, live search, Clear/Cancel and (only when more than one type is present) per-type filter chips. Script object-reference Inspector fields became click-to-pick buttons that open the Dropdown anchored to the field, listing exactly the scene objects that qualify for that reference type - the ENGINE does the type filtering via new ScriptHost::ObjectMatchesReferenceType (RigidBody field -> only rigidbodies, etc.), so the picker just shows what was passed; chips are reserved for multi-type contexts like arrays. EditorShell::AssetPickerItems / PickSceneObject build the lists. ObjectPicker::SetTestResponder lets call-site tests skip the modal. New --picker suite drives the real dialog via a timer/EnumThreadWindows (search, chips, clear, cancel, dropdown, editor integration); full ctest 29/29; on-screen screenshot verified.</notes>
+    <notes>New src/ObjectPicker (Window + Dropdown, one code path) replaces the four OS file dialogs: ChooseScript, ChooseScene, ChoosePrefabReference and ChooseModel now open an in-app modal listing the matching project assets with icons, live search, Clear/Cancel and (only when more than one type is present) per-type filter chips. Script object-reference Inspector fields became click-to-pick buttons that open the Dropdown anchored to the field, listing exactly the scene objects that qualify for that reference type - the ENGINE does the type filtering via new ScriptHost::ObjectMatchesReferenceType (RigidBody field -&gt; only rigidbodies, etc.), so the picker just shows what was passed; chips are reserved for multi-type contexts like arrays. EditorShell::AssetPickerItems / PickSceneObject build the lists. ObjectPicker::SetTestResponder lets call-site tests skip the modal. New --picker suite drives the real dialog via a timer/EnumThreadWindows (search, chips, clear, cancel, dropdown, editor integration); full ctest 29/29; on-screen screenshot verified.</notes>
     <filesChanged>src/ObjectPicker.h; src/ObjectPicker.cpp; src/EditorShell.h; src/EditorShell.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/ScriptHost.h; src/ScriptHost.cpp; tests/AssetTests.cpp; tests/WindowCapture.h; CMakeLists.txt; tasks.xml</filesChanged>
     <image></image>
     <subtasks>
@@ -941,9 +1530,9 @@ this is a big project and will likey take some time, do your best at it!</prompt
     <errorMessage></errorMessage>
     <lockKey></lockKey>
     <locked>false</locked>
-    <archived>false</archived>
+    <archived>true</archived>
     <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
@@ -968,9 +1557,9 @@ if a new camera is spawned in it takes over as the main camera. there is a "main
     <errorMessage></errorMessage>
     <lockKey></lockKey>
     <locked>false</locked>
-    <archived>false</archived>
+    <archived>true</archived>
     <blockedBy></blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
@@ -978,61 +1567,6 @@ if a new camera is spawned in it takes over as the main camera. there is a "main
     <tags>camera,rendering,3d,view</tags>
     <notes>New zengine::Camera native behavior (field of view, near, far; "main" via the owner's "main" tag). Added through the scene-tree "Camera" preset or Inspector "Add Behavior &gt; Camera"; a fresh camera claims "main" and SyncMainCamera keeps it unique (creating another camera, or re-tagging one via the Inspector, transfers it and clears the rest). Registered in the phone book (NativeTypes.h) so scripts can "export Camera cam" - the compiler builds the class from the registry, ScriptHost binds it, autocomplete and the object picker follow. Scenes serialise it (version 6). The renderer: draws each camera's frustum as an editor guide in the Scene tab (main = blue, selected = amber), and when the Game tab is active the main camera's transform+projection replace the orbit camera (ViewportFrame::gameView / cameraGizmos). Inspector shows editable fov/near/far. New --camera suite (preset, single-main enforcement, gizmos, Game-tab view, save/reload, script reference); full ctest 31/31; frustum screenshot verified.</notes>
     <filesChanged>src/core/Camera.h; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; src/ScriptHost.cpp; src/Scene.h; src/Scene.cpp; src/RenderScene.h; src/Renderer.cpp; src/EditorShell.h; src/EditorShell.cpp; src/EditorHierarchy.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; tests/AssetTests.cpp; tests/SceneTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-33">
-    <name>arrays should be visable and editable in the inspector</name>
-    <prompt>we should be able to see and set valuoes for arrays in inspector, even drag in references to a specific slot if needed depending on the types</prompt>
-    <requirements>make arrays display properly</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>true</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="false">make arrays visable</subtask>
-      <subtask done="false">add new elemtns to arrays in inspector</subtask>
-      <subtask done="false">remove elements</subtask>
-      <subtask done="false">pick type for new elements</subtask>
-      <subtask done="false">drag elements in</subtask>
-      <subtask done="false">drag elements in to empy array (add new slot)</subtask>
-      <subtask done="false">auto select type based on dragged in element</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-39">
-    <name>collapse behavior</name>
-    <prompt>on the right side of the behavior add a collapse button, make it styled like the new remove behavior button and when collapsed its just the name and the expand button</prompt>
-    <requirements>collapse button added</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>true</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
     <image></image>
   </task>
   <task id="ZE-55">

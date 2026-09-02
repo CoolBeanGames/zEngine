@@ -79,12 +79,16 @@ private:
         bool prefab = false;
         bool objectReference = false;
         bool bitmask = false; // Collision layer/mask row: a grid of toggle buttons instead of an edit field.
-        std::vector<HWND> bits; // Bitmask toggle buttons, low bit first.
+        std::vector<HWND> bits; // Bitmask toggle buttons (low bit first), or array aux buttons ([0] = add/remove).
         int axis = -1; // Three consecutive fields share one Vector3 row.
+        bool arrayHeader = false; // "+ Add element" row for an exported script array field.
+        int arrayIndex = -1;      // >=0: one element row of the exported array named `name`.
         Style style = Style::Normal;
     };
     std::wstring BehaviorValue(std::size_t index);
     void ChangeBehaviorField(std::size_t index);
+    void ShowAddArrayElementMenu(std::size_t fieldIndex);
+    void RemoveArrayElementAt(std::size_t fieldIndex);
     void ToggleCollisionBit(std::size_t fieldIndex, int bit);
     void RefreshCollisionBits(const BehaviorField& entry) const;
     int bitButtonCount_ = 0; // Running WM_COMMAND id offset for collision-bit buttons.

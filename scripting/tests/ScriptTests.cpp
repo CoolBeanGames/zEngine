@@ -342,6 +342,17 @@ void ArraysTypesAndLocals() {
     RuntimeLimits limits;limits.arrayElements=1;
     Runtime limited(Compile("class A { array a=[]; func f() { a.append(1); a.append(2); } }"),limits);
     auto tiny=limited.Create("A");Error([&]{limited.Call(tiny,"f");},"limit exceeded");
+    // Host-facing element API used by the editor inspector (ZE-33).
+    Runtime api(Compile("class A : gameObject { array a=[1,2,3]; }"));
+    auto obj=api.Create("A"); auto arr=std::get<ArrayRef>(api.Get(obj,"a"));
+    Check(api.ArrayLength(arr)==3 && Int(api.ArrayElement(arr,1))==2,"Array length/element read failed");
+    api.SetArrayElement(arr,1,std::int64_t{42}); Check(Int(api.ArrayElement(arr,1))==42,"SetArrayElement failed");
+    api.AppendArrayElement(arr,std::string("tail"));
+    Check(api.ArrayLength(arr)==4 && std::get<std::string>(api.ArrayElement(arr,3))=="tail","AppendArrayElement failed");
+    api.RemoveArrayElement(arr,0); // [1,42,3,"tail"] -> [42,3,"tail"]
+    Check(api.ArrayLength(arr)==3 && Int(api.ArrayElement(arr,0))==42,"RemoveArrayElement failed");
+    Error([&]{api.ArrayElement(arr,9);},"out of range");
+    Error([&]{api.SetArrayElement(arr,9,std::int64_t{0});},"out of range");
 }
 }
 void Parenting() {

@@ -1041,6 +1041,24 @@ void CollisionBitsTests(bool capture)
                     SendMessageW(GetDlgItem(inspector2, InspectorPanel::FirstBehaviorBit + 0), BM_GETCHECK, 0, 0) == BST_UNCHECKED,
                     "Re-selecting did not sync collision buttons to stored bits");
         }
+        // ZE-39: the per-behavior collapse toggle sits on the RIGHT of the header and hides
+        // the behavior's rows when collapsed (leaving only the name + expand button).
+        {
+            const HWND ins = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+            // Preset order: Collider is behavior 0, RigidBody is behavior 1 (it owns the bit grid).
+            const HWND toggle = GetDlgItem(ins, InspectorPanel::FirstBehaviorToggle + 1);
+            Require(toggle != nullptr, "RigidBody collapse toggle missing");
+            RECT tr{}, ir{}; GetWindowRect(toggle, &tr); GetClientRect(ins, &ir);
+            POINT tl{ tr.left, tr.top }; ScreenToClient(ins, &tl);
+            Require(tl.x > ir.right / 2, "Collapse toggle is not on the right side of the behavior header");
+            const auto shown = [](HWND h) { return h && (GetWindowLongW(h, GWL_STYLE) & WS_VISIBLE) != 0; };
+            Require(shown(GetDlgItem(ins, InspectorPanel::FirstBehaviorBit + 0)), "Collision bit row hidden before collapse");
+            SendMessageW(ins, WM_COMMAND, MAKEWPARAM(InspectorPanel::FirstBehaviorToggle + 1, BN_CLICKED), reinterpret_cast<LPARAM>(toggle));
+            Require(!shown(GetDlgItem(ins, InspectorPanel::FirstBehaviorBit + 0)), "Collapsing the behavior did not hide its rows");
+            Require(shown(toggle), "Collapse toggle vanished when the behavior collapsed");
+            SendMessageW(ins, WM_COMMAND, MAKEWPARAM(InspectorPanel::FirstBehaviorToggle + 1, BN_CLICKED), reinterpret_cast<LPARAM>(toggle));
+            Require(shown(GetDlgItem(ins, InspectorPanel::FirstBehaviorBit + 0)), "Expanding the behavior did not restore its rows");
+        }
         if (capture) {
             auto* rebound = editor.SelectedGameObject() ? const_cast<zengine::GameObject*>(editor.SelectedGameObject())->GetBehavior<zengine::physics::RigidBody>() : rb;
             rebound->SetLayer((1u<<0)|(1u<<3)); rebound->SetMask(0x7);
@@ -1055,11 +1073,84 @@ void CollisionBitsTests(bool capture)
     CoUninitialize();
     std::cout << "PASS: collision layer/mask toggle buttons set/clear bits and preserve unseen high bits\n";
 }
+void ArrayInspectorTests(bool capture)
+{
+    Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM initialization failed");
+    TestDirectory test;
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        const HWND window = editor.Create(SW_HIDE, test.path / "Project");
+        editor.InitializeRenderer();
+        const auto cube = editor.SelectedGameObject()->Id();
+        // Row 2 in the scene tree: a RigidBody object to drag into an array slot.
+        auto& rig = editor.CreateGameObject(EditorShell::ObjectPreset::RigidBody);
+        const auto rigId = rig.Id();
+        // Author a script whose exported arrays carry an initializer and an empty list.
+        const auto path = editor.CreateScriptAsset();
+        editor.OpenScript(path);
+        const HWND scriptWindow = FindWindowExW(window, nullptr, L"zEngineScriptEditor", nullptr);
+        Require(scriptWindow != nullptr, "Inline script editor did not open");
+        SetWindowTextW(GetDlgItem(scriptWindow, ScriptEditor::SourceControl),
+            LR"(class NewBehavior : gameObject {
+                export array numbers=[10,20];
+                export array refs;
+                func start() {} func update(float dt) {}
+            })");
+        SendMessageW(scriptWindow, WM_COMMAND, ScriptEditor::SaveCommand, 0);
+        // Re-select the cube and attach.
+        SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 140));
+        SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 140));
+        Require(editor.SelectedGameObject()->Id() == cube, "Could not re-select the cube");
+        Require(editor.AttachScript(cube, path), "Attach script with arrays failed");
+        const HWND inspector = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+        Require(inspector != nullptr, "Inspector child missing");
+        const auto field = [&](int row) { return GetDlgItem(inspector, InspectorPanel::FirstBehaviorField + row); };
+        const auto arrayButton = [&](int i) { return GetDlgItem(inspector, InspectorPanel::FirstBehaviorBit + i); };
+        const auto text = [&](HWND h) { wchar_t b[64]{}; GetWindowTextW(h, b, 64); return std::wstring(b); };
+        // Mesh header/priority, script header/priority, numbers[header], numbers[0], numbers[1], refs[header]
+        Require(field(5) && field(6), "Array initializer did not surface element edit fields");
+        Require(text(field(5)) == L"10" && text(field(6)) == L"20", "Array element fields show the wrong initializer values");
+        Require(arrayButton(0) && arrayButton(1) && arrayButton(2) && arrayButton(3), "Array add/remove buttons were not created");
+        // Edit an element.
+        SetWindowTextW(field(6), L"99");
+        SendMessageW(inspector, WM_COMMAND, MAKEWPARAM(InspectorPanel::FirstBehaviorField + 6, EN_KILLFOCUS), reinterpret_cast<LPARAM>(field(6)));
+        // Remove numbers[0] via its "x" button (id FirstBehaviorBit+1).
+        SendMessageW(inspector, WM_COMMAND, MAKEWPARAM(InspectorPanel::FirstBehaviorBit + 1, BN_CLICKED), reinterpret_cast<LPARAM>(arrayButton(1)));
+        const HWND inspector2 = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+        const auto field2 = [&](int row) { return GetDlgItem(inspector2, InspectorPanel::FirstBehaviorField + row); };
+        Require(field2(5) && !field2(6), "Removing an array element did not drop the trailing row");
+        { wchar_t b[64]{}; GetWindowTextW(field2(5), b, 64); Require(std::wstring(b) == L"99", "Array element edit or removal kept the wrong value"); }
+        // Dropping a scene object onto the "refs" array (empty) appends an auto-typed slot.
+        // The InspectorPanel geometric hit-test routes an over-row drop to the array.
+        for (int i = 0; i < 24; ++i) SendMessageW(inspector2, WM_VSCROLL, MAKEWPARAM(SB_LINEDOWN, 0), 0);
+        const HWND refsAdd = GetDlgItem(inspector2, InspectorPanel::FirstBehaviorBit + 2);
+        Require(refsAdd != nullptr, "refs array add button missing");
+        RECT rb{}; GetWindowRect(refsAdd, &rb);
+        const POINT dropScreen{ (rb.left + rb.right) / 2, (rb.top + rb.bottom) / 2 };
+        Require(editor.DropObjectOnInspector(dropScreen, rigId), "Drop onto the refs array row was not accepted");
+        SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 140));
+        SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 140));
+        const HWND inspector4 = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+        bool foundRefElement = false;
+        for (int row = 0; row < 24; ++row)
+        {
+            const HWND h = GetDlgItem(inspector4, InspectorPanel::FirstBehaviorField + row);
+            if (!h) continue;
+            wchar_t b[128]{}; GetWindowTextW(h, b, 128);
+            if (std::wstring(b).find(L"RigidBody") != std::wstring::npos) foundRefElement = true;
+        }
+        Require(foundRefElement, "Dragging a scene object onto an array did not append an auto-typed reference element");
+        if (capture) { editor.Render(); CaptureScreen(window, L"array-inspector-qa.bmp"); }
+    }
+    CoUninitialize();
+    std::cout << "PASS: exported script arrays render, add/remove/edit elements, and accept dragged auto-typed references\n";
+}
 int main(int argc, char** argv)
 {
     try
     {
         if (argc > 1 && std::string(argv[1]) == "--gpu") GpuTests();
+        else if (argc > 1 && std::string(argv[1]) == "--arrays") ArrayInspectorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if(argc>1 && std::string(argv[1])=="--folders")FolderTests(argc>2);
         else if(argc>1 && std::string(argv[1])=="--hierarchy")HierarchyTests(argc>2);
         else if(argc>1 && std::string(argv[1])=="--text")TextInspectorTests(argc>2);

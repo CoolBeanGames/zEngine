@@ -1396,6 +1396,36 @@ Value Runtime::Call(ObjectRef object, std::string_view method, const std::vector
 }
 Value Runtime::Get(ObjectRef object, std::string_view field) const { return impl_->Get(object, std::string(field)); }
 void Runtime::Set(ObjectRef object, std::string_view field, Value value, bool notify) { if(!impl_->depth)impl_->Reset(); impl_->Set(object, std::string(field), std::move(value), {}, notify); }
+namespace {
+[[noreturn]] void ArrayFault(const std::string& message) { throw ScriptError({"<array>", 1, 1, message}); }
+}
+std::size_t Runtime::ArrayLength(ArrayRef array) const {
+    return impl_->arrays[impl_->ArrayId(Value{array}, {})].size();
+}
+Value Runtime::ArrayElement(ArrayRef array, std::size_t index) const {
+    const auto& items = impl_->arrays[impl_->ArrayId(Value{array}, {})];
+    if (index >= items.size()) ArrayFault("Array index out of range");
+    return items[index];
+}
+void Runtime::SetArrayElement(ArrayRef array, std::size_t index, Value value) {
+    impl_->Reset();
+    auto& items = impl_->arrays[impl_->ArrayId(Value{array}, {})];
+    if (index >= items.size()) ArrayFault("Array index out of range");
+    items[index] = std::holds_alternative<ObjectRef>(value) ? value : impl_->Coerce(value, impl_->Type(value, {}), {});
+}
+void Runtime::AppendArrayElement(ArrayRef array, Value value) {
+    impl_->Reset();
+    auto& items = impl_->arrays[impl_->ArrayId(Value{array}, {})];
+    if (impl_->arrayElements >= impl_->limits.arrayElements) ArrayFault("Array element limit exceeded");
+    items.push_back(std::holds_alternative<ObjectRef>(value) ? value : impl_->Coerce(value, impl_->Type(value, {}), {}));
+    ++impl_->arrayElements;
+}
+void Runtime::RemoveArrayElement(ArrayRef array, std::size_t index) {
+    auto& items = impl_->arrays[impl_->ArrayId(Value{array}, {})];
+    if (index >= items.size()) ArrayFault("Array index out of range");
+    items.erase(items.begin() + static_cast<std::ptrdiff_t>(index));
+    --impl_->arrayElements;
+}
 void Runtime::SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->objectLookup=std::move(lookup);}
 void Runtime::SetPhysicsCallbacks(PhysicsBodyCall bodyCall,PhysicsCastCall castCall){impl_->physicsBodyCall=std::move(bodyCall);impl_->physicsCastCall=std::move(castCall);}
 void Runtime::BindNativeBehavior(ObjectRef owner,std::string_view behaviorType){impl_->Reset();impl_->BindNativeBehavior(owner,std::string(behaviorType));}

@@ -51,7 +51,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 7\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 8\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});
@@ -72,6 +72,25 @@ int main()
         auto* linkedRestored=linkedInstance.objects.Find(linkedOwner.Id())->GetBehavior<ScriptBehavior>();
         Check(linkedRestored && linkedInstance.scripts.Prepare(*linkedRestored,linkedCode,"References"),"Scene object reference was not restored");
         Check(linkedInstance.scripts.Fields(*linkedRestored).front().value=="Target (RigidBody)","Restored object reference target mismatch");
+        // ZE-33: exported `array` fields — scalar + object-reference elements survive Encode/Decode/Instantiate.
+        {
+            ObjectStore bagStore; ScriptHost bagHost; bagHost.SetObjectStore(&bagStore);
+            auto& bagOwner=bagStore.Create("Bag Owner"); auto& bagRig=bagStore.Create("Bag Rig"); bagRig.AddBehavior<physics::RigidBody>();
+            auto& bagScript=bagOwner.AddBehavior<ScriptBehavior>("Bag.zsh");
+            const std::string bagCode="class Bag : gameObject { export array nums; export array refs; }";
+            Check(bagHost.Prepare(bagScript,bagCode,"Bag"),"Array scene fixture compile");
+            bagHost.AddArrayElement(bagScript,"nums","int"); bagHost.AddArrayElement(bagScript,"nums","float");
+            bagHost.SetArrayElement(bagScript,"nums",0,"7"); bagHost.SetArrayElement(bagScript,"nums",1,"2.5");
+            bagHost.SetArrayElementReference(bagScript,"refs",0,bagRig.Id());
+            const auto bagEncoded=scenes::Encode(scenes::Capture(bagStore,bagHost));
+            Check(bagEncoded.find("arrays 2")!=std::string::npos && bagEncoded.find("element ref ")!=std::string::npos,"Array field was not serialized");
+            auto bagCopy=scenes::Instantiate(scenes::Decode(bagEncoded)); bagCopy.scripts.SetObjectStore(&bagCopy.objects);
+            auto* bagRestored=bagCopy.objects.Find(bagOwner.Id())->GetBehavior<ScriptBehavior>();
+            Check(bagRestored && bagCopy.scripts.Prepare(*bagRestored,bagCode,"Bag"),"Array script restore failed");
+            Check(scenes::Encode(scenes::Capture(bagCopy.objects,bagCopy.scripts))==bagEncoded,"Array round trip changed authored data");
+            const auto bagArrays=bagCopy.scripts.AuthoredArrays(*bagRestored);
+            Check(bagArrays.at("nums").size()==2 && bagArrays.at("refs").at(0).reference==bagRig.Id() && bagArrays.at("refs").at(0).referenceType=="RigidBody","Array elements not restored");
+        }
         // ZE-59: spawning a prefab remaps its internal object references onto the fresh live IDs,
         // so a bullet's "export rigidbody rb" self-reference resolves instead of faulting the spawner.
         {

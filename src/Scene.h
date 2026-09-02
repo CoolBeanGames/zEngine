@@ -15,6 +15,7 @@ namespace zengine::scenes
         std::string asset;
         std::map<std::string,script::Value> variables;
         std::map<std::string,GameObjectId> objectReferences;
+        std::map<std::string,std::vector<ScriptArrayElement>> arrays;
         physics::ColliderShape shape=physics::ColliderShape::Box;
         Vec3 colliderOffset{},colliderSize{1,1,1};
         std::uint32_t layer=1,mask=0xffffffffu;

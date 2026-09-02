@@ -124,6 +124,13 @@ public:
     Value Call(ObjectRef object, std::string_view method, const std::vector<Value>& arguments = {});
     Value Get(ObjectRef object, std::string_view field) const;
     void Set(ObjectRef object, std::string_view field, Value value, bool notify = true);
+    // Element access for a script `array` value obtained from Get(). Editor-facing:
+    // arrays are untyped, so any coercible Value may be stored. Out-of-range indices throw.
+    std::size_t ArrayLength(ArrayRef array) const;
+    Value ArrayElement(ArrayRef array, std::size_t index) const;
+    void SetArrayElement(ArrayRef array, std::size_t index, Value value);
+    void AppendArrayElement(ArrayRef array, Value value);
+    void RemoveArrayElement(ArrayRef array, std::size_t index);
     void Connect(SignalRef signal, CallableRef callback);
     void Emit(SignalRef signal, const std::vector<Value>& arguments = {});
     // Host snapshot for one fixed tick, before Update. Events share one VM budget.

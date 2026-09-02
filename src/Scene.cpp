@@ -80,7 +80,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
             BehaviorData b; b.enabled=behavior.Enabled(); b.priority=behavior.Priority();
             if (const auto* mesh=dynamic_cast<const MeshRenderer*>(&behavior)) b.asset=mesh->Asset();
             else if (const auto* script=dynamic_cast<const ScriptBehavior*>(&behavior))
-            { b.kind=BehaviorData::Kind::Script; b.asset=script->Asset(); b.variables=scripts.AuthoredValues(*script); b.objectReferences=scripts.AuthoredReferences(*script); }
+            { b.kind=BehaviorData::Kind::Script; b.asset=script->Asset(); b.variables=scripts.AuthoredValues(*script); b.objectReferences=scripts.AuthoredReferences(*script); b.arrays=scripts.AuthoredArrays(*script); }
             else if(const auto* collider=dynamic_cast<const physics::Collider*>(&behavior)){b.kind=BehaviorData::Kind::Collider;b.shape=collider->Shape();b.colliderOffset=collider->Offset();b.colliderSize=collider->Size();}
             else if(const auto* camera=dynamic_cast<const Camera*>(&behavior)){b.kind=BehaviorData::Kind::Camera;b.cameraFov=camera->FieldOfView();b.cameraNear=camera->NearPlane();b.cameraFar=camera->FarPlane();}
             else if(const auto* body=dynamic_cast<const physics::Body*>(&behavior)) {
@@ -101,7 +101,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
 std::string Encode(const Document& scene)
 {
     std::ostringstream out; out.imbue(std::locale::classic()); out<<std::setprecision(17);
-    out<<"ZENGINE_SCENE 6\nobjects "<<scene.objects.size()<<'\n';
+    out<<"ZENGINE_SCENE 7\nobjects "<<scene.objects.size()<<'\n';
     for (const auto& object:scene.objects)
     {
         out<<"object "<<object.id<<' '<<std::quoted(object.name)<<"\ntags "<<object.tags.size();
@@ -130,6 +130,26 @@ std::string Encode(const Document& scene)
                     out<<"reference "<<std::quoted(name)<<' '<<id<<'\n';
                 }
             }
+            if (!b.arrays.empty())
+            {
+                out<<"arrays "<<b.arrays.size()<<'\n';
+                for (const auto& [name,elements]:b.arrays)
+                {
+                    Require(!name.empty(),"Invalid script array name.");
+                    out<<"array "<<std::quoted(name)<<' '<<elements.size()<<'\n';
+                    for (const auto& element:elements)
+                    {
+                        out<<"element ";
+                        if (!element.referenceType.empty())
+                        {
+                            Require(element.referenceType.find_first_of(" \t\r\n\"")==std::string::npos,"Invalid array reference type.");
+                            out<<"ref "<<element.reference<<' '<<element.referenceType;
+                        }
+                        else WriteValue(out,element.value);
+                        out<<'\n';
+                    }
+                }
+            }
         }
     }
     out<<"end\n";
@@ -141,7 +161,7 @@ Document Decode(std::string_view text)
 {
     Require(text.size()<=MaxSceneBytes,"Scene exceeds the 8 MiB limit.");
     std::istringstream in{std::string(text)}; in.imbue(std::locale::classic());
-    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,6); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
+    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,7); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
     Document scene; const auto count=Count(in,10000); std::set<GameObjectId> ids;
     for (std::size_t i=0;i<count;++i)
     {
@@ -176,10 +196,10 @@ Document Decode(std::string_view text)
             Token(in,"variables"); const auto fields=Count(in,1024); Require(type=="script" || fields==0,"Only scripts can contain fields.");
             for (std::size_t k=0;k<fields;++k)
             { Token(in,"field"); auto name=Text(in); auto value=ReadValue(in); Require(!name.empty() && b.variables.emplace(std::move(name),std::move(value)).second,"Duplicate/empty scene variable."); }
-            in>>std::ws;
-            const auto markerPosition=in.tellg(); std::string marker;
-            if (in>>marker)
+            for (in>>std::ws;;)
             {
+                const auto markerPosition=in.tellg(); std::string marker;
+                if (!(in>>marker)) break;
                 if (marker=="references")
                 {
                     Require(type=="script","Only scripts can contain object references.");
@@ -191,7 +211,33 @@ Document Decode(std::string_view text)
                         Require(!name.empty() && b.objectReferences.emplace(std::move(name),id).second,"Duplicate/empty script object reference.");
                     }
                 }
-                else { in.clear(); in.seekg(markerPosition); Require(static_cast<bool>(in),"Invalid scene stream position."); }
+                else if (marker=="arrays" && version>=7)
+                {
+                    Require(type=="script","Only scripts can contain arrays.");
+                    const auto arrays=Count(in,1024);
+                    for (std::size_t k=0;k<arrays;++k)
+                    {
+                        Token(in,"array"); auto name=Text(in); const auto elems=Count(in,100000);
+                        std::vector<ScriptArrayElement> elements;
+                        for (std::size_t e=0;e<elems;++e)
+                        {
+                            Token(in,"element"); in>>std::ws;
+                            const auto valuePosition=in.tellg(); std::string etype;
+                            Require(static_cast<bool>(in>>etype),"Truncated array element.");
+                            ScriptArrayElement element;
+                            if (etype=="ref")
+                            {
+                                GameObjectId id=0; std::string rtype;
+                                Require(static_cast<bool>(in>>id) && static_cast<bool>(in>>rtype) && !rtype.empty() && rtype.size()<=64,"Invalid array reference element.");
+                                element.reference=id; element.referenceType=std::move(rtype);
+                            }
+                            else { in.clear(); in.seekg(valuePosition); element.value=ReadValue(in); } // ReadValue consumes the type token
+                            elements.push_back(std::move(element));
+                        }
+                        Require(!name.empty() && b.arrays.emplace(std::move(name),std::move(elements)).second,"Duplicate/empty script array.");
+                    }
+                }
+                else { in.clear(); in.seekg(markerPosition); Require(static_cast<bool>(in),"Invalid scene stream position."); break; }
             }
             object.behaviors.push_back(std::move(b));
         }
@@ -226,7 +272,7 @@ Instance Instantiate(const Document& scene)
         {
             Behavior* behavior=nullptr;
             if (b.kind==BehaviorData::Kind::Mesh) behavior=&object.AddBehavior<MeshRenderer>(b.asset);
-            else if(b.kind==BehaviorData::Kind::Script) { auto& script=object.AddBehavior<ScriptBehavior>(b.asset); instance.scripts.RestoreValues(script,b.variables); instance.scripts.RestoreReferences(script,b.objectReferences); behavior=&script; }
+            else if(b.kind==BehaviorData::Kind::Script) { auto& script=object.AddBehavior<ScriptBehavior>(b.asset); instance.scripts.RestoreValues(script,b.variables); instance.scripts.RestoreReferences(script,b.objectReferences); instance.scripts.RestoreArrays(script,b.arrays); behavior=&script; }
             else if(b.kind==BehaviorData::Kind::Collider){auto* existing=object.GetBehavior<physics::Collider>();auto& v=existing?*existing:object.AddBehavior<physics::Collider>();v.SetShape(b.shape);v.SetOffset(b.colliderOffset);v.SetSize(b.colliderSize);behavior=&v;}
             else if(b.kind==BehaviorData::Kind::Camera){auto& v=object.AddBehavior<Camera>();v.SetFieldOfView(b.cameraFov);v.SetNearPlane(b.cameraNear);v.SetFarPlane(b.cameraFar);behavior=&v;}
             else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& v=object.AddBehavior<physics::RigidBody>();v.SetMass(b.mass);v.SetGravityScale(b.gravityScale);body=&v;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
@@ -244,6 +290,7 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
     std::map<GameObjectId,GameObjectId> remap;
     GameObjectId root=0;
     std::vector<std::pair<ScriptBehavior*,const std::map<std::string,GameObjectId>*>> pendingReferences;
+    std::vector<std::pair<ScriptBehavior*,const std::map<std::string,std::vector<ScriptArrayElement>>*>> pendingArrays;
     for(const auto& data:scene.objects)
     {
         Require(data.prefab.empty(),"Resolve prefab references before spawning scene data.");
@@ -254,7 +301,7 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
         {
             Behavior* behavior=nullptr;
             if(b.kind==BehaviorData::Kind::Mesh)behavior=&object.AddBehavior<MeshRenderer>(b.asset);
-            else if(b.kind==BehaviorData::Kind::Script){auto& value=object.AddBehavior<ScriptBehavior>(b.asset);scripts.RestoreValues(value,b.variables);pendingReferences.emplace_back(&value,&b.objectReferences);behavior=&value;}
+            else if(b.kind==BehaviorData::Kind::Script){auto& value=object.AddBehavior<ScriptBehavior>(b.asset);scripts.RestoreValues(value,b.variables);pendingReferences.emplace_back(&value,&b.objectReferences);pendingArrays.emplace_back(&value,&b.arrays);behavior=&value;}
             else if(b.kind==BehaviorData::Kind::Collider){auto* existing=object.GetBehavior<physics::Collider>();auto& value=existing?*existing:object.AddBehavior<physics::Collider>();value.SetShape(b.shape);value.SetOffset(b.colliderOffset);value.SetSize(b.colliderSize);behavior=&value;}
             else if(b.kind==BehaviorData::Kind::Camera){auto& value=object.AddBehavior<Camera>();value.SetFieldOfView(b.cameraFov);value.SetNearPlane(b.cameraNear);value.SetFarPlane(b.cameraFar);behavior=&value;}
             else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& value=object.AddBehavior<physics::RigidBody>();value.SetMass(b.mass);value.SetGravityScale(b.gravityScale);body=&value;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
@@ -269,6 +316,25 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
         for(const auto& [field,id]:*references)
             if(const auto it=remap.find(id);it!=remap.end())remapped.emplace(field,it->second);
         scripts.RestoreReferences(*behavior,std::move(remapped));
+    }
+    for(const auto& [behavior,arrays]:pendingArrays)
+    {
+        std::map<std::string,std::vector<ScriptArrayElement>> remapped;
+        for(const auto& [field,elements]:*arrays)
+        {
+            std::vector<ScriptArrayElement> translated;
+            for(auto element:elements)
+            {
+                if(!element.referenceType.empty() && element.reference)
+                {
+                    const auto it=remap.find(element.reference);
+                    element.reference = it!=remap.end() ? it->second : 0; // reference left the prefab: keep the slot, clear it
+                }
+                translated.push_back(std::move(element));
+            }
+            remapped.emplace(field,std::move(translated));
+        }
+        scripts.RestoreArrays(*behavior,std::move(remapped));
     }
     for(const auto& data:scene.objects)
     {

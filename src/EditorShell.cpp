@@ -1241,6 +1241,10 @@ bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::
     InvalidateRect(window_, nullptr, FALSE);
     return true;
 }
+bool EditorShell::DropObjectOnInspector(POINT screenPoint, zengine::GameObjectId object)
+{
+    return inspectorPanel_ && inspectorPanel_->AssignObjectReferenceAt(screenPoint, object);
+}
 zengine::GameObjectId EditorShell::ScriptDropTarget(POINT point) const
 {
     const auto list = ObjectListRectangle();

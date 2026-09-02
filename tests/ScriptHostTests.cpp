@@ -188,6 +188,27 @@ int main()
         inputHost.SetInput({{"shoot",{0,0,true,true,false}}}); inputHost.Tick(inputObjects,0.1f);
         inputHost.SetInput({{"shoot",{0,0,false,false,true}}}); inputHost.Tick(inputObjects,0.1f);
         Check(Value(inputHost,inputBehavior,"shots")=="2","Input just_released signal did not fire on every release"); inputHost.Stop(inputObjects);
+        // ZE-33: exported `array` fields are visible, editable, drag-assignable and reconciled.
+        ObjectStore arr; ScriptHost arrHost; arrHost.SetObjectStore(&arr);
+        auto& arrOwner=arr.Create("Bag Owner");
+        auto& arrRig=arr.Create("Rig"); arrRig.AddBehavior<physics::Collider>(); arrRig.AddBehavior<physics::RigidBody>();
+        auto& bag=arrOwner.AddBehavior<ScriptBehavior>("Bag.zsh");
+        Check(arrHost.Prepare(bag,"class Bag : gameObject { export array numbers; export array things; func start(){} }","Bag"),"Array fixture compile");
+        const auto arrayField=[&](const std::string& name){ std::vector<std::string> v; for(const auto& f:arrHost.Fields(bag)) if(f.name==name && f.arrayIndex>=0) v.push_back(f.value); return v; };
+        { int headers=0; for(const auto& f:arrHost.Fields(bag)) if(f.array) ++headers; Check(headers==2,"Array headers not surfaced"); }
+        arrHost.AddArrayElement(bag,"numbers","int"); arrHost.AddArrayElement(bag,"numbers","int");
+        arrHost.SetArrayElement(bag,"numbers",0,"5"); arrHost.SetArrayElement(bag,"numbers",1,"9");
+        Rejected([&]{ arrHost.SetArrayElement(bag,"numbers",0,"nan"); });
+        Rejected([&]{ arrHost.AddArrayElement(bag,"numbers","banana"); });
+        Check(arrayField("numbers")==(std::vector<std::string>{"5","9"}),"Array scalar elements not visible/editable");
+        arrHost.RemoveArrayElement(bag,"numbers",0);
+        Check(arrayField("numbers")==(std::vector<std::string>{"9"}),"Array element removal failed");
+        arrHost.SetArrayElementReference(bag,"things",static_cast<std::size_t>(-1),arrRig.Id()); // append via clamp
+        Check(arrayField("things")==(std::vector<std::string>{"Rig (RigidBody)"}),"Dragged array element not auto-typed");
+        Check(arrHost.AuthoredArrays(bag).at("things").at(0).reference==arrRig.Id(),"Array reference not authored");
+        Check(arrHost.Play(arr) && !bag.Faulted(),"Array Play failed"); arrHost.Stop(arr);
+        Check(arrHost.Prepare(bag,"class Bag : gameObject { export array numbers; func start(){} }","Bag"),"Array recompile");
+        Check(arrHost.AuthoredArrays(bag).count("numbers")==1 && arrHost.AuthoredArrays(bag).count("things")==0,"Array reconcile after field removal failed");
         std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;
     }
