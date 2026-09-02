@@ -951,16 +951,16 @@ a Breakpoint has been reached
     <name>Start on a UI subsystem</name>
     <prompt>use inheritance and the 2D rendering, we will need to make several types. parenting will be very important. later we will make other styles of UI and more controls.</prompt>
     <requirements></requirements>
-    <inProgress>false</inProgress>
+    <inProgress>true</inProgress>
     <done>false</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey></lockKey>
+    <lockKey>k4p9x2wq</lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy>ZE-72</blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
