@@ -4,23 +4,23 @@
     <name>ScriptIntegrationEditor test no longer selects on mouse-down</name>
     <prompt>The ScriptEditorIntegration suite (zEngineAssetTests --scripts, ctest "ScriptEditorIntegration") fails at "Save/reload lost Inspector override". Cause: commit d8821c8 moved scene-tree selection from WM_LBUTTONDOWN to WM_LBUTTONUP (release-time selection, ZE-44) and updated most click tests, but ScriptIntegrationEditorTests in tests/AssetTests.cpp still sends only WM_LBUTTONDOWN at (50,140) to re-select the scripted cube. With no WM_LBUTTONUP the selection never changes, so the Inspector stays bound to the later empty GameObject (whose script keeps the default speed=2 instead of the overridden 6). Reproduce: build builds/test, run ctest -C Debug -R ScriptEditorIntegration.</prompt>
     <requirements>zEngineAssetTests --scripts passes; full ctest suite is green again.</requirements>
-    <inProgress>true</inProgress>
-    <done>false</done>
+    <inProgress>false</inProgress>
+    <done>true</done>
     <bug>true</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey>zq7v2k9m</lockKey>
+    <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>bug,tests,inspector</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Fixed in commit f2d31c6. ScriptIntegrationEditorTests re-selected the scripted cube with a bare WM_LBUTTONDOWN; selection now commits on WM_LBUTTONUP (ZE-44). Added the matching release event at (50,140). Full ctest suite green 27/27.</notes>
+    <filesChanged>tests/AssetTests.cpp</filesChanged>
     <image></image>
   </task>
   <task id="ZE-54">
@@ -736,7 +736,7 @@ a Breakpoint has been reached
     <build>true</build>
     <release>true</release>
     <tags>builds,clean,refactor</tags>
-    <notes>Deleted ~8.6 GB of stale/regenerable build output: build/ (old CMake layout), builds/debug-old/, and the debug/test trees, plus tests/debug/. Simplified .gitignore to ignore /builds/ wholesale (previously only /builds/debug/ and /builds/test/, which would have leaked a release/ tree). Regenerated clean builds from an empty tree: builds/debug (Debug: zEngine.exe + zPlayer.exe), builds/release (Release: zEngine.exe + zPlayer.exe), builds/test (all targets). Full ctest suite green 27/27 after also fixing a stale test (see ZE-56). Committed as f2d31c6 and pushed to origin/main; the commit also bundles ZE-51 (editor line numbers), ZE-53 (O(1) ObjectStore::Find) and the pending instructions.txt task-image section.</notes>
+    <notes>Done and pushed (commits f2d31c6, aa2de54). Deleted ~8.6 GB of stale/regenerable build output (build/, builds/debug-old/, builds/debug, builds/test, tests/debug/). Simplified .gitignore to ignore /builds/ wholesale. Regenerated clean builds from an empty tree: builds/debug (Debug zEngine.exe + zPlayer.exe), builds/release (Release zEngine.exe + zPlayer.exe), builds/test. Full ctest suite green 27/27 (after fixing a stale test, ZE-56). The commit also carries ZE-51 (editor line numbers) and ZE-53 (O(1) ObjectStore::Find).</notes>
     <filesChanged>.gitignore; src/core/GameObject.h; src/core/GameObject.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tests/AssetTests.cpp; instructions.txt; tasks.xml</filesChanged>
     <image></image>
     <subtasks>
@@ -840,23 +840,32 @@ a Breakpoint has been reached
   </task>
   <task id="ZE-57">
     <name>combine disparate windows into a single screen</name>
-    <prompt></prompt>
-    <requirements></requirements>
+    <prompt>the main working area is called the view panel right now it only displays the scene view
+
+on the top left of that panel is the word scene, I want that to become a tab button and add 2 more tabs
+
+game
+when we launch the game rather than launch a new window we switch to this tab and play the game, ending the game returns to scene view. if we switch to game view it will show the view from the camera when those are implimented.
+script
+the script editor is now inline, add a column on the left that lists a scrollable list of all scripts on the top half and a lsit of all functions on the bottom half. clicking a script opens it and updates the function, clicking a function jumps to it.
+
+this is a big project and will likey take some time, do your best at it!</prompt>
+    <requirements>tab interface is in place and working, commit was successful. if commit fails end execution</requirements>
     <inProgress>false</inProgress>
     <done>false</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
     <lockKey></lockKey>
-    <locked>true</locked>
+    <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
     <dateStarted></dateStarted>
     <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
+    <commit>true</commit>
+    <build>true</build>
     <release>false</release>
-    <tags></tags>
+    <tags>redesign,scripting,3d</tags>
     <notes></notes>
     <filesChanged></filesChanged>
     <image></image>
