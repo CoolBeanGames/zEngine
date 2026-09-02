@@ -139,10 +139,11 @@ void InspectorPanel::RefreshBehaviors()
 {
     // Rebuild only at structural changes/save/session boundaries, never on each tick.
     updating_=true;
-    for (auto& entry:behaviorFields_) if (entry.field.window) DestroyWindow(entry.field.window);
+    for (auto& entry:behaviorFields_) { if (entry.field.window) DestroyWindow(entry.field.window); for (auto bit:entry.bits) if (bit) DestroyWindow(bit); }
     for (auto& toggle:behaviorToggles_) if (toggle.window) DestroyWindow(toggle.window);
     behaviorFields_.clear();
     behaviorToggles_.clear();
+    bitButtonCount_=0;
     const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable, BehaviorField::Style style=BehaviorField::Style::Normal,bool multiline=false,bool prefab=false,bool objectReference=false) {
         BehaviorField entry; entry.behavior=behavior; entry.name=std::move(name); entry.label=std::move(label); entry.priority=priority;
         entry.style=style;entry.multiline=multiline;entry.prefab=prefab;entry.objectReference=objectReference;
@@ -176,6 +177,20 @@ void InspectorPanel::RefreshBehaviors()
         if(!entry.field.window)throw std::runtime_error("Cannot create collider shape control.");SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
         for(const auto* value:{L"Box",L"Sphere",L"Capsule"})SendMessageW(entry.field.window,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(value));behaviorFields_.push_back(std::move(entry));
     };
+    const auto addBitmask = [&](zengine::Behavior* behavior, std::string name, std::wstring label) {
+        BehaviorField entry; entry.behavior=behavior; entry.name=std::move(name); entry.label=std::move(label); entry.bitmask=true;
+        for (int bit=0; bit<CollisionBits; ++bit) {
+            const auto id=FirstBehaviorBit + bitButtonCount_++;
+            const auto button=CreateWindowExW(0,L"BUTTON",std::to_wstring(bit+1).c_str(),
+                WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX|BS_PUSHLIKE,
+                0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
+            if(!button)throw std::runtime_error("Cannot create collision bit control.");
+            SendMessageW(button,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+            EnableWindow(button,editData_);
+            entry.bits.push_back(button);
+        }
+        behaviorFields_.push_back(std::move(entry));
+    };
     if (object_) for (std::size_t i=0;i<object_->BehaviorCount();++i)
     {
         auto& behavior=object_->BehaviorAt(i);
@@ -190,7 +205,9 @@ void InspectorPanel::RefreshBehaviors()
                 for(int axis=0;axis<3;++axis){add(&behavior,key,label,false,true,true);behaviorFields_.back().axis=axis;}
         }
         if(auto* body=dynamic_cast<zengine::physics::Body*>(&behavior)) {
-            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"layer",L"Collision layer bits"},{"mask",L"Collision mask bits"},{"friction",L"Friction"},{"bounciness",L"Bounciness (0 - 1)"}})add(&behavior,key,label,false,true,true);
+            addBitmask(&behavior,"layer",L"Collision layers");
+            addBitmask(&behavior,"mask",L"Collision mask (collides with)");
+            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"friction",L"Friction"},{"bounciness",L"Bounciness (0 - 1)"}})add(&behavior,key,label,false,true,true);
             if(dynamic_cast<zengine::physics::RigidBody*>(body)){add(&behavior,"mass",L"Mass",false,true,true);add(&behavior,"gravity",L"Gravity scale",false,true,true);}
             if(dynamic_cast<zengine::physics::MovingBody*>(body))for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"velocity",L"Velocity"},{"angular_velocity",L"Angular velocity"},{"constant_force",L"Constant force"},{"constant_torque",L"Constant torque"}})for(int axis=0;axis<3;++axis){add(&behavior,key,label,false,true,true);behaviorFields_.back().axis=axis;}
         }
@@ -212,8 +229,10 @@ void InspectorPanel::RefreshBehaviors()
             }
         }
     }
-    for (std::size_t i=0;i<behaviorFields_.size();++i) if (auto control=behaviorFields_[i].field.window)
+    for (std::size_t i=0;i<behaviorFields_.size();++i)
     {
+        if (behaviorFields_[i].bitmask) { RefreshCollisionBits(behaviorFields_[i]); continue; }
+        auto control=behaviorFields_[i].field.window; if (!control) continue;
         const auto value=BehaviorValue(i);
         if(behaviorFields_[i].combo)SendMessageW(control,CB_SETCURSEL,dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)?static_cast<int>(dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)->Shape()):0,0);
         else SetWindowTextW(control,(behaviorFields_[i].prefab&&value.empty())?L"Choose prefab...":value.c_str()); behaviorFields_[i].field.focusText=value;
@@ -237,6 +256,7 @@ int InspectorPanel::RowHeight(const BehaviorField& entry) const
 {
     if (entry.style != BehaviorField::Style::BehaviorHeader && IsBehaviorCollapsed(entry)) return 0;
     if(entry.axis>=0)return entry.axis==2?72:0;
+    if(entry.bitmask)return 82;
     return entry.style==BehaviorField::Style::BehaviorHeader ? behaviorHeaderHeight_ : entry.multiline?112:entry.field.window?52:24;
 }
 bool InspectorPanel::IsBehaviorCollapsed(const BehaviorField& entry) const
@@ -317,10 +337,30 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
     catch (const std::exception&) { entry.field.valid=false; }
     InvalidateRect(entry.field.window,nullptr,FALSE);
 }
+void InspectorPanel::RefreshCollisionBits(const BehaviorField& entry) const
+{
+    auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior);
+    if(!body)return;
+    const std::uint32_t value=entry.name=="layer"?body->Layer():body->Mask();
+    for(int bit=0;bit<static_cast<int>(entry.bits.size());++bit)
+        if(entry.bits[bit])SendMessageW(entry.bits[bit],BM_SETCHECK,((value>>bit)&1u)?BST_CHECKED:BST_UNCHECKED,0);
+}
+void InspectorPanel::ToggleCollisionBit(std::size_t fieldIndex,int bit)
+{
+    if(!editData_||fieldIndex>=behaviorFields_.size())return;
+    auto& entry=behaviorFields_[fieldIndex];
+    auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior);
+    if(!body||bit<0||bit>=static_cast<int>(entry.bits.size()))return;
+    const bool on=SendMessageW(entry.bits[bit],BM_GETCHECK,0,0)==BST_CHECKED;
+    std::uint32_t value=entry.name=="layer"?body->Layer():body->Mask();
+    if(on)value|=(1u<<bit); else value&=~(1u<<bit);
+    if(entry.name=="layer")body->SetLayer(value); else body->SetMask(value);
+    if(changed_)changed_();
+}
 void InspectorPanel::FinishBehaviorField(std::size_t index, bool cancel)
 {
     auto& entry=behaviorFields_.at(index);
-    if(entry.combo||entry.prefab||entry.objectReference)return;
+    if(entry.combo||entry.prefab||entry.objectReference||entry.bitmask)return;
     if (cancel) { updating_=true; SetWindowTextW(entry.field.window,entry.field.focusText.c_str()); updating_=false; ChangeBehaviorField(index); }
     const auto value=BehaviorValue(index);
     updating_=true; SetWindowTextW(entry.field.window,value.c_str()); updating_=false;
@@ -332,8 +372,11 @@ void InspectorPanel::RefreshLiveValues()
         if (GetFocus()!=fields_[i].window && pressed_!=i) SetText(i,FieldValue(i));
     updating_=true;
     for (std::size_t i=0;i<behaviorFields_.size();++i)
+    {
+        if (behaviorFields_[i].bitmask) { RefreshCollisionBits(behaviorFields_[i]); continue; }
         if (const auto control=behaviorFields_[i].field.window; control && GetFocus()!=control && !behaviorFields_[i].combo)
         { const auto value=BehaviorValue(i);SetWindowTextW(control,(behaviorFields_[i].prefab&&value.empty())?L"Choose prefab...":value.c_str()); behaviorFields_[i].field.valid=true; }
+    }
     updating_=false;
 }
 
@@ -454,7 +497,7 @@ void InspectorPanel::Layout()
     const int width = static_cast<int>(client.right);
     const int labelWidth = width >= 250 ? 68 : 12;
     const int column = std::max(24, (width - labelWidth - 16) / 3);
-    HDWP positions=BeginDeferWindowPos(static_cast<int>(fields_.size()+behaviorFields_.size()+8));
+    HDWP positions=BeginDeferWindowPos(static_cast<int>(fields_.size()+behaviorFields_.size()+8)+bitButtonCount_);
     const auto place=[&](HWND control,int x,int y,int w,int h) {
         if(positions)positions=DeferWindowPos(positions,control,nullptr,x,y,w,h,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
         else SetWindowPos(control,nullptr,x,y,w,h,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW);
@@ -487,6 +530,17 @@ void InspectorPanel::Layout()
                     break;
                 }
         }
+        if (!entry.bits.empty()) {
+            const int perRow=(CollisionBits+1)/2;
+            const int span=std::max(perRow*18, width-24);
+            const int cellW=std::max(16,(span-(perRow-1)*3)/perRow);
+            for (int bit=0;bit<static_cast<int>(entry.bits.size());++bit) {
+                ShowWindow(entry.bits[bit],collapsed?SW_HIDE:SW_SHOW);
+                if (collapsed) continue;
+                const int col=bit%perRow, rowIdx=bit/perRow;
+                place(entry.bits[bit],12+col*(cellW+3),y+20+rowIdx*26,cellW,24);
+            }
+        }
         if (entry.field.window) {
             ShowWindow(entry.field.window,collapsed?SW_HIDE:SW_SHOW);
             if (collapsed) { y+=rowHeight; continue; }
@@ -513,9 +567,9 @@ void InspectorPanel::Layout()
     // remain as afterimages while the scrollbar is moving.
     RedrawWindow(window_,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW);
 }
-void InspectorPanel::Paint()
+void InspectorPanel::Paint(HDC into)
 {
-    PAINTSTRUCT paint{}; const HDC dc = BeginPaint(window_, &paint);
+    PAINTSTRUCT paint{}; const HDC dc = into ? into : BeginPaint(window_, &paint);
     RECT client{}; GetClientRect(window_, &client); FillRect(dc, &client, background_);
     SelectObject(dc, font_); SetTextColor(dc, Text); SetBkMode(dc, TRANSPARENT);
     const int width = static_cast<int>(client.right);
@@ -577,7 +631,7 @@ void InspectorPanel::Paint()
         label(asset.c_str(),12,base+27,width-24);
     }
     label(scriptHost_ && scriptHost_->Playing() ? L"Play: variable edits are temporary" : L"Scripts run in Play mode", 12, base + (mesh ? 122 : 0) + 66, width-24);
-    EndPaint(window_, &paint);
+    if (!into) EndPaint(window_, &paint);
 }
 LRESULT CALLBACK InspectorPanel::WindowProcedure(HWND window, UINT message, WPARAM w, LPARAM l)
 {
@@ -597,6 +651,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     {
     case WM_SIZE: Layout(); return 0;
     case WM_PAINT: Paint(); return 0;
+    case WM_PRINTCLIENT: Paint(reinterpret_cast<HDC>(w)); return 0;
     case WM_ERASEBKGND: return 1;
     case WM_CONTEXTMENU: ShowBehaviorMenu({GET_X_LPARAM(l),GET_Y_LPARAM(l)}); return 0;
     case WM_COMMAND:
@@ -610,6 +665,14 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             if (!collapsedBehaviors_.erase(behavior)) collapsedBehaviors_.insert(behavior);
             Layout();
             InvalidateRect(window_,nullptr,FALSE);
+            return 0;
+        }
+        if (const int bitId=LOWORD(w)-FirstBehaviorBit; bitId>=0 && bitId<bitButtonCount_ && HIWORD(w)==BN_CLICKED && !updating_)
+        {
+            const auto target=reinterpret_cast<HWND>(l);
+            for (std::size_t f=0;f<behaviorFields_.size();++f)
+                for (int bit=0;bit<static_cast<int>(behaviorFields_[f].bits.size());++bit)
+                    if (behaviorFields_[f].bits[bit]==target) { ToggleCollisionBit(f,bit); return 0; }
             return 0;
         }
         if(LOWORD(w)==RemoveBehaviorCommand)

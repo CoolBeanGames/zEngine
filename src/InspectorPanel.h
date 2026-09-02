@@ -21,6 +21,8 @@ public:
     static constexpr int AddScriptButton = 1120;
     static constexpr int FirstBehaviorField = 1200;
     static constexpr int FirstBehaviorToggle = 5000;
+    static constexpr int FirstBehaviorBit = 6000; // Collision layer/mask toggle buttons.
+    static constexpr int CollisionBits = 16;      // Bits exposed as buttons; higher bits are preserved untouched.
     static constexpr int AddBehaviorButton = 1121, MeshEnabled = 1122, ChooseMeshButton = 1123,
         CubeMeshButton = 1124, ClearMeshButton = 1125, AddMeshCommand = 1126, AddScriptCommand = 1127,
         AddColliderCommand=1128,AddRigidBodyCommand=1129,AddKinematicBodyCommand=1130,AddStaticBodyCommand=1131,AddAreaCommand=1132;
@@ -46,7 +48,7 @@ private:
     LRESULT HandleMessage(UINT, WPARAM, LPARAM);
     LRESULT HandleEdit(HWND, UINT, WPARAM, LPARAM);
     void Layout();
-    void Paint();
+    void Paint(HDC into = nullptr);
     void ChangeField(int index);
     void FinishField(int index, bool cancel);
     void RefreshFields();
@@ -67,11 +69,16 @@ private:
         bool combo = false;
         bool prefab = false;
         bool objectReference = false;
+        bool bitmask = false; // Collision layer/mask row: a grid of toggle buttons instead of an edit field.
+        std::vector<HWND> bits; // Bitmask toggle buttons, low bit first.
         int axis = -1; // Three consecutive fields share one Vector3 row.
         Style style = Style::Normal;
     };
     std::wstring BehaviorValue(std::size_t index);
     void ChangeBehaviorField(std::size_t index);
+    void ToggleCollisionBit(std::size_t fieldIndex, int bit);
+    void RefreshCollisionBits(const BehaviorField& entry) const;
+    int bitButtonCount_ = 0; // Running WM_COMMAND id offset for collision-bit buttons.
     void FinishBehaviorField(std::size_t index, bool cancel);
     bool IsBehaviorCollapsed(const BehaviorField& entry) const;
     void ShowBehaviorMenu(POINT screenPoint);

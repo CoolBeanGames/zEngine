@@ -776,6 +776,66 @@ void HierarchyTests(bool capture) {
 void GizmoTests(bool capture);
 void PrefabTests();
 void ProjectStartupTests(const std::string& mode,bool capture);
+void CollisionBitsTests(bool capture)
+{
+    Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM initialization failed");
+    TestDirectory test;
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        const HWND window = editor.Create(SW_HIDE, test.path / "Project");
+        editor.InitializeRenderer();
+        auto& body = editor.CreateGameObject(EditorShell::ObjectPreset::RigidBody);
+        auto* rb = body.GetBehavior<zengine::physics::RigidBody>();
+        Require(rb != nullptr, "RigidBody preset did not attach a body");
+        Require(editor.SelectedGameObject() && editor.SelectedGameObject()->Id() == body.Id(), "New physics object was not selected");
+        const HWND inspector = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+        Require(inspector != nullptr, "Inspector child missing");
+        // The layer/mask rows are grids of toggle buttons, not edit fields.
+        const auto layerBit = [&](int bit) { return GetDlgItem(inspector, InspectorPanel::FirstBehaviorBit + bit); };
+        const auto maskBit = [&](int bit) { return GetDlgItem(inspector, InspectorPanel::FirstBehaviorBit + InspectorPanel::CollisionBits + bit); };
+        Require(layerBit(0) && layerBit(InspectorPanel::CollisionBits - 1) && maskBit(0), "Collision toggle buttons were not created");
+        const auto click = [&](HWND button, int id, bool check) {
+            SendMessageW(button, BM_SETCHECK, check ? BST_CHECKED : BST_UNCHECKED, 0); // BS_AUTOCHECKBOX would flip this itself for a real click.
+            SendMessageW(inspector, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), reinterpret_cast<LPARAM>(button));
+        };
+        rb->SetLayer(0); rb->SetMask(0);
+        click(layerBit(2), InspectorPanel::FirstBehaviorBit + 2, true);
+        Require((rb->Layer() & (1u << 2)) != 0 && rb->Layer() == (1u << 2), "Toggling a layer button did not set exactly that bit");
+        click(maskBit(5), InspectorPanel::FirstBehaviorBit + InspectorPanel::CollisionBits + 5, true);
+        Require((rb->Mask() & (1u << 5)) != 0, "Toggling a mask button did not set the bit");
+        Require(SendMessageW(layerBit(2), BM_GETCHECK, 0, 0) == BST_CHECKED, "Layer button did not stay pressed after toggling on");
+        // Bits above the visible grid must survive an edit through the buttons.
+        rb->SetLayer(0xFF00u | (1u << 2));
+        click(layerBit(2), InspectorPanel::FirstBehaviorBit + 2, false);
+        Require(rb->Layer() == 0xFF00u, "Toggling a low bit off disturbed the preserved high bits");
+        // Re-selecting the object must sync the buttons to the stored bits.
+        rb->SetLayer((1u << 1) | (1u << 9));
+        SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 140));
+        SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 140));
+        SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 167));
+        SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 167));
+        if (editor.SelectedGameObject() && editor.SelectedGameObject()->Id() == body.Id())
+        {
+            const HWND inspector2 = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+            Require(SendMessageW(GetDlgItem(inspector2, InspectorPanel::FirstBehaviorBit + 1), BM_GETCHECK, 0, 0) == BST_CHECKED &&
+                    SendMessageW(GetDlgItem(inspector2, InspectorPanel::FirstBehaviorBit + 9), BM_GETCHECK, 0, 0) == BST_CHECKED &&
+                    SendMessageW(GetDlgItem(inspector2, InspectorPanel::FirstBehaviorBit + 0), BM_GETCHECK, 0, 0) == BST_UNCHECKED,
+                    "Re-selecting did not sync collision buttons to stored bits");
+        }
+        if (capture) {
+            auto* rebound = editor.SelectedGameObject() ? const_cast<zengine::GameObject*>(editor.SelectedGameObject())->GetBehavior<zengine::physics::RigidBody>() : rb;
+            rebound->SetLayer((1u<<0)|(1u<<3)); rebound->SetMask(0x7);
+            const HWND ins = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+            for (int b : {0,3}) click(GetDlgItem(ins, InspectorPanel::FirstBehaviorBit + b), InspectorPanel::FirstBehaviorBit + b, true);
+            for (int b : {0,1,2}) click(GetDlgItem(ins, InspectorPanel::FirstBehaviorBit + InspectorPanel::CollisionBits + b), InspectorPanel::FirstBehaviorBit + InspectorPanel::CollisionBits + b, true);
+            for (int i=0;i<22;++i) SendMessageW(ins, WM_VSCROLL, MAKEWPARAM(SB_LINEDOWN,0), 0);
+            editor.Render();
+            CaptureScreen(window, L"collision-bits-qa.bmp");
+        }
+    }
+    CoUninitialize();
+    std::cout << "PASS: collision layer/mask toggle buttons set/clear bits and preserve unseen high bits\n";
+}
 int main(int argc, char** argv)
 {
     try
@@ -788,6 +848,7 @@ int main(int argc, char** argv)
         else if(argc>1 && std::string(argv[1])=="--editor-build")EditorBuildTests();
         else if (argc > 1 && std::string(argv[1]) == "--editor") EditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
+        else if (argc > 1 && std::string(argv[1]) == "--collision-bits") CollisionBitsTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scripts") ScriptIntegrationEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scenes") SceneEditorTests(argc > 2 && std::string(argv[2]) == "--capture");

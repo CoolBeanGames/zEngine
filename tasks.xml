@@ -736,7 +736,7 @@ a Breakpoint has been reached
     <build>false</build>
     <release>false</release>
     <tags>big,systems,data,scripting</tags>
-    <notes>Built the "phone book": scripting/include/zscript/NativeTypes.h is now the single registry of native types (name, base, gameObject accessor field, component/physicsBody/scriptClass flags). Everything reads from it: the compiler's Canonical() alias resolver, NativeBehavior/NativeClass predicates, the built-in class prelude (gameObject accessor fields + physics-body class construction), the runtime component binding in Create()/BindNativeBehavior(), the read-only-accessor check, ScriptCompletion's type list + base chains + gameObject members + lowercase aliases, and ScriptHost's three former if/else chains (Reference, BindNative, PreviewReference) - now one NativeBindings() table on the engine side. Adding a new referenceable component (e.g. audio_player) = one row in NativeTypes.h + one row in ScriptHost::NativeBindings() + the C++ behavior class; autocomplete, canonical spelling, gameObject.<accessor>, drag-assignment and standalone-build binding all follow. Behaviour is byte-for-byte unchanged: full ctest 27/27 green, plus a new registry-driven check in ScriptTests that every registered type is a known class and every accessor resolves. Physics bodies keep their PhysicsBody base / owner wiring, keyed off the registry's physicsBody flag. Unblocks ZE-34.</notes>
+    <notes>Built the "phone book": scripting/include/zscript/NativeTypes.h is now the single registry of native types (name, base, gameObject accessor field, component/physicsBody/scriptClass flags). Everything reads from it: the compiler's Canonical() alias resolver, NativeBehavior/NativeClass predicates, the built-in class prelude (gameObject accessor fields + physics-body class construction), the runtime component binding in Create()/BindNativeBehavior(), the read-only-accessor check, ScriptCompletion's type list + base chains + gameObject members + lowercase aliases, and ScriptHost's three former if/else chains (Reference, BindNative, PreviewReference) - now one NativeBindings() table on the engine side. Adding a new referenceable component (e.g. audio_player) = one row in NativeTypes.h + one row in ScriptHost::NativeBindings() + the C++ behavior class; autocomplete, canonical spelling, gameObject.&lt;accessor&gt;, drag-assignment and standalone-build binding all follow. Behaviour is byte-for-byte unchanged: full ctest 27/27 green, plus a new registry-driven check in ScriptTests that every registered type is a known class and every accessor resolves. Physics bodies keep their PhysicsBody base / owner wiring, keyed off the registry's physicsBody flag. Unblocks ZE-34.</notes>
     <filesChanged>scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptCompletion.cpp; src/ScriptHost.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
@@ -745,7 +745,7 @@ a Breakpoint has been reached
     <prompt>rather than just typing in the bits, make them toggleable buttons</prompt>
     <requirements>change style for collision masks and layers</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -753,14 +753,14 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <tags>ui,physics,inspector</tags>
+    <notes>The Inspector Collision layer/mask rows are now a 2x8 grid of numbered toggle buttons (BS_AUTOCHECKBOX|BS_PUSHLIKE) per body instead of an edit field for the raw bit value. Clicking a button sets/clears that bit via Body::SetLayer/SetMask; bits 17-32 (not shown) are read live and preserved on every edit; re-selecting an object syncs the buttons to the stored value. New InspectorPanel::CollisionBits (16) controls how many are exposed. Also added WM_PRINTCLIENT support to the Inspector and a CaptureScreen() test helper (minimize/restore to grab foreground, BitBlt the desktop) so editor panels can be visually verified - PrintWindow does not render this app's GDI panels. Verified with a new --collision-bits suite (28/28 ctest) and an on-screen screenshot of the grid.</notes>
+    <filesChanged>src/InspectorPanel.h; src/InspectorPanel.cpp; tests/AssetTests.cpp; tests/WindowCapture.h; CMakeLists.txt; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-39">
