@@ -750,6 +750,28 @@ a Breakpoint has been reached
     <name>add line numbers to text editor</name>
     <prompt>please add line numbers to the far right of the script editor</prompt>
     <requirements>line numbers implimented</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>code,scripteditor</tags>
+    <notes>Added a fixed right-hand line-number gutter to the script editor. RichEdit now reserves a 44px right margin (alongside the existing 28px left fold gutter) and the number strip is painted per WM_PAINT from EM_GETFIRSTVISIBLELINE downward, right-aligned, in the editor's muted gutter colors with a thin separator. Folded/hidden lines collapse onto one row so numbering matches the visible view. Horizontal and vertical scrolling keep the gutter pinned. Regression added to ScriptEditorTests verifying the reserved margins and a safe repaint over multi-line content.</notes>
+    <filesChanged>src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-53">
+    <name>look for bugs or optimizations</name>
+    <prompt>go through the entire code base and look for any optimizations (bother for engine and game performance) speed up where possible, fix any potential bugs you see, and in general improve the code base</prompt>
+    <requirements>full code base cleaned up</requirements>
     <inProgress>true</inProgress>
     <done>false</done>
     <bug>false</bug>
@@ -760,28 +782,6 @@ a Breakpoint has been reached
     <archived>false</archived>
     <blockedBy></blockedBy>
     <dateStarted>2026-09-02</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>code,scripteditor</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
-  </task>
-  <task id="ZE-53">
-    <name>look for bugs or optimizations</name>
-    <prompt>go through the entire code base and look for any optimizations (bother for engine and game performance) speed up where possible, fix any potential bugs you see, and in general improve the code base</prompt>
-    <requirements>full code base cleaned up</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
