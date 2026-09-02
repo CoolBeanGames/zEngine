@@ -53,10 +53,16 @@ private:
     void PaintLineNumbers(HWND);
     bool ToggleFold(); void ExpandAll(); void SetHidden(std::size_t start,std::size_t end,bool hidden);
     static LRESULT CALLBACK CompletionProcedure(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR);
+    void UpdateHover(POINT clientPoint); // resolve + show the signature tooltip
+    void HideHover();
+    static constexpr UINT_PTR HoverTimer = 0x48; // 'H'
     scriptCompletion::Index completionIndex_;
     scriptCompletion::Result completion_;
     std::function<std::vector<std::wstring>()> completionContext_;
     HWND completions_=nullptr;
+    HWND tooltip_=nullptr;
+    POINT hoverPoint_{-1,-1};
+    std::wstring hoverText_;
     int completionSelection_=0;
     bool suppressCompletion_=false;
     std::filesystem::path assets_, path_;

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="79">
+<tasks project="zEngine" nextIndex="80">
   <task id="ZE-59">
     <name>ZE 49 is happening again</name>
     <prompt>this was the original prompt:
@@ -893,168 +893,12 @@ a Breakpoint has been reached
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
-  <task id="ZE-33">
-    <name>arrays should be visable and editable in the inspector</name>
-    <prompt>we should be able to see and set valuoes for arrays in inspector, even drag in references to a specific slot if needed depending on the types</prompt>
-    <requirements>make arrays display properly</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags></tags>
-    <notes>Exported script `array` fields are now first-class in the Inspector. Scripting lib gained a public element API on Runtime (ArrayLength/ArrayElement/SetArrayElement/AppendArrayElement/RemoveArrayElement). ScriptHost surfaces each exported array as a header row plus one row per element via Fields() (new array/arrayIndex/arrayCount on ScriptHost::Field); AddArrayElement/RemoveArrayElement/SetArrayElement/SetArrayElementReference edit them (edit mode only), AuthoredArrays/RestoreArrays persist them, Prepare seeds from the script's own `[...]` initializer and reconciles on recompile, Play/BoundScript rebuilds the live array. New ScriptHost::ScriptArrayElement (scalar value OR GameObjectId+auto-picked reference type). Scene format bumped to v7: arrays/array/element/`element ref &lt;id&gt; &lt;type&gt;` blocks; Instantiate + Append (with prefab-internal id remap, mirroring ZE-59) restore them. InspectorPanel renders an "+ Add element" button (type menu: value types then reference types), per-element edit fields (scalars) or pick buttons (references/prefab), a per-element remove button, and accepts a dragged scene object onto an element slot or the array's add row - auto-typing the reference to the most specific match (RigidBody, Collider, Camera, ... else gameObject). AssignObjectReferenceAt gained a geometric row hit-test so drops land even when WindowFromPoint can't see the control. EditorShell::DropObjectOnInspector exposes the drop path for tests. Coverage: scripting ArraysTypesAndLocals extended, ScriptHostTests array block, SceneTests v7 round-trip, new --arrays / ArrayInspector ctest. Full ctest 32/32.</notes>
-    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/Scene.h; src/Scene.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; tests/ScriptHostTests.cpp; tests/SceneTests.cpp; tests/AssetTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">make arrays visable</subtask>
-      <subtask done="true">add new elemtns to arrays in inspector</subtask>
-      <subtask done="true">remove elements</subtask>
-      <subtask done="true">pick type for new elements</subtask>
-      <subtask done="true">drag elements in</subtask>
-      <subtask done="true">drag elements in to empy array (add new slot)</subtask>
-      <subtask done="true">auto select type based on dragged in element</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-39">
-    <name>collapse behavior</name>
-    <prompt>on the right side of the behavior add a collapse button, make it styled like the new remove behavior button and when collapsed its just the name and the expand button</prompt>
-    <requirements>collapse button added</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>true</release>
-    <tags></tags>
-    <notes>The per-behavior collapse toggle moved from the left of the header to the right edge (place at width-28), so the behavior name now starts flush at x=12 like every other label; the button is dark-themed via editorStyle::Attach to match the rest of the Inspector chrome (the old "remove behavior" button it was meant to mirror is now a right-click action). Collapsing still hides every non-header row of that behavior (RowHeight 0 + ShowWindow(SW_HIDE)), leaving just the name and the "+" expand button. The new ZE-33 array +/- buttons are dark-themed the same way. Regression added to the CollisionLayerButtons suite: toggle is right-of-centre, a click hides the behavior's rows and keeps the toggle visible, a second click restores them. Built to builds/debug and builds/release (release zipped to builds/release/zEngine-release.zip); full ctest 32/32; committed and pushed.</notes>
-    <filesChanged>src/InspectorPanel.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-62">
-    <name>Mouse Delta</name>
-    <prompt>We need a simple way to get access to mouse data, it should be just a global part of Input as Input.mouse</prompt>
-    <requirements>all subtasks complete</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>input,new system</tags>
-    <notes>New native Mouse type reachable as Input.mouse (registered in the phone book / NativeTypes.h). Fields: mouse.delta and mouse.position, both Vector3, position normalized to the viewport as -1..1 with +y up, (0,0) = centre. Signals: clicked(int button), click_ended(int button), held(int button) (button 0=L,1=R,2=M) and was_just_moved(Vector3 old, Vector3 new). The Runtime derives the movement delta and the was_just_moved signal from successive host frames (new struct script::MouseFrame; Runtime::SetMouse). Callback signatures are validated at connect() time like the Transform/PhysicsBody signals; Mouse is read-only and cannot be constructed or inherited. Host wiring: ScriptHost::SetMouse feeds BoundScript each Update; EditorShell::TickInput samples the cursor against viewportWindow_ and L/R/M via GetKeyState (buttons gated to when the viewport has input focus); PlayerMain samples against the game window and passes a MouseFrame to Session::Tick. Autocomplete lists Input.mouse and the Mouse members. Coverage: new scripting MouseInput suite (position/delta/all four signals/read-only/inherit/construct/range guards), ScriptHostTests mouse block (click signal + position/delta reach a running script). Full ctest 32/32.</notes>
-    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/include/zscript/NativeTypes.h; scripting/tests/ScriptTests.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/ScriptCompletion.cpp; src/EditorShell.h; src/EditorInput.cpp; src/runtime/GameSession.h; src/runtime/GameSession.cpp; src/runtime/PlayerMain.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">mouse.delta (returns a Vector3 of how much it moved)</subtask>
-      <subtask done="true">mouse.position (returns its position in screen coordinates from -1.-1.0 to 1,1,0)</subtask>
-      <subtask done="true">mouse.signals(clicked(button_index),click_ended(button_index),held(button_index))</subtask>
-      <subtask done="true">mouse.was_just_moved(old_position,new_position)</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-68">
-    <name>get behavior</name>
-    <prompt>by passing a type in it should return a component of that type attached to the gameObject, is a method of gameObject.
-rigidbody rb = gameObject.getBehavior(rigidbody);</prompt>
-    <requirements>can now get references like this</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>scritping</tags>
-    <notes>gameObject.getBehavior(TypeName) is compile-time sugar for the read-only native accessor field: getBehavior(RigidBody) -&gt; the "rigidbody" field, getBehavior(Transform) -&gt; "transform", also KinematicBody/StaticBody/Area/Collider/Camera/PhysicsBody. Works as a bare call (implicit this), this.getBehavior(...), or obj.getBehavior(...); a class that defines its own getBehavior method keeps it. The argument must be a native component type name (checked against the phone book); a value, an unknown type, gameObject/Behavior, or the wrong argument count is a compile error. Returns the component type so `rigidbody rb = getBehavior(rigidbody);` type-checks. No runtime/host change - the accessor fields were already bound by ScriptHost. Autocomplete lists getBehavior on gameObject. New scripting GetBehavior test; ctest 32/32.</notes>
-    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptCompletion.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-70">
-    <name>find</name>
-    <prompt>two flavors (both static members of the base gameObject)
-GameObject.find("name") - returns the first gameobject in the scene with that name
-GameObject.find_by_type(type) - returns the first gameobject in the scene with that behavior</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>scripting</tags>
-    <notes>find() already existed as an implicit-this gameObject method; it now also accepts the static-style spelling GameObject.find("name") / gameObject.find("name") (the base type name reads as "the current gameObject", same as a bare call - this also enables gameObject.getBehavior(...) from ZE-68). Added find_by_type(Type): compile-time recognised (arg must be a native component type - RigidBody, KinematicBody, StaticBody, Area, Collider, Camera, PhysicsBody, Behavior), emits new Op::FindType which calls a host type-lookup callback (Runtime::SetTypeLookup) returning the first scene proxy carrying that component, or null. ScriptHost wires it via ObjectMatchesReferenceType over the live store. Autocomplete lists find_by_type. New scripting FindAndTags test + ScriptHostTests find/tag block. ctest 32/32.</notes>
-    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-69">
-    <name>get tags</name>
-    <prompt>member of game object, returns the tag field seperated by by commas into an array. also add has_tag("tag") which returns bool if the object uses that tag</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags></tags>
-    <notes>gameObject.get_tags() returns the object's tags as a script string array; has_tag("tag") returns bool. Both are gameObject methods (work as bare calls, this.get_tags(), obj.get_tags() or GameObject.get_tags()). The engine already stores tags as a list (the editor's comma-separated tag field is split there), so the runtime just exposes them via a new host callback Runtime::SetTagLookup, wired by ScriptHost to GameObject::Tags() of the proxy's live object. Autocomplete lists get_tags/has_tag. Covered by the scripting FindAndTags test and the ScriptHostTests find/tag block. ctest 32/32.</notes>
-    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
   <task id="ZE-71">
     <name>autocomplete update</name>
     <prompt>add mouse over tooltips, if i mouse over a function call (name only) show the parameters that are part of it, same for signals (hovering over a rigidbody.body_entered signal should show me the parameters that pass the body</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -1062,14 +906,14 @@ GameObject.find_by_type(type) - returns the first gameobject in the scene with t
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
     <release>true</release>
     <tags>scripting,ui</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Resting the pointer on an identifier in the script editor now shows a signature tooltip. scriptCompletion::Item gained a `signature` string; Index::Hover(source, caret) resolves the identifier under the caret (own methods, built-ins, chained members, signals) and returns "name(params)" for a function - with " -&gt; result" when it returns a value - or "name(params)  (signal)" for a signal; a plain field/variable yields nothing. Built-in signatures are filled for the parameterised globals (Input.*, Mathf.*, Physics.cast, gameObject.find/make_timer/print/getBehavior/find_by_type/has_tag, array/string methods, signal.connect/emit) and the native signals (Transform was_*, PhysicsBody collision_/area_ -&gt; gameObject other, Mouse clicked/held -&gt; int button, Mouse was_just_moved -&gt; two Vector3); user func signatures are reconstructed from their token run in AddSource. ScriptEditor hosts a TTS_ALWAYSTIP tooltip in TTF_TRACK mode, driven by a 350ms hover timer over the source control (EM_CHARFROMPOS + a past-line-end guard), dismissed on key/scroll/click/leave. Hover logic covered by new ScriptEditorTests cases (own function, built-in call, signal, plain field). Built to builds/debug and builds/release (zipped to builds/release/zEngine-release.zip); full ctest 32/32; committed and pushed.</notes>
+    <filesChanged>src/ScriptCompletion.h; src/ScriptCompletion.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-72">
@@ -1480,6 +1324,195 @@ starts would have to be just the ones that are already present in the scene but 
     <tags>performance</tags>
     <notes></notes>
     <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-79">
+    <name>scope</name>
+    <prompt>right now everything is pretty much "public" I want to introduce scope
+this will be a large task so</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>true</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>code,scrope,big project</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">differentiate between classes and instances (GameObject vs this.gameObject)</subtask>
+      <subtask done="false">add static keyword (works like it does it other languages)</subtask>
+      <subtask done="false">add private keyword (works like in other languages, shorthand is a preceeding _)</subtask>
+      <subtask done="false">add abstract keyword (whether its a function or a class it means it MUST be overriden, abstract behaviors cannot be added to a GameObject unless they are overriden)</subtask>
+      <subtask done="false">add override keyword (replaces the parent function)</subtask>
+      <subtask done="false">add super.function_name(which calls the parent version of the function)</subtask>
+      <subtask done="false">if something is not abstract but you still redefine it in an inherited class it is still overriden, abstract just means it CANT be used until overridden</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-33">
+    <name>arrays should be visable and editable in the inspector</name>
+    <prompt>we should be able to see and set valuoes for arrays in inspector, even drag in references to a specific slot if needed depending on the types</prompt>
+    <requirements>make arrays display properly</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>Exported script `array` fields are now first-class in the Inspector. Scripting lib gained a public element API on Runtime (ArrayLength/ArrayElement/SetArrayElement/AppendArrayElement/RemoveArrayElement). ScriptHost surfaces each exported array as a header row plus one row per element via Fields() (new array/arrayIndex/arrayCount on ScriptHost::Field); AddArrayElement/RemoveArrayElement/SetArrayElement/SetArrayElementReference edit them (edit mode only), AuthoredArrays/RestoreArrays persist them, Prepare seeds from the script's own `[...]` initializer and reconciles on recompile, Play/BoundScript rebuilds the live array. New ScriptHost::ScriptArrayElement (scalar value OR GameObjectId+auto-picked reference type). Scene format bumped to v7: arrays/array/element/`element ref &lt;id&gt; &lt;type&gt;` blocks; Instantiate + Append (with prefab-internal id remap, mirroring ZE-59) restore them. InspectorPanel renders an "+ Add element" button (type menu: value types then reference types), per-element edit fields (scalars) or pick buttons (references/prefab), a per-element remove button, and accepts a dragged scene object onto an element slot or the array's add row - auto-typing the reference to the most specific match (RigidBody, Collider, Camera, ... else gameObject). AssignObjectReferenceAt gained a geometric row hit-test so drops land even when WindowFromPoint can't see the control. EditorShell::DropObjectOnInspector exposes the drop path for tests. Coverage: scripting ArraysTypesAndLocals extended, ScriptHostTests array block, SceneTests v7 round-trip, new --arrays / ArrayInspector ctest. Full ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/Scene.h; src/Scene.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; tests/ScriptHostTests.cpp; tests/SceneTests.cpp; tests/AssetTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="true">make arrays visable</subtask>
+      <subtask done="true">add new elemtns to arrays in inspector</subtask>
+      <subtask done="true">remove elements</subtask>
+      <subtask done="true">pick type for new elements</subtask>
+      <subtask done="true">drag elements in</subtask>
+      <subtask done="true">drag elements in to empy array (add new slot)</subtask>
+      <subtask done="true">auto select type based on dragged in element</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-39">
+    <name>collapse behavior</name>
+    <prompt>on the right side of the behavior add a collapse button, make it styled like the new remove behavior button and when collapsed its just the name and the expand button</prompt>
+    <requirements>collapse button added</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags></tags>
+    <notes>The per-behavior collapse toggle moved from the left of the header to the right edge (place at width-28), so the behavior name now starts flush at x=12 like every other label; the button is dark-themed via editorStyle::Attach to match the rest of the Inspector chrome (the old "remove behavior" button it was meant to mirror is now a right-click action). Collapsing still hides every non-header row of that behavior (RowHeight 0 + ShowWindow(SW_HIDE)), leaving just the name and the "+" expand button. The new ZE-33 array +/- buttons are dark-themed the same way. Regression added to the CollisionLayerButtons suite: toggle is right-of-centre, a click hides the behavior's rows and keeps the toggle visible, a second click restores them. Built to builds/debug and builds/release (release zipped to builds/release/zEngine-release.zip); full ctest 32/32; committed and pushed.</notes>
+    <filesChanged>src/InspectorPanel.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-62">
+    <name>Mouse Delta</name>
+    <prompt>We need a simple way to get access to mouse data, it should be just a global part of Input as Input.mouse</prompt>
+    <requirements>all subtasks complete</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>input,new system</tags>
+    <notes>New native Mouse type reachable as Input.mouse (registered in the phone book / NativeTypes.h). Fields: mouse.delta and mouse.position, both Vector3, position normalized to the viewport as -1..1 with +y up, (0,0) = centre. Signals: clicked(int button), click_ended(int button), held(int button) (button 0=L,1=R,2=M) and was_just_moved(Vector3 old, Vector3 new). The Runtime derives the movement delta and the was_just_moved signal from successive host frames (new struct script::MouseFrame; Runtime::SetMouse). Callback signatures are validated at connect() time like the Transform/PhysicsBody signals; Mouse is read-only and cannot be constructed or inherited. Host wiring: ScriptHost::SetMouse feeds BoundScript each Update; EditorShell::TickInput samples the cursor against viewportWindow_ and L/R/M via GetKeyState (buttons gated to when the viewport has input focus); PlayerMain samples against the game window and passes a MouseFrame to Session::Tick. Autocomplete lists Input.mouse and the Mouse members. Coverage: new scripting MouseInput suite (position/delta/all four signals/read-only/inherit/construct/range guards), ScriptHostTests mouse block (click signal + position/delta reach a running script). Full ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/include/zscript/NativeTypes.h; scripting/tests/ScriptTests.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/ScriptCompletion.cpp; src/EditorShell.h; src/EditorInput.cpp; src/runtime/GameSession.h; src/runtime/GameSession.cpp; src/runtime/PlayerMain.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="true">mouse.delta (returns a Vector3 of how much it moved)</subtask>
+      <subtask done="true">mouse.position (returns its position in screen coordinates from -1.-1.0 to 1,1,0)</subtask>
+      <subtask done="true">mouse.signals(clicked(button_index),click_ended(button_index),held(button_index))</subtask>
+      <subtask done="true">mouse.was_just_moved(old_position,new_position)</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-68">
+    <name>get behavior</name>
+    <prompt>by passing a type in it should return a component of that type attached to the gameObject, is a method of gameObject.
+rigidbody rb = gameObject.getBehavior(rigidbody);</prompt>
+    <requirements>can now get references like this</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scritping</tags>
+    <notes>gameObject.getBehavior(TypeName) is compile-time sugar for the read-only native accessor field: getBehavior(RigidBody) -&gt; the "rigidbody" field, getBehavior(Transform) -&gt; "transform", also KinematicBody/StaticBody/Area/Collider/Camera/PhysicsBody. Works as a bare call (implicit this), this.getBehavior(...), or obj.getBehavior(...); a class that defines its own getBehavior method keeps it. The argument must be a native component type name (checked against the phone book); a value, an unknown type, gameObject/Behavior, or the wrong argument count is a compile error. Returns the component type so `rigidbody rb = getBehavior(rigidbody);` type-checks. No runtime/host change - the accessor fields were already bound by ScriptHost. Autocomplete lists getBehavior on gameObject. New scripting GetBehavior test; ctest 32/32.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptCompletion.cpp; tasks.xml</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-70">
+    <name>find</name>
+    <prompt>two flavors (both static members of the base gameObject)
+GameObject.find("name") - returns the first gameobject in the scene with that name
+GameObject.find_by_type(type) - returns the first gameobject in the scene with that behavior</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scripting</tags>
+    <notes>find() already existed as an implicit-this gameObject method; it now also accepts the static-style spelling GameObject.find("name") / gameObject.find("name") (the base type name reads as "the current gameObject", same as a bare call - this also enables gameObject.getBehavior(...) from ZE-68). Added find_by_type(Type): compile-time recognised (arg must be a native component type - RigidBody, KinematicBody, StaticBody, Area, Collider, Camera, PhysicsBody, Behavior), emits new Op::FindType which calls a host type-lookup callback (Runtime::SetTypeLookup) returning the first scene proxy carrying that component, or null. ScriptHost wires it via ObjectMatchesReferenceType over the live store. Autocomplete lists find_by_type. New scripting FindAndTags test + ScriptHostTests find/tag block. ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-69">
+    <name>get tags</name>
+    <prompt>member of game object, returns the tag field seperated by by commas into an array. also add has_tag("tag") which returns bool if the object uses that tag</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>gameObject.get_tags() returns the object's tags as a script string array; has_tag("tag") returns bool. Both are gameObject methods (work as bare calls, this.get_tags(), obj.get_tags() or GameObject.get_tags()). The engine already stores tags as a list (the editor's comma-separated tag field is split there), so the runtime just exposes them via a new host callback Runtime::SetTagLookup, wired by ScriptHost to GameObject::Tags() of the proxy's live object. Autocomplete lists get_tags/has_tag. Covered by the scripting FindAndTags test and the ScriptHostTests find/tag block. ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-34">

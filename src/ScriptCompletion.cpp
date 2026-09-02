@@ -36,6 +36,7 @@ std::vector<ClassRange> Classes(const std::vector<Token>& t) {
 }
 Index::Index() {
     auto add=[&](const wchar_t* type,const wchar_t* name,const wchar_t* result,bool function=false){types_[type].members[name]={name,result,function};};
+    auto sig=[&](const wchar_t* type,const wchar_t* name,const wchar_t* signature){ if(auto t=types_.find(type);t!=types_.end()){ if(auto m=t->second.members.find(name);m!=t->second.members.end())m->second.signature=signature; } };
     for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"array"})types_[type];
     // Native types (Vector3, prefab, gameObject, Transform, physics bodies, ...) come from the shared registry.
     for(const auto& native:zengine::script::NativeTypes())types_[Wide(native.name)];
@@ -72,6 +73,22 @@ Index::Index() {
     for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})add(L"PhysicsBody",name,L"void",true);
     for(const auto name:{L"collision_entered",L"collision_stayed",L"collision_exited",L"area_entered",L"area_stayed",L"area_exited"})add(L"PhysicsBody",name,L"signal");
     // Accept the lower-case spelling of every native type, matching the compiler's Canonical().
+    // Hover signatures for the built-ins that take parameters.
+    sig(L"gameObject",L"find",L"string name");sig(L"gameObject",L"make_timer",L"float seconds");sig(L"gameObject",L"print",L"string text");
+    sig(L"gameObject",L"getBehavior",L"type component");sig(L"gameObject",L"find_by_type",L"type component");sig(L"gameObject",L"has_tag",L"string tag");
+    sig(L"string",L"truncate",L"int length");sig(L"string",L"substr",L"int start, int count");
+    sig(L"array",L"append",L"value item");sig(L"array",L"erase",L"int index");
+    sig(L"signal",L"connect",L"function callback");sig(L"signal",L"disconnect",L"function callback");sig(L"signal",L"is_connected",L"function callback");sig(L"signal",L"emit",L"...args");
+    for(const auto name:{L"is_action_pressed",L"is_action_just_pressed",L"is_action_just_released",L"action",L"get_axis",L"get_vector"})sig(L"Input",name,L"string action");
+    for(const auto name:{L"sin",L"cos",L"tan",L"sqrt",L"exp",L"round"})sig(L"Mathf",name,L"float value");
+    sig(L"Mathf",L"lerp",L"float from, float to, float weight");sig(L"Mathf",L"dot",L"Vector3 a, Vector3 b");sig(L"Mathf",L"cross",L"Vector3 a, Vector3 b");
+    sig(L"Physics",L"cast",L"Vector3 from, Vector3 to, int layer_mask");sig(L"Physics",L"cast_all",L"Vector3 from, Vector3 to, int layer_mask");
+    for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})sig(L"PhysicsBody",name,L"Vector3 amount");
+    for(const auto name:{L"was_moved",L"was_rotated",L"was_scaled"})sig(L"Transform",name,L"Vector3 value");
+    for(const auto name:{L"collision_entered",L"collision_stayed",L"collision_exited",L"area_entered",L"area_stayed",L"area_exited"})sig(L"PhysicsBody",name,L"gameObject other");
+    for(const auto name:{L"clicked",L"click_ended",L"held"})sig(L"Mouse",name,L"int button");
+    sig(L"Mouse",L"was_just_moved",L"Vector3 old_position, Vector3 new_position");
+    sig(L"Timer",L"finished",L"");
     for(const auto& native:zengine::script::NativeTypes()) {
         std::wstring lower=Wide(native.name);
         std::transform(lower.begin(),lower.end(),lower.begin(),[](wchar_t c){return std::towlower(c);});
@@ -92,7 +109,12 @@ void Index::AddSource(const std::wstring& source) {
             if(i+2<t.size() && t[i].text==L"func") {
                 const auto close=Closing(t,i+2,L"(",L")");std::wstring result=L"void";
                 if(close+2<t.size() && t[close+1].text==L":")result=t[close+2].text;
-                type.members[t[i+1].text]={t[i+1].text,result,true};i=std::min(close+1,t.size());continue;
+                std::wstring signature; // "type name, type name" reconstructed from the token run
+                for(auto j=i+3;j+1<close && j+1<t.size();j+=2) {
+                    if(!signature.empty())signature+=L", ";
+                    signature+=t[j].text; if(j+1<close)signature+=L' '+t[j+1].text;
+                }
+                type.members[t[i+1].text]={t[i+1].text,result,true,signature};i=std::min(close+1,t.size());continue;
             }
             if(i+2<t.size() && t[i].text==L"signal")type.members[t[i+1].text]={t[i+1].text,L"signal"};
             else if(i+2<t.size() && Word(t[i].text[0]) && Word(t[i+1].text[0]) && (t[i+2].text==L"="||t[i+2].text==L";"))
@@ -168,5 +190,47 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
         result.items.push_back(item);if(result.items.size()==128)break;
     }
     return result;
+}
+std::wstring Index::Hover(const std::wstring& source,std::size_t caret) const {
+    if(caret>source.size())return {};
+    Index index=*this;index.AddSource(source);
+    const auto t=Tokens(source);
+    int k=-1;
+    for(std::size_t i=0;i<t.size();++i)if(Word(t[i].text[0]) && t[i].pos<=caret && caret<=t[i].pos+t[i].text.size()){k=static_cast<int>(i);break;}
+    if(k<0)return {};
+    const auto here=t[k].pos;
+    std::wstring currentClass;
+    for(const auto& c:Classes(t))if(t[c.begin].pos<here && (c.end==t.size()||t[c.end].pos>=here)){currentClass=c.name;break;}
+    auto members=[&](std::wstring type){std::map<std::wstring,Item> found;std::set<std::wstring> seen;
+        while(index.types_.contains(type)&&seen.insert(type).second){const auto& c=index.types_.at(type);found.insert(c.members.begin(),c.members.end());type=c.base;}return found;};
+    std::map<std::wstring,Item> variables=members(currentClass);
+    variables[L"this"]={L"this",currentClass};variables[L"Input"]={L"Input",L"Input"};variables[L"Physics"]={L"Physics",L"Physics"};variables[L"Mathf"]={L"Mathf",L"Mathf"};
+    for(std::size_t i=0;i+2<t.size();++i)if(t[i].text==L"func") {
+        const auto close=Closing(t,i+2,L"(",L")");
+        auto body=close+1;while(body<t.size() && t[body].text!=L"{" && body<close+4)++body;
+        if(body>=t.size()||t[body].text!=L"{")continue;
+        const auto end=Closing(t,body,L"{",L"}");
+        if(t[body].pos>=here || (end<t.size() && t[end].pos<here))continue;
+        for(auto j=i+3;j+1<close && j<t.size();++j)if(index.types_.contains(t[j].text))variables[t[j+1].text]={t[j+1].text,t[j].text};
+        for(auto j=body+1;j<t.size() && t[j].pos<here;++j)
+            if(j+2<t.size() && index.types_.contains(t[j].text) && Word(t[j+1].text[0]) && (t[j+2].text==L"="||t[j+2].text==L";"))
+                variables[t[j+1].text]={t[j+1].text,t[j].text};
+        break;
+    }
+    std::function<std::wstring(int,int)> resolve=[&](int last,int depth)->std::wstring {
+        if(last<0||depth>32)return {};
+        if(t[last].text==L")"){int c=1;--last;while(last>=0){if(t[last].text==L")")++c;else if(t[last].text==L"("&&!--c)break;--last;}return resolve(last-1,depth+1);}
+        if(last>=2 && t[last-1].text==L"."){auto m=members(resolve(last-2,depth+1));auto it=m.find(t[last].text);return it==m.end()?std::wstring{}:it->second.type;}
+        if(auto it=variables.find(t[last].text);it!=variables.end())return it->second.type;
+        return index.types_.contains(t[last].text)?t[last].text:std::wstring{};
+    };
+    Item found;
+    if(k>=2 && t[k-1].text==L"."){auto m=members(resolve(k-2,0));auto it=m.find(t[k].text);if(it==m.end())return {};found=it->second;}
+    else {auto v=variables.find(t[k].text);if(v==variables.end())return {};found=v->second;}
+    if(!found.function && found.type!=L"signal")return {};
+    std::wstring tip=found.name+L"("+found.signature+L")";
+    if(found.function && !found.type.empty() && found.type!=L"void")tip+=L" \x2192 "+found.type; // arrow
+    if(found.type==L"signal")tip+=L"  (signal)";
+    return tip;
 }
 }

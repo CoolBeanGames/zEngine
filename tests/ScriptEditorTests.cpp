@@ -70,6 +70,13 @@ int main(int argc, char**)
             Check(complete(L"// Input.").items.empty(),"Completion active in comment");
             Check(!has(complete(L"class A { func f(){ int hidden; } func g(){ hid"),L"hidden"),"Function-local name leaked to another function");
             Check(!has(complete(L"class A { func f(){ { int hidden; } hid"),L"hidden"),"Block-local name escaped its scope");
+            // ZE-71: hover signatures for calls and signals.
+            const auto hoverAt=[&](const std::wstring& text,const wchar_t* needle){
+                const auto at=text.find(needle); return at==text.npos?std::wstring{}:index.Hover(text,at+1); };
+            Check(hoverAt(L"class A : gameObject { func update(float delta){ update(0); } }",L"update(0")==L"update(float delta)","Own-function hover signature wrong");
+            Check(hoverAt(L"class A : gameObject { func f(){ Mathf.lerp(0,1,0.5); } }",L"lerp(")==L"lerp(float from, float to, float weight) \x2192 float","Built-in call hover signature wrong");
+            Check(hoverAt(L"class A : gameObject { func f(){ Input.mouse.clicked.connect(f); } }",L"clicked.")==L"clicked(int button)  (signal)","Signal hover signature wrong");
+            Check(hoverAt(L"class A : gameObject { export int x=0; func f(){ x=1; } }",L"x=1").empty(),"Plain field should have no hover");
         }
         {
             const std::wstring source=L"class A {\r    func update(float delta";

@@ -84,6 +84,16 @@ ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, cons
         if(!completions_)throw std::runtime_error("Cannot create completion list.");
         SendMessageW(completions_,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
         SetWindowSubclass(completions_,CompletionProcedure,1,reinterpret_cast<DWORD_PTR>(this));
+        // Hover tooltip: shows a call/signal signature when the pointer rests on an identifier.
+        tooltip_=CreateWindowExW(WS_EX_TOPMOST,TOOLTIPS_CLASS,nullptr,WS_POPUP|TTS_NOPREFIX|TTS_ALWAYSTIP,
+            0,0,0,0,window_,nullptr,instance,nullptr);
+        if(tooltip_) {
+            SendMessageW(tooltip_,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+            SendMessageW(tooltip_,TTM_SETMAXTIPWIDTH,0,600);
+            TOOLINFOW info{sizeof(info)}; info.uFlags=TTF_IDISHWND|TTF_TRACK|TTF_ABSOLUTE;
+            info.hwnd=window_; info.uId=reinterpret_cast<UINT_PTR>(source_); info.lpszText=const_cast<wchar_t*>(L"");
+            SendMessageW(tooltip_,TTM_ADDTOOLW,0,reinterpret_cast<LPARAM>(&info));
+        }
         Reload(); Layout();
     }
     catch (...)
@@ -342,6 +352,16 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
         if(self->ToggleFoldAt({GET_X_LPARAM(l),GET_Y_LPARAM(l)})) return 0;
     }
     if(message==WM_KILLFOCUS || message==WM_LBUTTONDOWN || message==WM_VSCROLL || message==WM_HSCROLL || message==WM_MOUSEWHEEL)self->HideCompletion();
+    if(message==WM_KILLFOCUS || message==WM_LBUTTONDOWN || message==WM_KEYDOWN || message==WM_VSCROLL || message==WM_HSCROLL || message==WM_MOUSEWHEEL || message==WM_MOUSELEAVE)self->HideHover();
+    if(message==WM_MOUSEMOVE) {
+        const POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+        if(point.x!=self->hoverPoint_.x || point.y!=self->hoverPoint_.y) {
+            self->hoverPoint_=point; self->HideHover();
+            KillTimer(window,HoverTimer); SetTimer(window,HoverTimer,350,nullptr);
+            TRACKMOUSEEVENT track{sizeof(track),TME_LEAVE,window,0}; TrackMouseEvent(&track);
+        }
+    }
+    if(message==WM_TIMER && w==HoverTimer){KillTimer(window,HoverTimer);self->UpdateHover(self->hoverPoint_);return 0;}
     if(message==WM_KEYDOWN) {
         if(w==VK_ESCAPE && !self->completion_.items.empty()){self->HideCompletion();return 0;}
         if(w==VK_RETURN){self->HideCompletion();return 0;}
@@ -485,6 +505,30 @@ void ScriptEditor::RefreshCompletionIndex() {
 }
 void ScriptEditor::HideCompletion() {
     completion_={};completionSelection_=0;if(completions_)ShowWindow(completions_,SW_HIDE);if(source_)InvalidateRect(source_,nullptr,FALSE);
+}
+void ScriptEditor::HideHover() {
+    if(!tooltip_ || hoverText_.empty())return;
+    hoverText_.clear();
+    TOOLINFOW info{sizeof(info)}; info.hwnd=window_; info.uId=reinterpret_cast<UINT_PTR>(source_);
+    SendMessageW(tooltip_,TTM_TRACKACTIVATE,FALSE,reinterpret_cast<LPARAM>(&info));
+}
+void ScriptEditor::UpdateHover(POINT clientPoint) {
+    if(!tooltip_ || !source_ || (completions_ && IsWindowVisible(completions_)))return;
+    POINTL pt{clientPoint.x,clientPoint.y};
+    const auto index=static_cast<LONG>(SendMessageW(source_,EM_CHARFROMPOS,0,reinterpret_cast<LPARAM>(&pt)));
+    if(index<0)return;
+    // Only show when the pointer is actually over the character cell, not past line end.
+    POINTL cell{}; SendMessageW(source_,EM_POSFROMCHAR,reinterpret_cast<WPARAM>(&cell),index);
+    if(clientPoint.x<cell.x-2)return;
+    const auto tip=completionIndex_.Hover(Text(),static_cast<std::size_t>(index));
+    if(tip.empty() || tip==hoverText_)return;
+    hoverText_=tip;
+    TOOLINFOW info{sizeof(info)}; info.hwnd=window_; info.uId=reinterpret_cast<UINT_PTR>(source_);
+    info.lpszText=hoverText_.data();
+    SendMessageW(tooltip_,TTM_UPDATETIPTEXTW,0,reinterpret_cast<LPARAM>(&info));
+    POINT screen=clientPoint; ClientToScreen(source_,&screen);
+    SendMessageW(tooltip_,TTM_TRACKPOSITION,0,MAKELPARAM(screen.x+14,screen.y+20));
+    SendMessageW(tooltip_,TTM_TRACKACTIVATE,TRUE,reinterpret_cast<LPARAM>(&info));
 }
 void ScriptEditor::UpdateCompletion() {
     if(suppressCompletion_ || formatting_)return;
