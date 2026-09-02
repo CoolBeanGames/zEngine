@@ -721,12 +721,12 @@ a Breakpoint has been reached
     <name>clean up project folders</name>
     <prompt>remove (delete) and unnessisary files, delete all old builds, and push a new build and commit</prompt>
     <requirements></requirements>
-    <inProgress>true</inProgress>
-    <done>false</done>
+    <inProgress>false</inProgress>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey>zq7v2k9m</lockKey>
+    <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
@@ -736,14 +736,14 @@ a Breakpoint has been reached
     <build>true</build>
     <release>true</release>
     <tags>builds,clean,refactor</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Deleted ~8.6 GB of stale/regenerable build output: build/ (old CMake layout), builds/debug-old/, and the debug/test trees, plus tests/debug/. Simplified .gitignore to ignore /builds/ wholesale (previously only /builds/debug/ and /builds/test/, which would have leaked a release/ tree). Regenerated clean builds from an empty tree: builds/debug (Debug: zEngine.exe + zPlayer.exe), builds/release (Release: zEngine.exe + zPlayer.exe), builds/test (all targets). Full ctest suite green 27/27 after also fixing a stale test (see ZE-56). Committed as f2d31c6 and pushed to origin/main; the commit also bundles ZE-51 (editor line numbers), ZE-53 (O(1) ObjectStore::Find) and the pending instructions.txt task-image section.</notes>
+    <filesChanged>.gitignore; src/core/GameObject.h; src/core/GameObject.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tests/AssetTests.cpp; instructions.txt; tasks.xml</filesChanged>
     <image></image>
     <subtasks>
       <subtask done="true">remove unneeded files</subtask>
       <subtask done="true">remove old builds</subtask>
-      <subtask done="false">make new builds</subtask>
-      <subtask done="false">commit</subtask>
+      <subtask done="true">make new builds</subtask>
+      <subtask done="true">commit</subtask>
     </subtasks>
   </task>
   <task id="ZE-35">
