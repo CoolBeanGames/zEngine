@@ -138,6 +138,9 @@ void World::Build(ObjectStore& objects) {
         JPH::BodyCreationSettings settings(shape,pose.position+pose.rotation*JV(offset),pose.rotation,motion,motion==JPH::EMotionType::Static?NonMoving:Moving);settings.mUserData=object.Id();settings.mFriction=body->Friction();settings.mRestitution=body->Bounciness();settings.mIsSensor=area;settings.mCollideKinematicVsNonDynamic=kinematic;
         if(auto* rigid=object.GetBehavior<RigidBody>()){settings.mGravityFactor=rigid->GravityScale();settings.mOverrideMassProperties=JPH::EOverrideMassProperties::CalculateInertia;settings.mMassPropertiesOverride.mMass=rigid->Mass();settings.mAllowSleeping=false;}
         auto id=bi.CreateAndAddBody(settings,motion==JPH::EMotionType::Static?JPH::EActivation::DontActivate:JPH::EActivation::Activate);if(id.IsInvalid())throw std::runtime_error("Physics body capacity exceeded.");
+        // Apply the authored factor through the live interface as well as the
+        // creation settings so zero gravity is guaranteed on the active body.
+        if(auto* rigid=object.GetBehavior<RigidBody>())bi.SetGravityFactor(id,rigid->GravityScale());
         impl_->entries.emplace(object.Id(),Impl::Entry{id,body,offset,area});impl_->reverse.emplace(id,object.Id());
         if(auto* moving=dynamic_cast<MovingBody*>(body)){bi.SetLinearVelocity(id,JV(moving->Velocity()));bi.SetAngularVelocity(id,JV(moving->AngularVelocity()));}
     }

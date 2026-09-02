@@ -12,17 +12,22 @@ namespace zengine
     class ScriptHost final
     {
     public:
-        struct Field { std::string name, type, label, value; bool editable = false; bool multiline=false; };
+        struct Field { std::string name, type, label, value; bool editable = false; bool multiline=false; bool reference=false; };
+        void SetObjectStore(ObjectStore* objects) noexcept { objectStore_ = objects; }
         bool Prepare(ScriptBehavior&, std::string source, std::string className);
         std::vector<Field> Fields(ScriptBehavior&);
         void SetField(ScriptBehavior&, const std::string& name, const std::string& text);
+        void SetObjectReference(ScriptBehavior&, const std::string& name, GameObjectId target);
         std::string Error(const ScriptBehavior&) const;
         std::map<std::string,script::Value> AuthoredValues(const ScriptBehavior&) const;
+        std::map<std::string,GameObjectId> AuthoredReferences(const ScriptBehavior&) const;
         void RestoreValues(ScriptBehavior&, std::map<std::string,script::Value> values);
+        void RestoreReferences(ScriptBehavior&, std::map<std::string,GameObjectId> references);
         void Forget(ScriptBehavior& behavior) { if(playing_)throw std::logic_error("Stop before forgetting a script.");records_.erase(&behavior); }
         bool Play(ObjectStore&, physics::World* physicsWorld=nullptr);
         using PrefabSpawner=std::function<GameObjectId(std::string_view)>;
         void SetPrefabSpawner(PrefabSpawner spawner) { if(playing_)throw std::logic_error("Stop before changing the prefab spawner.");prefabSpawner_=std::move(spawner); }
+        void SetPrintHandler(std::function<void(std::string_view)> handler) { if(playing_)throw std::logic_error("Stop before changing the print handler.");printHandler_=std::move(handler); }
         void DispatchPhysicsEvents(const std::vector<physics::ContactEvent>&);
         void Stop(ObjectStore&);
         void Tick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.Tick(objects, delta); }
@@ -38,14 +43,21 @@ namespace zengine
             std::unique_ptr<script::Runtime> preview;
             script::ObjectRef object;
             std::map<std::string, script::Value> overrides;
+            std::map<std::string, GameObjectId> references;
+            std::map<GameObjectId, script::ObjectRef> previewProxies;
         };
+        static bool IsReferenceType(std::string_view type);
+        script::ObjectRef PreviewReference(Record&, GameObjectId, std::string_view type);
+        void ApplyPreviewReferences(Record&);
         std::map<const ScriptBehavior*, Record> records_;
+        ObjectStore* objectStore_ = nullptr;
         std::map<GameObjectId, Transform> transforms_;
         std::map<GameObjectId,GameObjectId> parents_;
         BehaviorLifecycle lifecycle_;
         bool playing_ = false;
         script::InputFrame input_;
         PrefabSpawner prefabSpawner_;
+        std::function<void(std::string_view)> printHandler_;
         ObjectStore* playingObjects_=nullptr;
         physics::World* playingPhysics_=nullptr;
     };

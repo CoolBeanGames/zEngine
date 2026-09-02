@@ -1,4 +1,5 @@
 #include "GameObject.h"
+#include "physics/PhysicsBehavior.h"
 
 #include <algorithm>
 #include <cmath>
@@ -70,6 +71,16 @@ void zengine::Behavior::Draw()
 }
 
 zengine::GameObject::GameObject(ObjectStore& store,GameObjectId id, std::string name) : store_(&store),id_(id) { SetName(std::move(name)); }
+void zengine::GameObject::EnsureCollider()
+{
+    if (!GetBehavior<physics::Collider>()) AddBehavior<physics::Collider>();
+}
+bool zengine::GameObject::RemoveBehavior(Behavior& behavior)
+{
+    const auto found=std::find_if(behaviors_.begin(),behaviors_.end(),[&](const auto& candidate){return candidate.get()==&behavior;});
+    if(found==behaviors_.end())return false;
+    behaviors_.erase(found); return true;
+}
 void zengine::GameObject::SetParent(GameObjectId parent){store_->SetParents({{id_,parent}});}
 zengine::ObjectStore::ObjectStore(ObjectStore&& other) noexcept {*this=std::move(other);}
 zengine::ObjectStore& zengine::ObjectStore::operator=(ObjectStore&& other) noexcept {

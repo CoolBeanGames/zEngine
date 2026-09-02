@@ -163,6 +163,7 @@ private:
     void ApplyScene(const std::filesystem::path&,std::string source,const zengine::scenes::Document&);
     void MarkSceneDirty();
     void UpdateSceneTitle();
+    void ConfigureScriptOutput();
     std::wstring SceneName() const;
     RECT CreateSceneRectangle() const;
     bool PendingModels(bool assignmentsOnly=false) const;
@@ -173,6 +174,7 @@ private:
     bool CanEdit(zengine::GameObjectId,bool transformOnly=false) const;
     void RecordTransformOverride(zengine::GameObjectId);
     void RecordPrefabDataOverride(zengine::GameObjectId);
+    void RefreshOpenDocumentAfterAssetMove(const std::filesystem::path& source,const std::filesystem::path& destination,const std::string& from,const std::string& to);
     int ObjectDepth(zengine::GameObjectId) const;
     std::vector<zengine::GameObjectId> ObjectRows() const;
     bool HasChildren(zengine::GameObjectId) const;
@@ -292,6 +294,7 @@ private:
 
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr;
+    HWND consoleWindow_ = nullptr;
     HWND viewportWindow_ = nullptr;
     std::unique_ptr<Renderer> renderer_;
 

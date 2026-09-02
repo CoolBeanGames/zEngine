@@ -1,5 +1,6 @@
 #include "ScriptHost.h"
 #include "zscript/Text.h"
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -19,6 +20,7 @@ namespace
         return {static_cast<float>(v.x),static_cast<float>(v.y),static_cast<float>(v.z)};
     }
     bool Editable(const std::string& type) { return type=="char" || type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3" || type=="prefab"; }
+    bool ReferenceTypeName(std::string_view type) { return !Editable(std::string(type)) && type!="array"; }
     std::string Format(const Value& value)
     {
         std::ostringstream text; text.imbue(std::locale::classic()); text<<std::setprecision(17);
@@ -58,11 +60,12 @@ namespace
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const InputFrame& inputFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
               draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),scene(objects)
         {
             runtime.SetInput(input,false);BindNative(owner,object);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
+            printHandler=output;runtime.SetPrintCallback([this](std::string_view text){if(printHandler)printHandler(text);});
             proxies.emplace(owner,object);
             runtime.SetObjectLookup([this](std::string_view name){
                 GameObjectId id=0;for(std::size_t i=0;i<scene.Size();++i)if(scene.At(i).Name()==name){if(id)throw std::runtime_error("Ambiguous object name; give scene objects unique names for find().");id=scene.At(i).Id();}
@@ -77,6 +80,11 @@ namespace
                 },
                 [this,physicsWorld](Vector3 from,Vector3 to,std::uint32_t mask){std::vector<ObjectRef> result;for(const auto& hit:physicsWorld->Cast(ToNative(from),ToNative(to),mask))result.push_back(Proxy(hit.object));return result;});
             if(prefabSpawner)runtime.SetPrefabSpawnCallback([this,prefabSpawner](std::string_view asset){return Proxy(prefabSpawner(asset));});
+            for (const auto& [field, id] : references)
+                if (id)
+                    for (const auto& entry : program->InspectorLayout(name))
+                        if (entry.kind == InspectorEntry::Kind::Field && entry.name == field && ReferenceTypeName(entry.type))
+                        { runtime.Set(object, field, Reference(id, entry.type)); break; }
         }
         bool HasStart() const noexcept override { return true; }
         // Synchronize native transform signals even for a listener with no update body.
@@ -93,12 +101,31 @@ namespace
         std::shared_ptr<const Program> program;
         Runtime runtime;
         ObjectRef object;
+        std::function<void(std::string_view)> printHandler;
     private:
         ObjectRef Proxy(GameObjectId id) {
             if(!id)return {};
             if(auto it=proxies.find(id);it!=proxies.end())return it->second;
             if(!scene.Find(id))throw std::runtime_error("Scene object no longer exists.");
             const auto ref=runtime.Create("gameObject");proxies.emplace(id,ref);BindNative(id,ref);Synchronize(id,ref);return ref;
+        }
+        ObjectRef Reference(GameObjectId id, std::string_view type) {
+            const auto* native=scene.Find(id); if(!native) throw std::runtime_error("Scene object no longer exists.");
+            const auto proxy=Proxy(id);
+            if(type=="gameObject")return proxy;
+            if(type=="Transform")return std::get<ObjectRef>(runtime.Get(proxy,"transform"));
+            if(type=="PhysicsBody")return native->GetBehavior<physics::Body>()?std::get<ObjectRef>(runtime.Get(proxy,"physics")):ObjectRef{};
+            if(type=="RigidBody")return native->GetBehavior<physics::RigidBody>()?std::get<ObjectRef>(runtime.Get(proxy,"rigidbody")):ObjectRef{};
+            if(type=="KinematicBody")return native->GetBehavior<physics::KinematicBody>()?std::get<ObjectRef>(runtime.Get(proxy,"kinematic_body")):ObjectRef{};
+            if(type=="StaticBody")return native->GetBehavior<physics::StaticBody>()?std::get<ObjectRef>(runtime.Get(proxy,"static_body")):ObjectRef{};
+            if(type=="Area")return native->GetBehavior<physics::Area>()?std::get<ObjectRef>(runtime.Get(proxy,"area")):ObjectRef{};
+            if(type=="Collider")return native->GetBehavior<physics::Collider>()?std::get<ObjectRef>(runtime.Get(proxy,"collider")):ObjectRef{};
+            if(type=="Behavior") {
+                if(native->GetBehavior<physics::Body>())return std::get<ObjectRef>(runtime.Get(proxy,"physics"));
+                if(native->GetBehavior<physics::Collider>())return std::get<ObjectRef>(runtime.Get(proxy,"collider"));
+                return {};
+            }
+            throw std::runtime_error("Only native GameObject, Transform, and physics references can be assigned from the scene tree.");
         }
         void BindNative(GameObjectId id,ObjectRef ref) {
             const auto* native=scene.Find(id);if(!native)throw std::runtime_error("Scene object no longer exists.");
@@ -151,6 +178,62 @@ namespace
         std::map<GameObjectId,Transform> previousTransforms;
     };
 }
+
+bool ScriptHost::IsReferenceType(std::string_view type)
+{
+    return ReferenceTypeName(type);
+}
+
+script::ObjectRef ScriptHost::PreviewReference(Record& record, GameObjectId id, std::string_view type)
+{
+    if (!objectStore_ || !record.preview) throw std::runtime_error("Script reference editing requires an active scene.");
+    const auto* native = objectStore_->Find(id);
+    if (!native) throw std::invalid_argument("The referenced GameObject no longer exists.");
+    auto found = record.previewProxies.find(id);
+    script::ObjectRef proxy;
+    if (found != record.previewProxies.end()) proxy = found->second;
+    else
+    {
+        proxy = record.preview->Create("gameObject");
+        record.previewProxies.emplace(id, proxy);
+        if (native->GetBehavior<physics::RigidBody>()) record.preview->BindNativeBehavior(proxy, "RigidBody");
+        else if (native->GetBehavior<physics::KinematicBody>()) record.preview->BindNativeBehavior(proxy, "KinematicBody");
+        else if (native->GetBehavior<physics::StaticBody>()) record.preview->BindNativeBehavior(proxy, "StaticBody");
+        else if (native->GetBehavior<physics::Area>()) record.preview->BindNativeBehavior(proxy, "Area");
+        if (native->GetBehavior<physics::Collider>()) record.preview->BindNativeBehavior(proxy, "Collider");
+    }
+    if (type == "gameObject") return proxy;
+    if (type == "Transform") return std::get<script::ObjectRef>(record.preview->Get(proxy, "transform"));
+    if (type == "PhysicsBody") return native->GetBehavior<physics::Body>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "physics")) : script::ObjectRef{};
+    if (type == "RigidBody") return native->GetBehavior<physics::RigidBody>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "rigidbody")) : script::ObjectRef{};
+    if (type == "KinematicBody") return native->GetBehavior<physics::KinematicBody>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "kinematic_body")) : script::ObjectRef{};
+    if (type == "StaticBody") return native->GetBehavior<physics::StaticBody>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "static_body")) : script::ObjectRef{};
+    if (type == "Area") return native->GetBehavior<physics::Area>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "area")) : script::ObjectRef{};
+    if (type == "Collider") return native->GetBehavior<physics::Collider>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "collider")) : script::ObjectRef{};
+    if (type == "Behavior")
+    {
+        if (native->GetBehavior<physics::Body>()) return std::get<script::ObjectRef>(record.preview->Get(proxy, "physics"));
+        if (native->GetBehavior<physics::Collider>()) return std::get<script::ObjectRef>(record.preview->Get(proxy, "collider"));
+        return {};
+    }
+    throw std::invalid_argument("Only native GameObject, Transform, and physics references can be assigned from the scene tree.");
+}
+
+void ScriptHost::ApplyPreviewReferences(Record& record)
+{
+    if (!record.preview) return;
+    for (const auto& [name, id] : record.references)
+    {
+        if (!id) continue;
+        const auto& layout = record.program->InspectorLayout(record.className);
+        const auto found = std::find_if(layout.begin(), layout.end(), [&](const script::InspectorEntry& entry) {
+            return entry.kind == script::InspectorEntry::Kind::Field && entry.name == name;
+        });
+        if (found != layout.end() && IsReferenceType(found->type))
+            record.preview->Set(record.object, name, PreviewReference(record, id, found->type));
+    }
+}
+
 bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::string className)
 {
     if (playing_ && behavior.HasInstance()) throw std::logic_error("A running script is already prepared.");
@@ -158,7 +241,7 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
     if (record.program && record.source==source && record.className==className) return record.error.empty();
     auto previousValues=AuthoredValues(behavior);
     record.source=std::move(source); record.className=std::move(className);
-    record.error.clear(); record.program.reset(); record.preview.reset();
+    record.error.clear(); record.program.reset(); record.preview.reset(); record.previewProxies.clear();
     try
     {
         const auto compiled=script::Compiler::Compile(record.source,behavior.Asset());
@@ -175,9 +258,16 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
                     try { const auto value=std::holds_alternative<script::PrefabRef>(it->second)?script::Value{preview->CreatePrefab(std::get<script::PrefabRef>(it->second).asset)}:it->second;preview->Set(ref,entry.name,value);kept.emplace(entry.name,entry.type=="prefab"?script::Value{script::PrefabRef{preview->PrefabAsset(std::get<script::ObjectRef>(preview->Get(ref,entry.name)))}}:preview->Get(ref,entry.name)); }
                     catch (const script::ScriptError&) {} // Changed field type: use its new default.
                 }
+        std::map<std::string, GameObjectId> keptReferences;
+        for (const auto& entry : compiled.program->InspectorLayout(record.className))
+            if (entry.kind == script::InspectorEntry::Kind::Field && IsReferenceType(entry.type))
+                if (const auto it = record.references.find(entry.name); it != record.references.end() && it->second)
+                    keptReferences.emplace(entry.name, it->second);
+        record.references=std::move(keptReferences);
         record.overrides=std::move(kept); record.object=ref;
         record.preview=std::move(preview); record.program=compiled.program;
-        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,input_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_));}
+        ApplyPreviewReferences(record);
+        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,input_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_));}
         return true;
     }
     catch (const std::exception& e) { record.overrides=std::move(previousValues); record.error=e.what(); return false; }
@@ -192,9 +282,38 @@ std::vector<ScriptHost::Field> ScriptHost::Fields(ScriptBehavior& behavior)
     for (const auto& entry:r.program->InspectorLayout(r.className))
     {
         if (entry.kind==script::InspectorEntry::Kind::Label) result.push_back({{},{},entry.text,{},false});
+        else if (IsReferenceType(entry.type))
+        {
+            std::string value="None";
+            if (const auto it=r.references.find(entry.name); it!=r.references.end() && it->second)
+            {
+                if (objectStore_ && objectStore_->Find(it->second)) value=objectStore_->Find(it->second)->Name()+" ("+entry.type+")";
+                else value="Missing GameObject ("+std::to_string(it->second)+")";
+            }
+            result.push_back({entry.name,entry.type,{},std::move(value),false,entry.multiline,true});
+        }
         else {auto& runtime=live?live->runtime:*r.preview;const auto object=live?live->object:r.object;auto value=runtime.Get(object,entry.name);if(entry.type=="prefab")value=script::PrefabRef{runtime.PrefabAsset(std::get<script::ObjectRef>(value))};result.push_back({entry.name,entry.type,{},Format(value),Editable(entry.type),entry.multiline});}
     }
     return result;
+}
+void ScriptHost::SetObjectReference(ScriptBehavior& behavior, const std::string& name, GameObjectId target)
+{
+    if (playing_) throw std::logic_error("Stop Play before assigning a scene reference.");
+    auto& record=records_.at(&behavior);
+    if (!record.program || !record.preview) throw std::logic_error("Prepare the script before assigning a scene reference.");
+    const auto& layout=record.program->InspectorLayout(record.className);
+    const auto found=std::find_if(layout.begin(),layout.end(),[&](const script::InspectorEntry& entry){return entry.kind==script::InspectorEntry::Kind::Field&&entry.name==name;});
+    if(found==layout.end()||!IsReferenceType(found->type))throw std::invalid_argument("Field is not an object reference.");
+    script::ObjectRef value{};
+    if(target)
+    {
+        value=PreviewReference(record,target,found->type);
+        if(!value.id)throw std::invalid_argument("The selected GameObject does not have a compatible "+found->type+" component.");
+    }
+    const auto previous=record.references.find(name);const auto old=previous==record.references.end()?GameObjectId{}:previous->second;
+    try { record.preview->Set(record.object,name,value); }
+    catch (...) { if(old)record.references[name]=old; else record.references.erase(name); throw; }
+    if(target)record.references[name]=target;else record.references.erase(name);
 }
 void ScriptHost::SetField(ScriptBehavior& behavior, const std::string& name, const std::string& text)
 {
@@ -226,14 +345,31 @@ std::map<std::string,script::Value> ScriptHost::AuthoredValues(const ScriptBehav
             if(entry.type=="prefab")values.emplace(entry.name,script::PrefabRef{r.preview->PrefabAsset(std::get<script::ObjectRef>(r.preview->Get(r.object,entry.name)))});else values.emplace(entry.name,r.preview->Get(r.object,entry.name));
     return values;
 }
+std::map<std::string,GameObjectId> ScriptHost::AuthoredReferences(const ScriptBehavior& behavior) const
+{
+    const auto it=records_.find(&behavior);
+    return it==records_.end()?std::map<std::string,GameObjectId>{}:it->second.references;
+}
 void ScriptHost::RestoreValues(ScriptBehavior& behavior, std::map<std::string,script::Value> values)
 {
-    if (playing_ || records_[&behavior].program) throw std::logic_error("Restore scene variables before compiling or playing.");
+    auto found=records_.find(&behavior);
+    // Runtime-spawned scripts are authored from prefab data immediately before
+    // Prepare binds them. Existing live scripts must remain immutable in Play.
+    if (found!=records_.end() && found->second.program)
+        throw std::logic_error("Restore scene variables before compiling or playing.");
     records_[&behavior].overrides=std::move(values);
+}
+void ScriptHost::RestoreReferences(ScriptBehavior& behavior, std::map<std::string,GameObjectId> references)
+{
+    auto found=records_.find(&behavior);
+    if (found!=records_.end() && found->second.program)
+        throw std::logic_error("Restore scene references before compiling or playing.");
+    records_[&behavior].references=std::move(references);
 }
 bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
 {
     if (playing_) return true;
+    objectStore_=&objects;
     // Construct every VM before Start. A compile/initializer error cannot partially start a scene.
     std::vector<std::pair<ScriptBehavior*,std::unique_ptr<BoundScript>>> ready;
     for (auto* behavior:lifecycle_.Ordered(objects))
@@ -242,7 +378,7 @@ bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,input_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_)); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,input_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_)); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();

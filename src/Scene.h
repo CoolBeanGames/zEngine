@@ -14,6 +14,7 @@ namespace zengine::scenes
         float priority=0;
         std::string asset;
         std::map<std::string,script::Value> variables;
+        std::map<std::string,GameObjectId> objectReferences;
         physics::ColliderShape shape=physics::ColliderShape::Box;
         Vec3 colliderOffset{},colliderSize{1,1,1};
         std::uint32_t layer=1,mask=0xffffffffu;

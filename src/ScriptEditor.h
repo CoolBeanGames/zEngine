@@ -4,12 +4,15 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <functional>
+#include <set>
 
 // Native RichEdit window; no renderer or VM ownership. One document per window.
 class ScriptEditor final
 {
 public:
     static constexpr int SourceControl = 2100, SaveCommand = 2101, ReloadCommand = 2102, ErrorCommand = 2103,FoldCommand=2104,ExpandCommand=2105;
+    // Width in pixels of the right-hand line-number gutter reserved inside the source control.
+    static constexpr int LineNumberGutter = 44;
     ScriptEditor(HWND owner, const std::filesystem::path& assets, const std::filesystem::path& path);
     ~ScriptEditor();
     void Show();
@@ -34,6 +37,9 @@ private:
     void HideCompletion();
     bool AcceptCompletion();
     void PaintCompletion(HWND);
+    bool ToggleFoldAt(POINT point);
+    void PaintFoldMarkers(HWND);
+    void PaintLineNumbers(HWND);
     bool ToggleFold(); void ExpandAll(); void SetHidden(std::size_t start,std::size_t end,bool hidden);
     static LRESULT CALLBACK CompletionProcedure(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR);
     scriptCompletion::Index completionIndex_;
@@ -49,6 +55,7 @@ private:
     HMODULE richEdit_ = nullptr;
     HFONT font_ = nullptr;
     bool dirty_ = false, formatting_ = false;
+    std::set<std::size_t> foldedBlocks_;
     zengine::scripts::Analysis analysis_;
     std::function<void()> saved_;
 };

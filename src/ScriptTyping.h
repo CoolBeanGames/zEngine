@@ -51,12 +51,15 @@ inline std::optional<Edit> OnCharacter(std::wstring_view source, std::size_t sta
     if(character==L'(' || character==L'[' || character==L'{') {
         auto probe=std::wstring(source);probe.replace(start,end-start,1,character);if(Code(probe)[start]!=character)return {};
         const wchar_t close=character==L'('?L')':character==L'['?L']':L'}';
+        if(character==L'{') { std::wstring text=L"{\r"+indent(depth+1)+L"\r"+indent(depth)+L"}"; return Edit{start,end,std::move(text),1+indent(depth+1).size()}; }
         std::wstring text;text+=character;text+=source.substr(start,end-start);text+=close;
         return Edit{start,end,std::move(text),1+(end-start)};
     }
     if((character==L')' || character==L']' || character==L'}') && start==end && start<source.size() && source[start]==character)
         return Edit{start,start,L"",1};
     if(character==L'\r') {
+        std::size_t tokenEnd=start;while(tokenEnd&&std::iswspace(code[tokenEnd-1])&&code[tokenEnd-1]!=L'\r'&&code[tokenEnd-1]!=L'\n')--tokenEnd;std::size_t tokenStart=tokenEnd;while(tokenStart&& (std::iswalnum(code[tokenStart-1])||code[tokenStart-1]==L'_'))--tokenStart;
+        if(code.substr(tokenStart,tokenEnd-tokenStart)==L"else") { auto text=L"\r"+indent(depth)+L"{"+L"\r"+indent(depth+1)+L"\r"+indent(depth)+L"}"; return Edit{start,end,text,text.size()-indent(depth).size()-1}; }
         std::size_t next=end;while(next<source.size() && (source[next]==L' ' || source[next]==L'\t'))++next;
         auto text=L"\r"+indent(depth);const auto caret=text.size();
         // Splitting an empty brace pair keeps its closing brace aligned.
@@ -81,7 +84,12 @@ inline std::optional<Edit> OnCharacter(std::wstring_view source, std::size_t sta
     const auto nameEnd=p;while(p && (std::iswalnum(code[p-1])||code[p-1]==L'_'))--p;
     if(p==nameEnd)return {};
     while(p && std::iswspace(code[p-1]))--p;
-    if(p<4 || code.substr(p-4,4)!=L"func" || (p>4 && (std::iswalnum(code[p-5])||code[p-5]==L'_')))return {};
+    if(p<4 || code.substr(p-4,4)!=L"func" || (p>4 && (std::iswalnum(code[p-5])||code[p-5]==L'_'))){
+        auto keyword=p;while(keyword&&std::iswspace(code[keyword-1]))--keyword;auto begin=keyword;while(begin&&(std::iswalnum(code[begin-1])||code[begin-1]==L'_'))--begin;
+        const auto control=code.substr(begin,keyword-begin);if(control!=L"if"&&control!=L"while"&&control!=L"for")return {};
+        auto probeControl=std::wstring(source);probeControl.insert(start,1,L')');if(Code(probeControl)[start]!=L')')return {};auto nextControl=end;while(nextControl<code.size()&&std::iswspace(code[nextControl]))++nextControl;if(nextControl<code.size()&&code[nextControl]==L'{')return {};
+        auto text=L")\r"+indent(depth)+L"{\r"+indent(depth+1)+L"\r"+indent(depth)+L"}";return Edit{start,end,text,text.size()-indent(depth).size()-1};
+    }
     // A caret inside a comment or string must not trigger completion.
     auto probe=std::wstring(source);probe.insert(start,1,L')');if(Code(probe)[start]!=L')')return {};
     auto next=end;while(next<code.size() && std::iswspace(code[next]))++next;

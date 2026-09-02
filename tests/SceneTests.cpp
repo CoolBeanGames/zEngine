@@ -59,6 +59,19 @@ int main()
         bad=scene; bad.objects[0].behaviors[1].priority=std::numeric_limits<float>::infinity(); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].behaviors[1].variables["invalid"]=script::ObjectRef{}; Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].behaviors.push_back(bad.objects[0].behaviors[0]); Reject([&]{scenes::Encode(bad);});
+        ObjectStore linked; ScriptHost linkedHost; linkedHost.SetObjectStore(&linked);
+        auto& linkedOwner=linked.Create("Owner"); auto& linkedTarget=linked.Create("Target"); linkedTarget.AddBehavior<physics::RigidBody>();
+        auto& linkedScript=linkedOwner.AddBehavior<ScriptBehavior>("References.zsh");
+        const std::string linkedCode="class References : gameObject { export RigidBody body; }";
+        Check(linkedHost.Prepare(linkedScript,linkedCode,"References"),"Scene reference fixture compile");
+        linkedHost.SetObjectReference(linkedScript,"body",linkedTarget.Id());
+        const auto linkedEncoded=scenes::Encode(scenes::Capture(linked,linkedHost));
+        Check(linkedEncoded.find("references 1")!=std::string::npos && linkedEncoded.find("reference \"body\" 2")!=std::string::npos,"Scene object reference was not serialized");
+        const auto linkedCopy=scenes::Decode(linkedEncoded); Check(linkedCopy.objects[0].behaviors[0].objectReferences.at("body")==linkedTarget.Id(),"Scene object reference was not decoded");
+        auto linkedInstance=scenes::Instantiate(linkedCopy); linkedInstance.scripts.SetObjectStore(&linkedInstance.objects);
+        auto* linkedRestored=linkedInstance.objects.Find(linkedOwner.Id())->GetBehavior<ScriptBehavior>();
+        Check(linkedRestored && linkedInstance.scripts.Prepare(*linkedRestored,linkedCode,"References"),"Scene object reference was not restored");
+        Check(linkedInstance.scripts.Fields(*linkedRestored).front().value=="Target (RigidBody)","Restored object reference target mismatch");
         Reject([&]{objects.Restore(42,"Duplicate");});
         Reject([&]{objects.Restore(std::numeric_limits<GameObjectId>::max(),"Overflow");});
         std::filesystem::remove_all(root); // Only this test's freshly reserved directory.

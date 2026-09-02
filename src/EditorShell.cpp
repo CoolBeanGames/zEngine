@@ -41,6 +41,19 @@ namespace
         MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), count);
         return result;
     }
+    void RestoreBehaviorState(zengine::Behavior& behavior,const zengine::scenes::BehaviorData& saved)
+    {
+        behavior.SetPriority(saved.priority);behavior.SetEnabled(saved.enabled);
+        if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior))
+        {collider->SetShape(saved.shape);collider->SetOffset(saved.colliderOffset);collider->SetSize(saved.colliderSize);}
+        if(auto* body=dynamic_cast<zengine::physics::Body*>(&behavior))
+        {
+            body->SetLayer(saved.layer);body->SetMask(saved.mask);body->SetFriction(saved.friction);body->SetBounciness(saved.bounciness);
+            if(auto* rigid=dynamic_cast<zengine::physics::RigidBody*>(body)){rigid->SetMass(saved.mass);rigid->SetGravityScale(saved.gravityScale);}
+            if(auto* moving=dynamic_cast<zengine::physics::MovingBody*>(body))
+            {moving->SetVelocity(saved.velocity);moving->SetAngularVelocity(saved.angularVelocity);moving->SetConstantForce(saved.constantForce);moving->SetConstantTorque(saved.constantTorque);}
+        }
+    }
     constexpr wchar_t EditorWindowClass[] = L"zEngineEditorWindow";
     constexpr wchar_t ViewportWindowClass[] = L"zEngineViewportWindow";
 
@@ -184,6 +197,8 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     inspectorPanel_ = std::make_unique<InspectorPanel>();
     inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
     inspectorPanel_->SetScriptHost(&scriptHost_);
+    scriptHost_.SetObjectStore(&objects_);
+    ConfigureScriptOutput();
     inspectorPanel_->SetAddScriptHandler([this]() {
         try { ChooseScript(); }
         catch (const std::exception& error) { status_ = L"Cannot attach script: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
@@ -339,7 +354,9 @@ bool EditorShell::Play()
     auto authored=zengine::scenes::Capture(objects_,scriptHost_);playObjects_.clear();for(std::size_t i=0;i<objects_.Size();++i)playObjects_.insert(objects_.At(i).Id());
     physicsWorld_=std::make_unique<zengine::physics::World>();try{physicsWorld_->Build(objects_);}catch(const std::exception& e){physicsWorld_.reset();status_=L"Physics: "+WideText(e.what());InvalidateRect(window_,nullptr,FALSE);return false;}
     scriptHost_.SetPrefabSpawner([this](std::string_view asset){return SpawnPrefab(asset);});
-    if (!scriptHost_.Play(objects_,physicsWorld_.get())) { physicsWorld_.reset();ReportScriptErrors(); return false; }
+    consoleWindow_=CreateWindowExW(WS_EX_TOOLWINDOW,L"EDIT",L"zEngine Console",WS_OVERLAPPEDWINDOW|ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL,120,120,560,260,window_,nullptr,instance_,nullptr);
+    if(consoleWindow_){SendMessageW(consoleWindow_,WM_SETFONT,reinterpret_cast<WPARAM>(uiFont_),TRUE);ShowWindow(consoleWindow_,SW_SHOWNOACTIVATE);}
+    if (!scriptHost_.Play(objects_,physicsWorld_.get())) { if(consoleWindow_){DestroyWindow(consoleWindow_);consoleWindow_=nullptr;} physicsWorld_.reset();ReportScriptErrors(); return false; }
     playScene_=std::move(authored);
     paused_=false; stepDraw_=false; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
     status_=L"Playing - Stop restores transforms and discards runtime variable changes";
@@ -350,13 +367,14 @@ bool EditorShell::Play()
 void EditorShell::Stop()
 {
     SetFocus(window_);
+    if(consoleWindow_){DestroyWindow(consoleWindow_);consoleWindow_=nullptr;}
     scriptHost_.Stop(objects_);physicsWorld_.reset(); paused_=false; stepDraw_=false; tickAccumulator_=0;
     std::set<zengine::GameObjectId> spawned;for(std::size_t i=0;i<objects_.Size();++i)if(!playObjects_.contains(objects_.At(i).Id()))spawned.insert(objects_.At(i).Id());
     for(const auto id:spawned)if(auto* object=objects_.Find(id))for(std::size_t i=0;i<object->BehaviorCount();++i)if(auto* script=dynamic_cast<zengine::ScriptBehavior*>(&object->BehaviorAt(i)))scriptHost_.Forget(*script);
     if(!spawned.empty()){objects_.Remove(spawned);for(const auto id:spawned){meshBindings_.erase(id);meshRevisions_.erase(id);}if(spawned.contains(selectedObject_)){selectedObject_=0;inspectorPanel_->Bind(nullptr);}}
     if(playScene_)for(const auto& saved:playScene_->objects)if(auto* object=objects_.Find(saved.id)){
         object->SetName(saved.name);object->SetTags(saved.tags);object->GetTransform()=saved.transform;
-        for(std::size_t i=0;i<saved.behaviors.size()&&i<object->BehaviorCount();++i){object->BehaviorAt(i).SetPriority(saved.behaviors[i].priority);object->BehaviorAt(i).SetEnabled(saved.behaviors[i].enabled);}
+        for(std::size_t i=0;i<saved.behaviors.size()&&i<object->BehaviorCount();++i)RestoreBehaviorState(object->BehaviorAt(i),saved.behaviors[i]);
     }
     playScene_.reset();playObjects_.clear();
     status_=L"Stopped - authored scene state restored";
@@ -935,6 +953,15 @@ void EditorShell::UpdateSceneTitle()
     SetWindowTextW(window_,(L"zEngine Editor - "+(project_?WideText(project_->config.name):L"No project")+L" - "+SceneName()+(sceneDirty_?L" *":L"")).c_str());
     InvalidateRect(window_,&sceneBrowser_,FALSE);
 }
+void EditorShell::ConfigureScriptOutput()
+{
+    scriptHost_.SetPrintHandler([this](std::string_view text) {
+        const auto message=std::string(text)+"\n"; OutputDebugStringA("[zEngine] "); OutputDebugStringA(message.c_str());
+        status_=L"Console: "+WideText(std::string(text));
+        if(consoleWindow_){const auto line=WideText(std::string(text)+"\r\n");const auto end=GetWindowTextLengthW(consoleWindow_);SendMessageW(consoleWindow_,EM_SETSEL,end,end);SendMessageW(consoleWindow_,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(line.c_str()));}
+        InvalidateRect(window_,&statusBar_,FALSE);
+    });
+}
 void EditorShell::MarkSceneDirty()
 {
     if (sceneOpen_ && !Playing()) { sceneDirty_=true; UpdateSceneTitle(); }
@@ -1041,7 +1068,7 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     meshBindings_.clear(); meshRevisions_.clear();
     prefabLinks_.clear(); for (const auto& object:authored.objects) if (!object.prefab.empty()) {prefabLinks_[object.id]=object;prefabLinks_[object.id].transform=next.objects.Find(object.id)->GetTransform();}
     prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
-    scriptHost_=std::move(next.scripts); objects_=std::move(next.objects);
+    scriptHost_=std::move(next.scripts); objects_=std::move(next.objects); scriptHost_.SetObjectStore(&objects_); ConfigureScriptOutput();
     scenePath_=file; sceneSource_=std::move(source); firstObject_=0; selectedObject_=0;
     sceneOpen_=true;
     status_=L"Opened scene: "+SceneName();
@@ -1520,8 +1547,7 @@ LRESULT EditorShell::HandleMessage(
             {
                 const auto id=rows[index];const int arrow=list.left+12+ObjectDepth(id)*12;
                 if(HasChildren(id) && point.x>=arrow && point.x<arrow+12){if(!collapsedObjects_.erase(id))collapsedObjects_.insert(id);firstObject_=std::min(firstObject_,std::max(0,static_cast<int>(ObjectRows().size())-1));InvalidateRect(window_,&sceneBrowser_,FALSE);return 0;}
-                SelectGameObject(id);
-                draggedObject_=selectedObject_; objectDragStart_=point; objectDragMoved_=false; SetCapture(window_);
+                draggedObject_=id; objectDragStart_=point; objectDragMoved_=false; SetCapture(window_);
             }
             return 0;
         }
@@ -1569,6 +1595,12 @@ LRESULT EditorShell::HandleMessage(
         {
             const auto object=draggedObject_; const bool moved=objectDragMoved_; draggedObject_=0; ReleaseCapture();
             const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+            if (moved)
+            {
+                POINT screen=point; ClientToScreen(window_,&screen);
+                if (inspectorPanel_ && inspectorPanel_->AssignObjectReferenceAt(screen,object)) return 0;
+            }
+            if (!moved) { SelectGameObject(object); return 0; }
             if (moved && PtInRect(&mediaLibrary_,point)) CreatePrefab(object);
             else if(moved && PtInRect(&sceneBrowser_,point))SetObjectParent(object,ScriptDropTarget(point));
             return 0;

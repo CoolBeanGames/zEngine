@@ -79,7 +79,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
             BehaviorData b; b.enabled=behavior.Enabled(); b.priority=behavior.Priority();
             if (const auto* mesh=dynamic_cast<const MeshRenderer*>(&behavior)) b.asset=mesh->Asset();
             else if (const auto* script=dynamic_cast<const ScriptBehavior*>(&behavior))
-            { b.kind=BehaviorData::Kind::Script; b.asset=script->Asset(); b.variables=scripts.AuthoredValues(*script); }
+            { b.kind=BehaviorData::Kind::Script; b.asset=script->Asset(); b.variables=scripts.AuthoredValues(*script); b.objectReferences=scripts.AuthoredReferences(*script); }
             else if(const auto* collider=dynamic_cast<const physics::Collider*>(&behavior)){b.kind=BehaviorData::Kind::Collider;b.shape=collider->Shape();b.colliderOffset=collider->Offset();b.colliderSize=collider->Size();}
             else if(const auto* body=dynamic_cast<const physics::Body*>(&behavior)) {
                 b.layer=body->Layer();b.mask=body->Mask();b.friction=body->Friction();b.bounciness=body->Bounciness();
@@ -118,6 +118,15 @@ std::string Encode(const Document& scene)
             }
             out<<"variables "<<b.variables.size()<<'\n';
             for (const auto& [name,value]:b.variables) { out<<"field "<<std::quoted(name)<<' '; WriteValue(out,value); out<<'\n'; }
+            if (!b.objectReferences.empty())
+            {
+                out<<"references "<<b.objectReferences.size()<<'\n';
+                for (const auto& [name,id]:b.objectReferences)
+                {
+                    Require(!name.empty() && id,"Invalid script object reference.");
+                    out<<"reference "<<std::quoted(name)<<' '<<id<<'\n';
+                }
+            }
         }
     }
     out<<"end\n";
@@ -163,6 +172,23 @@ Document Decode(std::string_view text)
             Token(in,"variables"); const auto fields=Count(in,1024); Require(type=="script" || fields==0,"Only scripts can contain fields.");
             for (std::size_t k=0;k<fields;++k)
             { Token(in,"field"); auto name=Text(in); auto value=ReadValue(in); Require(!name.empty() && b.variables.emplace(std::move(name),std::move(value)).second,"Duplicate/empty scene variable."); }
+            in>>std::ws;
+            const auto markerPosition=in.tellg(); std::string marker;
+            if (in>>marker)
+            {
+                if (marker=="references")
+                {
+                    Require(type=="script","Only scripts can contain object references.");
+                    const auto references=Count(in,1024);
+                    for (std::size_t k=0;k<references;++k)
+                    {
+                        Token(in,"reference"); auto name=Text(in); GameObjectId id=0;
+                        Require(static_cast<bool>(in>>id) && id,"Invalid script object reference.");
+                        Require(!name.empty() && b.objectReferences.emplace(std::move(name),id).second,"Duplicate/empty script object reference.");
+                    }
+                }
+                else { in.clear(); in.seekg(markerPosition); Require(static_cast<bool>(in),"Invalid scene stream position."); }
+            }
             object.behaviors.push_back(std::move(b));
         }
         scene.objects.push_back(std::move(object));
@@ -196,8 +222,8 @@ Instance Instantiate(const Document& scene)
         {
             Behavior* behavior=nullptr;
             if (b.kind==BehaviorData::Kind::Mesh) behavior=&object.AddBehavior<MeshRenderer>(b.asset);
-            else if(b.kind==BehaviorData::Kind::Script) { auto& script=object.AddBehavior<ScriptBehavior>(b.asset); instance.scripts.RestoreValues(script,b.variables); behavior=&script; }
-            else if(b.kind==BehaviorData::Kind::Collider){auto& v=object.AddBehavior<physics::Collider>();v.SetShape(b.shape);v.SetOffset(b.colliderOffset);v.SetSize(b.colliderSize);behavior=&v;}
+            else if(b.kind==BehaviorData::Kind::Script) { auto& script=object.AddBehavior<ScriptBehavior>(b.asset); instance.scripts.RestoreValues(script,b.variables); instance.scripts.RestoreReferences(script,b.objectReferences); behavior=&script; }
+            else if(b.kind==BehaviorData::Kind::Collider){auto* existing=object.GetBehavior<physics::Collider>();auto& v=existing?*existing:object.AddBehavior<physics::Collider>();v.SetShape(b.shape);v.SetOffset(b.colliderOffset);v.SetSize(b.colliderSize);behavior=&v;}
             else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& v=object.AddBehavior<physics::RigidBody>();v.SetMass(b.mass);v.SetGravityScale(b.gravityScale);body=&v;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
             behavior->SetEnabled(b.enabled); behavior->SetPriority(b.priority);
         }
@@ -222,8 +248,8 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
         {
             Behavior* behavior=nullptr;
             if(b.kind==BehaviorData::Kind::Mesh)behavior=&object.AddBehavior<MeshRenderer>(b.asset);
-            else if(b.kind==BehaviorData::Kind::Script){auto& value=object.AddBehavior<ScriptBehavior>(b.asset);scripts.RestoreValues(value,b.variables);behavior=&value;}
-            else if(b.kind==BehaviorData::Kind::Collider){auto& value=object.AddBehavior<physics::Collider>();value.SetShape(b.shape);value.SetOffset(b.colliderOffset);value.SetSize(b.colliderSize);behavior=&value;}
+            else if(b.kind==BehaviorData::Kind::Script){auto& value=object.AddBehavior<ScriptBehavior>(b.asset);scripts.RestoreValues(value,b.variables);scripts.RestoreReferences(value,b.objectReferences);behavior=&value;}
+            else if(b.kind==BehaviorData::Kind::Collider){auto* existing=object.GetBehavior<physics::Collider>();auto& value=existing?*existing:object.AddBehavior<physics::Collider>();value.SetShape(b.shape);value.SetOffset(b.colliderOffset);value.SetSize(b.colliderSize);behavior=&value;}
             else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& value=object.AddBehavior<physics::RigidBody>();value.SetMass(b.mass);value.SetGravityScale(b.gravityScale);body=&value;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
             behavior->SetEnabled(b.enabled);behavior->SetPriority(b.priority);
         }

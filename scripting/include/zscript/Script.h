@@ -138,6 +138,8 @@ public:
     // Binds a host-owned native component to a typed, read-only script reference.
     void BindNativeBehavior(ObjectRef owner,std::string_view behaviorType);
     void SetPrefabSpawnCallback(PrefabSpawnCall);
+    using PrintCallback=std::function<void(std::string_view)>;
+    void SetPrintCallback(PrintCallback);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);

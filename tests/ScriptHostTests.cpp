@@ -126,6 +126,31 @@ int main()
         Check(!parenting.Faulted() && !observer.Faulted() && target.GetTransform().Position().x==8,"Later behavior did not observe earlier reparent/transform changes");
         hierarchyHost.Tick(hierarchy,0.1f);Check(target.GetTransform().Position().x==24,"Scene proxy synchronization clobbered another behavior's edits");
         hierarchyHost.Stop(hierarchy);Check(child.Parent()==root.Id() && target.GetTransform().Position().x==0,"Cross-VM Play state was not restored");
+        ObjectStore directions; ScriptHost directionHost; auto& sourceObject=directions.Create("Source"); auto& targetObject=directions.Create("Target"); sourceObject.GetTransform().SetRotation({17,42,9}); auto& directionBehavior=sourceObject.AddBehavior<ScriptBehavior>("Directions.zsh");
+        Check(directionHost.Prepare(directionBehavior,R"(class Directions : gameObject { func start(){ gameObject target=find("Target"); target.transform.forward=this.transform.forward; } })","Directions"),"Direction assignment compile");
+        Check(directionHost.Play(directions) && !directionBehavior.Faulted(),"Direction assignment Play");
+        const auto expectedForward=sourceObject.GetTransform().Rotation(); const auto actualForward=targetObject.GetTransform().Rotation(); directionHost.Stop(directions);
+        Check(actualForward!=zengine::Vec3{},"Forward direction assignment did not update rotation");
+        ObjectStore references; ScriptHost referenceHost; referenceHost.SetObjectStore(&references);
+        auto& referenceOwner=references.Create("Reference Owner"); auto& referenceTarget=references.Create("Reference Target");
+        referenceTarget.AddBehavior<physics::Collider>(); referenceTarget.AddBehavior<physics::RigidBody>();
+        auto& referenceBehavior=referenceOwner.AddBehavior<ScriptBehavior>("References.zsh");
+        const std::string referenceSource=R"(class References : gameObject {
+            export RigidBody body;
+            export Collider shape;
+            export GameObject object;
+            func start() { body = body; shape = shape; object = object; }
+        })";
+        Check(referenceHost.Prepare(referenceBehavior,referenceSource,"References"),"Native reference fixture compile");
+        referenceHost.SetObjectReference(referenceBehavior,"body",referenceTarget.Id());
+        referenceHost.SetObjectReference(referenceBehavior,"shape",referenceTarget.Id());
+        referenceHost.SetObjectReference(referenceBehavior,"object",referenceTarget.Id());
+        Check(Value(referenceHost,referenceBehavior,"body")=="Reference Target (RigidBody)","RigidBody reference was not assigned");
+        Check(Value(referenceHost,referenceBehavior,"shape")=="Reference Target (Collider)","Collider reference was not assigned");
+        Check(Value(referenceHost,referenceBehavior,"object")=="Reference Target (gameObject)","GameObject reference was not assigned");
+        Check(referenceHost.AuthoredReferences(referenceBehavior).at("body")==referenceTarget.Id(),"Native reference was not retained as authored data");
+        Check(referenceHost.Play(references) && !referenceBehavior.Faulted(),"Native reference Play failed"); referenceHost.Stop(references);
+        referenceHost.SetObjectReference(referenceBehavior,"body",0); Check(Value(referenceHost,referenceBehavior,"body")=="None","Native reference was not clearable");
         ObjectStore globals;ScriptHost globalsHost;auto& platform=globals.Create("Platform");auto& actor=globals.Create("Actor");
         platform.GetTransform().SetPosition({10,0,0});platform.GetTransform().SetRotation({0,0,90});platform.GetTransform().SetScale({2,3,4});
         actor.GetTransform().SetPosition({1,0,0});auto& reader=actor.AddBehavior<ScriptBehavior>("Reader.zsh");
@@ -147,6 +172,22 @@ int main()
         spawningHost.SetPrefabSpawner([&](std::string_view asset){requested=asset;return spawning.Create("Crate").Id();});
         Check(spawningHost.Play(spawning) && !spawnScript.Faulted(),"Prefab spawn failed during Start");
         Check(requested=="Prefabs/Crate.zprefab" && spawning.Size()==2 && spawning.At(1).GetTransform().Position().x==7 && Value(spawningHost,spawnScript,"returned")=="true","Prefab spawn did not return/control the new native object");spawningHost.Stop(spawning);
+        ObjectStore liveSpawn; ScriptHost liveSpawnHost; auto& liveOwner=liveSpawn.Create("Player"); auto& liveBehavior=liveOwner.AddBehavior<ScriptBehavior>("Player.zsh");
+        Check(liveSpawnHost.Prepare(liveBehavior,R"(class Player : gameObject { export prefab template; export int updates=0; export bool spawned=false; func update(float dt){ updates+=1; if(!spawned){ template.spawn(); spawned=true; } } })","Player"),"Runtime spawn fixture compile");
+        liveSpawnHost.SetField(liveBehavior,"template","Prefabs/Crate.zprefab"); liveSpawnHost.SetPrefabSpawner([&](std::string_view){ auto& bullet=liveSpawn.Create("Bullet"); auto& bulletBehavior=bullet.AddBehavior<ScriptBehavior>("Bullet.zsh"); liveSpawnHost.RestoreValues(bulletBehavior,{}); liveSpawnHost.RestoreReferences(bulletBehavior,{}); Check(liveSpawnHost.Prepare(bulletBehavior,"class Bullet : gameObject { export int updates=0; func update(float dt){ updates+=1; } }","Bullet"),"Spawned script prepare"); return bullet.Id(); });
+        Check(liveSpawnHost.Play(liveSpawn),"Runtime spawn fixture Play"); liveSpawnHost.Tick(liveSpawn,0.1f); liveSpawnHost.Tick(liveSpawn,0.1f);
+        Check(Value(liveSpawnHost,liveBehavior,"updates")=="2" && liveSpawn.Size()==2,"Spawning during update stopped the existing player behavior"); liveSpawnHost.Stop(liveSpawn);
+        ObjectStore logging;ScriptHost loggingHost;std::string logged;loggingHost.SetPrintHandler([&](std::string_view text){logged=std::string(text);});auto& logger=logging.Create("Logger");auto& logScript=logger.AddBehavior<ScriptBehavior>("Logger.zsh");
+        Check(loggingHost.Prepare(logScript,R"(class Logger : gameObject { export int count=7; export float ratio=1.5; func start(){ print("hello " + {count} + " " + {ratio}); print({transform.forward * 2}); } })","Logger"),"Print script compile failed");
+        Check(loggingHost.Play(logging)&&logged=="0, 0, 2","Print callback did not receive interpolated vector output");loggingHost.Stop(logging);
+        ObjectStore inputObjects; ScriptHost inputHost; auto& inputObject=inputObjects.Create("Input"); auto& inputBehavior=inputObject.AddBehavior<ScriptBehavior>("Shooter.zsh");
+        Check(inputHost.Prepare(inputBehavior,R"(class Shooter : gameObject { export int shots=0; func start(){ Input.action("shoot").just_released.connect(shoot); } func update(float dt){} func shoot(){ shots+=1; } })","Shooter"),"Input signal fixture compile");
+        inputHost.SetInput({{"shoot",{0,0,false,false,false}}}); Check(inputHost.Play(inputObjects),"Input signal Play");
+        inputHost.SetInput({{"shoot",{0,0,true,true,false}}}); inputHost.Tick(inputObjects,0.1f);
+        inputHost.SetInput({{"shoot",{0,0,false,false,true}}}); inputHost.Tick(inputObjects,0.1f);
+        inputHost.SetInput({{"shoot",{0,0,true,true,false}}}); inputHost.Tick(inputObjects,0.1f);
+        inputHost.SetInput({{"shoot",{0,0,false,false,true}}}); inputHost.Tick(inputObjects,0.1f);
+        Check(Value(inputHost,inputBehavior,"shots")=="2","Input just_released signal did not fire on every release"); inputHost.Stop(inputObjects);
         std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;
     }

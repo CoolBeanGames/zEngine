@@ -14,6 +14,8 @@ namespace zengine
 {
     struct Vec3 { float x = 0, y = 0, z = 0; bool operator==(const Vec3&) const = default; };
 
+    namespace physics { class Collider; class RigidBody; class KinematicBody; class StaticBody; }
+
     // Local to the parent. Euler angles are in degrees.
     class Transform
     {
@@ -94,6 +96,7 @@ namespace zengine
         std::size_t BehaviorCount() const noexcept { return behaviors_.size(); }
         const Behavior& BehaviorAt(std::size_t index) const { return *behaviors_.at(index); }
         Behavior& BehaviorAt(std::size_t index) { return *behaviors_.at(index); }
+        bool RemoveBehavior(Behavior& behavior);
 
         template<class T, class... Args> T& AddBehavior(Args&&... args)
         {
@@ -101,6 +104,8 @@ namespace zengine
             auto behavior = std::make_unique<T>(*this, std::forward<Args>(args)...);
             T& result = *behavior;
             behaviors_.push_back(std::move(behavior));
+            if constexpr (std::is_same_v<T, physics::RigidBody> || std::is_same_v<T, physics::KinematicBody> || std::is_same_v<T, physics::StaticBody>)
+                EnsureCollider();
             result.Instantiate();
             return result;
         }
@@ -118,6 +123,7 @@ namespace zengine
         }
     private:
         friend class ObjectStore;
+        void EnsureCollider();
         GameObject(ObjectStore& store,GameObjectId id, std::string name);
         ObjectStore* store_;
         GameObjectId id_;

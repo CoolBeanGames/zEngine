@@ -91,7 +91,7 @@ int main(int argc, char**)
             Check(!scriptTyping::OnCharacter(L"// if",5,5,L' '),"Comment control flow completed");
             edit=scriptTyping::OnCharacter(L"value",5,5,L'(');Check(edit&&edit->text==L"()"&&edit->caret==1,"Manual parenthesis did not pair");
             edit=scriptTyping::OnCharacter(L"array",5,5,L'[');Check(edit&&edit->text==L"[]"&&edit->caret==1,"Manual square bracket did not pair");
-            edit=scriptTyping::OnCharacter(L"body",4,4,L'{');Check(edit&&edit->text==L"{}"&&edit->caret==1,"Manual brace did not pair");
+            edit=scriptTyping::OnCharacter(L"body",4,4,L'{');Check(edit&&edit->text==L"{\r    \r}"&&edit->caret==5,"Manual brace did not create an editable block");
             edit=scriptTyping::OnCharacter(L"name",0,4,L'(');Check(edit&&edit->text==L"(name)"&&edit->caret==5,"Selected text was not wrapped by bracket pair");
             edit=scriptTyping::OnCharacter(L"()",1,1,L')');Check(edit&&edit->text.empty()&&edit->caret==1,"Closing parenthesis did not advance over its pair");
             Check(!scriptTyping::OnCharacter(L"\"text",5,5,L'('),"Bracket pairing leaked into a string");
@@ -138,6 +138,9 @@ int main(int argc, char**)
             Check(std::wstring(suggestion).ends_with(L"upd"),"Completion undo was not atomic");
             SendMessageW(control,WM_KEYDOWN,VK_RETURN,0);SendMessageW(control,WM_CHAR,VK_RETURN,0);SendMessageW(control,WM_CHAR,VK_TAB,0);GetWindowTextW(control,suggestion,200);
             Check(std::wstring(suggestion).find(L"update")==std::wstring::npos,"Enter did not end autocomplete");
+            SetWindowTextW(control,L"first");SendMessageW(control,EM_SETSEL,-1,-1);
+            SendMessageW(control,WM_KEYDOWN,VK_RETURN,0);SendMessageW(control,WM_CHAR,VK_RETURN,0);
+            Check(SendMessageW(control,EM_GETLINECOUNT,0,0)==2,"Enter inserted more than one line");
             SetWindowTextW(control,L"class A { func f() { Vector3 v; v");SendMessageW(control,EM_SETSEL,-1,-1);SendMessageW(control,WM_CHAR,'.',0);
             SendMessageW(control,WM_KEYDOWN,VK_DOWN,0);SendMessageW(control,WM_CHAR,VK_TAB,0);GetWindowTextW(control,suggestion,200);
             Check(std::wstring(suggestion).ends_with(L"v.y"),"Member dropdown selection/Tab failed");

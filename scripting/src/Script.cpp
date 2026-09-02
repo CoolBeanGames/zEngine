@@ -7,7 +7,10 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <iomanip>
+#include <locale>
 #include <map>
+#include <sstream>
 #include <set>
 #include <utility>
 
@@ -101,7 +104,7 @@ std::vector<Token> Lex(std::string_view s, const std::string& source) {
     return tokens;
 }
 struct Expr {
-    enum Kind { Literal, Name, Member, Call, Unary, Binary, Array, Index, IsType } kind = Literal;
+    enum Kind { Literal, Name, Member, Call, Unary, Binary, Array, Index, IsType, Interpolate } kind = Literal;
     Token token;
     Value value;
     std::size_t height = 1;
@@ -158,6 +161,11 @@ class Parser {
             e->kind = Expr::Array;
             if (!Is("]")) do { e->children.push_back(Expression()); } while (Match(","));
             Expect("]");
+        }
+        else if (Match("{")) {
+            e->kind = Expr::Interpolate;
+            e->children.push_back(Expression());
+            Expect("}");
         }
         else if (Current().kind == Token::Number) {
             ++pos;
@@ -288,7 +296,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, IsType, MakeVector, SetComponent, Self, Input, Physics, Math, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, MakeVector, SetComponent, Self, Input, Physics, Math, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -401,6 +409,11 @@ class BytecodeCompiler {
         if (e.kind == Expr::Array) {
             for (const auto& item : e.children) Require(Expression(*item) != "void", t, "Array elements cannot be void");
             Emit(Op::MakeArray, t, e.children.size()); return "array";
+        }
+        if (e.kind == Expr::Interpolate) {
+            const auto type = Expression(*e.children[0]);
+            Require(type != "void" && type != "array", t, "Cannot interpolate this value");
+            Emit(Op::Stringify, t); return "string";
         }
         if (e.kind == Expr::Index) {
             const auto receiver=Expression(*e.children[0]);Require(receiver=="array" || receiver=="string" || receiver=="any",t,"Indexing requires an array or string");
@@ -546,7 +559,7 @@ class BytecodeCompiler {
         Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
         Require(receiver != "InputAction",e.token,"Input state is read-only");
         Require(!(program.Assignable("gameObject",receiver) && (e.token.text=="physics"||e.token.text=="rigidbody"||e.token.text=="kinematic_body"||e.token.text=="static_body"||e.token.text=="area"||e.token.text=="collider")),e.token,"Native behavior references are read-only");
-        Require(!(program.Assignable("Transform",receiver) && (GlobalField(e.token.text)||DirectionField(e.token.text))),e.token,"Global transform directions are read-only");
+            Require(!(program.Assignable("Transform",receiver) && GlobalField(e.token.text)),e.token,"Global transform fields are read-only");
         return {FieldType(receiver, e.token), true, 0, e.token.text};
     }
     void Load(const Slot& slot, const Token& t) {
@@ -675,6 +688,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     gameObject.fields.push_back({Token{Token::Identifier,"collider"},"Collider"});
     Function find;find.params={"string"};find.result="gameObject";gameObject.methods.emplace("find",std::move(find));
     Function makeTimer;makeTimer.params={"float"};makeTimer.result="Timer";gameObject.methods.emplace("make_timer",std::move(makeTimer));
+    Function print;print.params={"string"};print.result="void";gameObject.methods.emplace("print",std::move(print));
     program.classes.emplace("gameObject", std::move(gameObject));
     Class timer;timer.name="Timer";timer.base="gameObject";timer.fields=program.classes.at("gameObject").fields;timer.signals={"finished"};program.classes.emplace(timer.name,std::move(timer));
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
@@ -810,6 +824,7 @@ struct Runtime::Impl {
     Runtime::PhysicsBodyCall physicsBodyCall;
     Runtime::PhysicsCastCall physicsCastCall;
     Runtime::PrefabSpawnCall prefabSpawnCall;
+    Runtime::PrintCallback printCallback;
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
     [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
@@ -888,6 +903,23 @@ struct Runtime::Impl {
         else {const int row=name=="right"?0:name=="up"?1:2;result={rotation[row][0],rotation[row][1],rotation[row][2]};}
         return Coerce(result,"Vector3",t);
     }
+    Vector3 DirectionRotation(ObjectRef transform, const std::string& name, Vector3 direction, const Token& t) const {
+        const auto length=std::hypot(direction.x,std::hypot(direction.y,direction.z));
+        if(length<=1e-12 || !std::isfinite(length)) Error(t,"Transform direction must be non-zero");
+        direction={direction.x/length,direction.y/length,direction.z/length};
+        Vector3 up={0,1,0};
+        if(std::abs(direction.y)>0.999) up={1,0,0};
+        auto cross=[](Vector3 a,Vector3 b){return Vector3{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};};
+        auto normalize=[&](Vector3 v){const auto n=std::hypot(v.x,std::hypot(v.y,v.z));return Vector3{v.x/n,v.y/n,v.z/n};};
+        Vector3 right,forward;
+        if(name=="forward") { forward=direction; right=normalize(cross(up,forward)); up=normalize(cross(forward,right)); }
+        else { right=direction; forward=normalize(cross(right,up)); up=normalize(cross(forward,right)); }
+        auto matrix=world::Identity();
+        matrix[0][0]=right.x;matrix[0][1]=right.y;matrix[0][2]=right.z;
+        matrix[1][0]=up.x;matrix[1][1]=up.y;matrix[1][2]=up.z;
+        matrix[2][0]=forward.x;matrix[2][1]=forward.y;matrix[2][2]=forward.z;
+        return world::Euler(matrix);
+    }
     Value Get(ObjectRef ref, const std::string& name, const Token& t = {}) const {
         auto& o = Resolve(ref, t); std::size_t index = 0;
         if(program->Assignable("Transform",o.type->name) && (GlobalField(name)||DirectionField(name)))return Global(ref,name,t);
@@ -898,19 +930,24 @@ struct Runtime::Impl {
         return o.fields[index];
     }
     void Set(ObjectRef ref, const std::string& name, Value value, const Token& t = {}, bool notify = true) {
-        auto& o = Resolve(ref, t); std::size_t index = 0;
-        auto field = program->FindField(o.type->name, name, &index);
+        auto& o = Resolve(ref, t); std::size_t index = 0; std::string fieldName=name;
+        auto field = program->FindField(o.type->name, fieldName, &index);
         if (!field) Error(t, "Unknown field '" + name + "'");
         if(o.type->name=="InputAction")Error(t,"Input state is read-only");
-        if(program->Assignable("Transform",o.type->name) && (GlobalField(name)||DirectionField(name)))Error(t,"Global transform directions are read-only");
+        if(program->Assignable("Transform",o.type->name) && GlobalField(fieldName))Error(t,"Global transform fields are read-only");
+        if(program->Assignable("Transform",o.type->name) && DirectionField(fieldName)) {
+            value=Coerce(std::move(value),"Vector3",t);
+            const auto rotation=DirectionRotation(ref,fieldName,std::get<Vector3>(value),t);
+            auto rotationIndex=std::size_t{}; program->FindField(o.type->name,"rotation",&rotationIndex); value=rotation; fieldName="rotation"; index=rotationIndex;
+        }
         value = Coerce(std::move(value), field->type, t);
         if(program->Assignable("PhysicsBody",o.type->name) && (name=="velocity"||name=="angular_velocity") && physicsBodyCall){physicsBodyCall(o.physicsOwner,name=="velocity"?"set_velocity":"set_angular_velocity",{value});}
-        if(name=="transform" && program->Assignable("gameObject",o.type->name)){
+        if(fieldName=="transform" && program->Assignable("gameObject",o.type->name)){
             const auto next=std::get<ObjectRef>(value),previous=std::get<ObjectRef>(o.fields[index]);
             if(next.id){auto& target=Resolve(next,t);if(target.transformOwner.id && target.transformOwner!=ref)Error(t,"A Transform cannot belong to two GameObjects");target.transformOwner=ref;}
             if(previous.id && previous!=next)Resolve(previous,t).transformOwner={};
         }
-        if(name=="parent" && program->Assignable("gameObject",o.type->name)) {
+        if(fieldName=="parent" && program->Assignable("gameObject",o.type->name)) {
             auto parent=std::get<ObjectRef>(value);unsigned parentDepth=0;
             while(parent.id){if(parent==ref || ++parentDepth>64)Error(t,"Parenting would create a cycle or exceed 64 levels");parent=std::get<ObjectRef>(Get(parent,"parent",t));}
         }
@@ -1102,6 +1139,10 @@ struct Runtime::Impl {
     }
     Value Invoke(ObjectRef ref, const std::string& name, const std::vector<Value>& args, const Token& t) {
         const auto& object = Resolve(ref, t);
+        if(name=="print" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("print")) {
+            if(args.size()!=1)Error(t,"print takes one string");
+            const auto text=std::get<std::string>(Coerce(args[0],"string",t));if(printCallback)printCallback(text);return {};
+        }
         if(name=="make_timer" && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at("make_timer")) {
             if(args.size()!=1)Error(t,"make_timer takes a duration in seconds");
             const auto duration=Number(Coerce(args[0],"float",t));if(duration<0)Error(t,"Timer duration must be nonnegative");
@@ -1272,6 +1313,17 @@ struct Runtime::Impl {
             case Op::Concat: case Op::Add: case Op::Subtract: case Op::Multiply: case Op::Divide: {
                 auto right = pop(), left = pop(); stack.push_back(Arithmetic(ins.op, std::move(left), std::move(right), t)); break;
             }
+            case Op::Stringify: {
+                const auto value = pop(); std::ostringstream text; text.imbue(std::locale::classic()); text<<std::setprecision(17);
+                if (const auto* v=std::get_if<std::int64_t>(&value)) text<<*v;
+                else if (const auto* number=std::get_if<double>(&value)) text<<*number;
+                else if (const auto* boolean=std::get_if<bool>(&value)) text<<(*boolean?"true":"false");
+                else if (const auto* string=std::get_if<std::string>(&value)) text<<*string;
+                else if (const auto* character=std::get_if<char32_t>(&value)) text<<script::text::Encode(*character);
+                else if (const auto* vector=std::get_if<Vector3>(&value)) text<<vector->x<<", "<<vector->y<<", "<<vector->z;
+                else Error(t,"Only scalar values can be interpolated");
+                stack.push_back(text.str()); break;
+            }
             default: { auto right = pop(), left = pop(); stack.push_back(Compare(ins.op, left, right,t)); break; }
             }
         }
@@ -1340,6 +1392,7 @@ void Runtime::SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup)
 void Runtime::SetPhysicsCallbacks(PhysicsBodyCall bodyCall,PhysicsCastCall castCall){impl_->physicsBodyCall=std::move(bodyCall);impl_->physicsCastCall=std::move(castCall);}
 void Runtime::BindNativeBehavior(ObjectRef owner,std::string_view behaviorType){impl_->Reset();impl_->BindNativeBehavior(owner,std::string(behaviorType));}
 void Runtime::SetPrefabSpawnCallback(PrefabSpawnCall callback){impl_->prefabSpawnCall=std::move(callback);}
+void Runtime::SetPrintCallback(PrintCallback callback){impl_->printCallback=std::move(callback);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}

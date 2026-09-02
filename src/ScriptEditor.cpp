@@ -4,6 +4,7 @@
 #include <richedit.h>
 #include <richole.h>
 #include <tom.h>
+#include <windowsx.h>
 #include <algorithm>
 #include <stdexcept>
 #ifdef ZENGINE_SCRIPT_COMPILER
@@ -68,6 +69,9 @@ ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, cons
         SendMessageW(source_, EM_SETBKGNDCOLOR, 0, RGB(30,32,36));
         SendMessageW(source_, EM_EXLIMITTEXT, 0, zengine::scripts::MaxSourceBytes);
         SendMessageW(source_, EM_SETEVENTMASK, 0, ENM_CHANGE);
+        // Reserve a narrow left gutter for per-block +/- fold controls and a right
+        // gutter for line numbers. RichEdit keeps text and caret clear of both strips.
+        SendMessageW(source_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(28, LineNumberGutter));
         // Syntax formatting needs rich-text mode; clipboard paste is restricted to plain text below.
         SendMessageW(source_, EM_SETTEXTMODE, TM_RICHTEXT | TM_MULTILEVELUNDO, 0);
         SetWindowSubclass(source_, EditProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
@@ -116,6 +120,7 @@ void ScriptEditor::Reload()
     const auto disk = zengine::scripts::Load(path_);
     auto text = Wide(disk);
     if (!text.empty() && text.front() == 0xfeff) text.erase(text.begin());
+    foldedBlocks_.clear();
     formatting_ = true;
     SetWindowTextW(source_, text.c_str());
     SendMessageW(source_, EM_EMPTYUNDOBUFFER, 0, 0);
@@ -151,6 +156,7 @@ bool ScriptEditor::ConfirmClose()
     // leaves a consistent clean buffer if another document cancels the parent's close.
     auto snapshot = Wide(loaded_);
     if (!snapshot.empty() && snapshot.front() == 0xfeff) snapshot.erase(snapshot.begin());
+    foldedBlocks_.clear();
     formatting_ = true;
     SetWindowTextW(source_, snapshot.c_str());
     SendMessageW(source_, EM_EMPTYUNDOBUFFER, 0, 0);
@@ -267,7 +273,7 @@ LRESULT ScriptEditor::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_TIMER: if (w == 1) Highlight(); return 0;
     case WM_COMMAND:
         if (LOWORD(w) == SourceControl && HIWORD(w) == EN_CHANGE && !formatting_)
-        { dirty_ = true; Title(); SetTimer(window_, 1, 250, nullptr); return 0; }
+        { if(!foldedBlocks_.empty()){formatting_=true;ExpandAll();formatting_=false;}dirty_ = true; Title(); SetTimer(window_, 1, 250, nullptr); return 0; }
         if (LOWORD(w) == SaveCommand) { Save(); return 0; }
         if(LOWORD(w)==FoldCommand){ToggleFold();return 0;}
         if(LOWORD(w)==ExpandCommand){ExpandAll();return 0;}
@@ -295,11 +301,14 @@ LRESULT ScriptEditor::HandleMessage(UINT message, WPARAM w, LPARAM l)
 LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR data)
 {
     auto* self = reinterpret_cast<ScriptEditor*>(data);
-    if(message==WM_PAINT){const auto result=DefSubclassProc(window,message,w,l);self->PaintCompletion(window);return result;}
+    if(message==WM_PAINT){const auto result=DefSubclassProc(window,message,w,l);self->PaintFoldMarkers(window);self->PaintLineNumbers(window);self->PaintCompletion(window);return result;}
+    if(message==WM_LBUTTONDOWN && GET_X_LPARAM(l)<28) {
+        if(self->ToggleFoldAt({GET_X_LPARAM(l),GET_Y_LPARAM(l)})) return 0;
+    }
     if(message==WM_KILLFOCUS || message==WM_LBUTTONDOWN || message==WM_VSCROLL || message==WM_HSCROLL || message==WM_MOUSEWHEEL)self->HideCompletion();
     if(message==WM_KEYDOWN) {
         if(w==VK_ESCAPE && !self->completion_.items.empty()){self->HideCompletion();return 0;}
-        if(w==VK_RETURN)self->HideCompletion();
+        if(w==VK_RETURN){self->HideCompletion();return 0;}
         if((w==VK_UP || w==VK_DOWN) && !self->completion_.items.empty() && self->completion_.members) {
             self->completionSelection_=(self->completionSelection_+(w==VK_DOWN?1:static_cast<int>(self->completion_.items.size())-1))%self->completion_.items.size();
             SendMessageW(self->completions_,LB_SETCURSEL,self->completionSelection_,0);InvalidateRect(window,nullptr,FALSE);return 0;
@@ -337,6 +346,82 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
     return result;
 }
 
+bool ScriptEditor::ToggleFoldAt(POINT point)
+{
+    const auto source=Text(), code=scriptTyping::Code(source);
+    std::vector<std::pair<std::size_t,std::size_t>> blocks; std::vector<std::size_t> stack;
+    for(std::size_t i=0;i<code.size();++i)
+    {
+        if(code[i]==L'{') stack.push_back(i);
+        else if(code[i]==L'}' && !stack.empty()) { const auto open=stack.back(); stack.pop_back(); if(i>open+1) blocks.push_back({open,i}); }
+    }
+    std::pair<std::size_t,std::size_t> selected{}; LONG selectedY=0; bool found=false;
+    for(const auto& block:blocks)
+    {
+        POINTL location{}; SendMessageW(source_,EM_POSFROMCHAR,reinterpret_cast<WPARAM>(&location),block.first);
+        if(point.y<location.y-2 || point.y>location.y+22) continue;
+        if(!found || location.y>=selectedY) { selected=block; selectedY=location.y; found=true; }
+    }
+    if(!found) return false;
+    const bool hidden=foldedBlocks_.contains(selected.first);
+    SetHidden(selected.first+1,selected.second,!hidden);
+    if(hidden)foldedBlocks_.erase(selected.first);else foldedBlocks_.insert(selected.first);
+    InvalidateRect(source_,nullptr,FALSE); return true;
+}
+void ScriptEditor::PaintFoldMarkers(HWND window)
+{
+    RECT client{}; GetClientRect(window,&client);
+    HBRUSH gutter=CreateSolidBrush(RGB(30,32,36)); RECT area{0,0,28,client.bottom};
+    // The gutter is repainted separately from RichEdit's text surface.
+    HDC dc=GetDC(window); FillRect(dc,&area,gutter); DeleteObject(gutter);
+    const auto source=Text(), code=scriptTyping::Code(source);
+    std::vector<std::pair<std::size_t,std::size_t>> blocks; std::vector<std::size_t> stack;
+    for(std::size_t i=0;i<code.size();++i)
+    {
+        if(code[i]==L'{') stack.push_back(i);
+        else if(code[i]==L'}' && !stack.empty()) { const auto open=stack.back(); stack.pop_back(); if(i>open+1) blocks.push_back({open,i}); }
+    }
+    auto pen=CreatePen(PS_SOLID,1,RGB(150,156,168)); auto oldPen=SelectObject(dc,pen);
+    for(const auto& block:blocks)
+    {
+        POINTL location{}; SendMessageW(window,EM_POSFROMCHAR,reinterpret_cast<WPARAM>(&location),block.first);
+        if(location.y<-20 || location.y>client.bottom) continue;
+        const int top=location.y+4; Rectangle(dc,6,top,20,top+14);
+        MoveToEx(dc,9,top+7,nullptr); LineTo(dc,17,top+7);
+        if(foldedBlocks_.contains(block.first)){MoveToEx(dc,13,top+3,nullptr);LineTo(dc,13,top+11);}
+    }
+    SelectObject(dc,oldPen); DeleteObject(pen); ReleaseDC(window,dc);
+}
+void ScriptEditor::PaintLineNumbers(HWND window)
+{
+    RECT client{}; GetClientRect(window,&client);
+    const LONG left=client.right-LineNumberGutter;
+    if(left<=0) return;
+    HDC dc=GetDC(window);
+    RECT area{left,0,client.right,client.bottom};
+    HBRUSH background=CreateSolidBrush(RGB(30,32,36)); FillRect(dc,&area,background); DeleteObject(background);
+    // Thin low-contrast separator, matching the editor's other borders.
+    HPEN pen=CreatePen(PS_SOLID,1,RGB(60,63,68)); auto oldPen=SelectObject(dc,pen);
+    MoveToEx(dc,left,0,nullptr); LineTo(dc,left,client.bottom);
+    SelectObject(dc,oldPen); DeleteObject(pen);
+    auto oldFont=SelectObject(dc,font_); SetBkMode(dc,TRANSPARENT); SetTextColor(dc,RGB(120,126,136));
+    const auto lineCount=static_cast<LONG>(SendMessageW(window,EM_GETLINECOUNT,0,0));
+    const auto firstVisible=static_cast<LONG>(SendMessageW(window,EM_GETFIRSTVISIBLELINE,0,0));
+    LONG lastY=0; bool havePrevious=false;
+    for(LONG line=firstVisible;line<lineCount;++line)
+    {
+        const auto lineStart=static_cast<LONG>(SendMessageW(window,EM_LINEINDEX,line,0));
+        if(lineStart<0) break;
+        POINTL location{}; SendMessageW(window,EM_POSFROMCHAR,reinterpret_cast<WPARAM>(&location),lineStart);
+        if(location.y>client.bottom) break;
+        if(havePrevious && location.y<=lastY) continue; // Folded/hidden lines collapse onto the previous row.
+        lastY=location.y; havePrevious=true;
+        wchar_t number[16]{}; const int length=wsprintfW(number,L"%d",line+1);
+        RECT row{left+4,location.y,client.right-4,location.y+64};
+        DrawTextW(dc,number,length,&row,DT_RIGHT|DT_TOP|DT_SINGLELINE|DT_NOPREFIX);
+    }
+    SelectObject(dc,oldFont); ReleaseDC(window,dc);
+}
 void ScriptEditor::SetHidden(std::size_t start,std::size_t end,bool hidden) {
     if(start>=end)return;CHARRANGE selection{};SendMessageW(source_,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&selection));
     IRichEditOle* ole=nullptr;ITextDocument* document=nullptr;long unused=0;SendMessageW(source_,EM_GETOLEINTERFACE,0,reinterpret_cast<LPARAM>(&ole));if(ole){ole->QueryInterface(__uuidof(ITextDocument),reinterpret_cast<void**>(&document));ole->Release();}if(document)document->Undo(tomSuspend,&unused);
@@ -346,9 +431,9 @@ bool ScriptEditor::ToggleFold() {
     const auto source=Text(),code=scriptTyping::Code(source);CHARRANGE selection{};SendMessageW(source_,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&selection));const auto caret=static_cast<std::size_t>(std::max<LONG>(0,selection.cpMin));
     std::vector<std::size_t> stack;for(std::size_t i=0;i<std::min(caret+1,code.size());++i){if(code[i]==L'{')stack.push_back(i);else if(code[i]==L'}'&&!stack.empty())stack.pop_back();}
     std::size_t open=stack.empty()?code.find(L'{',std::min(caret,code.size())):stack.back();if(open==code.npos)return false;int depth=1;std::size_t close=open+1;for(;close<code.size()&&depth;++close){if(code[close]==L'{')++depth;else if(code[close]==L'}')--depth;}if(depth||close<=open+2)return false;--close;
-    CHARRANGE probe{static_cast<LONG>(open+1),static_cast<LONG>(open+2)};SendMessageW(source_,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&probe));CHARFORMAT2W format{};format.cbSize=sizeof(format);SendMessageW(source_,EM_GETCHARFORMAT,SCF_SELECTION,reinterpret_cast<LPARAM>(&format));SendMessageW(source_,EM_EXSETSEL,0,reinterpret_cast<LPARAM>(&selection));SetHidden(open+1,close,(format.dwEffects&CFE_HIDDEN)==0);return true;
+    const bool hidden=foldedBlocks_.contains(open);SetHidden(open+1,close,!hidden);if(hidden)foldedBlocks_.erase(open);else foldedBlocks_.insert(open);return true;
 }
-void ScriptEditor::ExpandAll(){SetHidden(0,Text().size(),false);}
+void ScriptEditor::ExpandAll(){SetHidden(0,Text().size(),false);foldedBlocks_.clear();InvalidateRect(source_,nullptr,FALSE);}
 
 void ScriptEditor::RefreshCompletionIndex() {
     completionIndex_=scriptCompletion::Index{};std::size_t bytes=0,count=0;

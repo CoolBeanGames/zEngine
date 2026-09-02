@@ -8,6 +8,7 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 
 // Native editor widget, independent of renderer/importer and reusable for other inspector hosts.
@@ -19,9 +20,11 @@ public:
     static constexpr int FirstTransformField = 1102; // Position XYZ, Rotation XYZ, Scale XYZ.
     static constexpr int AddScriptButton = 1120;
     static constexpr int FirstBehaviorField = 1200;
+    static constexpr int FirstBehaviorToggle = 5000;
     static constexpr int AddBehaviorButton = 1121, MeshEnabled = 1122, ChooseMeshButton = 1123,
         CubeMeshButton = 1124, ClearMeshButton = 1125, AddMeshCommand = 1126, AddScriptCommand = 1127,
         AddColliderCommand=1128,AddRigidBodyCommand=1129,AddKinematicBodyCommand=1130,AddStaticBodyCommand=1131,AddAreaCommand=1132;
+    static constexpr int RemoveBehaviorCommand = 1133;
     enum class MeshAction { Add, Choose, Cube, Clear };
     ~InspectorPanel();
     void Create(HWND parent, HINSTANCE instance, HFONT font, std::function<void()> changed);
@@ -33,6 +36,7 @@ public:
     void SetMeshHandler(std::function<void(MeshAction)> handler) { meshAction_ = std::move(handler); }
     void SetPrefabHandler(std::function<std::optional<std::string>(const std::string&)> handler) { choosePrefab_ = std::move(handler); }
     bool AssignPrefabAt(POINT screenPoint,const std::string& asset);
+    bool AssignObjectReferenceAt(POINT screenPoint, zengine::GameObjectId target);
     HWND Window() const noexcept { return window_; }
 private:
     bool editData_=true,editTransform_=true;
@@ -62,13 +66,20 @@ private:
         bool multiline = false;
         bool combo = false;
         bool prefab = false;
+        bool objectReference = false;
         int axis = -1; // Three consecutive fields share one Vector3 row.
         Style style = Style::Normal;
     };
     std::wstring BehaviorValue(std::size_t index);
     void ChangeBehaviorField(std::size_t index);
     void FinishBehaviorField(std::size_t index, bool cancel);
+    bool IsBehaviorCollapsed(const BehaviorField& entry) const;
+    void ShowBehaviorMenu(POINT screenPoint);
     std::vector<BehaviorField> behaviorFields_;
+    struct BehaviorToggle { zengine::Behavior* behavior = nullptr; HWND window = nullptr; };
+    std::vector<BehaviorToggle> behaviorToggles_;
+    std::set<zengine::Behavior*> collapsedBehaviors_;
+    zengine::Behavior* contextBehavior_ = nullptr;
     zengine::ScriptHost* scriptHost_ = nullptr;
     int BehaviorHeight() const;
     int RowHeight(const BehaviorField& entry) const;
@@ -91,6 +102,7 @@ private:
     std::function<std::optional<std::string>(const std::string&)> choosePrefab_;
     bool updating_ = false;
     int scroll_ = 0;
+    int wheelRemainder_ = 0;
     int pressed_ = -1;
     bool scrubbing_ = false;
     POINT startPoint_{};

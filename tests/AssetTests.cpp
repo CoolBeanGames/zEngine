@@ -379,6 +379,7 @@ namespace
             editor.Render();
             // Select the original mesh object: empty transforms must not leak into it.
             SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 140));
+            SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 140));
             Require(editor.SelectedGameObject()->Id() == previewId, "Scene-tree selection failed");
             Require(editor.SelectedGameObject()->GetTransform().Position().x == 0, "Object transforms are not independent");
             SetWindowTextW(x, L"2");
@@ -396,6 +397,7 @@ namespace
             Require(object->BehaviorCount() == 1 && editor.SelectedGameObject()->Id() == object->Id(), "Script drag did not attach to targeted tree object");
             Require(!editor.AttachScript(object->Id(), script) && object->BehaviorCount() == 1, "Duplicate script attachment allowed");
             SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 140));
+            SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 140));
             SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, rowPoint);
             SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(client.right-100, 300));
             SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(client.right-100, 300));
@@ -694,7 +696,8 @@ void FolderTests(bool capture) {
         Require(assetLibrary::Type(script)==assetLibrary::Kind::Script && assetLibrary::Type(prefab)==assetLibrary::Kind::Prefab && assetLibrary::Type(editor.ScenePath())==assetLibrary::Kind::Scene && assetLibrary::Type(model)==assetLibrary::Kind::Model,"Asset icon classification failed");
         const auto archive=editor.CreateAssetFolder(L"Archive");editor.MoveAsset(script,archive);const auto moved=archive/script.filename();
         Require(!std::filesystem::exists(script)&&std::filesystem::exists(moved),"Moving an asset into a folder failed");
-        editor.RenameAsset(moved,L"Moved Script");const auto renamed=archive/L"Moved Script.zsh";
+        editor.RenameAsset(moved,L"MovedScript");const auto renamed=archive/L"MovedScript.zsh";
+        Require(zengine::scripts::Load(renamed).find("class MovedScript")!=std::string::npos,"Renaming a script did not update its class name");
         Require(!std::filesystem::exists(moved)&&std::filesystem::exists(renamed)&&assetLibrary::Type(renamed)==assetLibrary::Kind::Script,"Asset rename failed or lost its type");
         if(capture){editor.Render();CaptureWindow(window,L"asset-folders-qa.bmp");}
     }

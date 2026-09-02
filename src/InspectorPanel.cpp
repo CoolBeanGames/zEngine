@@ -123,6 +123,7 @@ void InspectorPanel::Create(HWND parent, HINSTANCE instance, HFONT font, std::fu
 
 void InspectorPanel::Bind(zengine::GameObject* object,bool editData,bool editTransform)
 {
+    if (object_ != object) collapsedBehaviors_.clear();
     EndScrub(true);
     for (int index = 0; index < static_cast<int>(fields_.size()); ++index)
         if (GetFocus() == fields_[index].window) { FinishField(index, false); SetFocus(window_); }
@@ -139,10 +140,12 @@ void InspectorPanel::RefreshBehaviors()
     // Rebuild only at structural changes/save/session boundaries, never on each tick.
     updating_=true;
     for (auto& entry:behaviorFields_) if (entry.field.window) DestroyWindow(entry.field.window);
+    for (auto& toggle:behaviorToggles_) if (toggle.window) DestroyWindow(toggle.window);
     behaviorFields_.clear();
-    const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable, BehaviorField::Style style=BehaviorField::Style::Normal,bool multiline=false,bool prefab=false) {
+    behaviorToggles_.clear();
+    const auto add = [&](zengine::Behavior* behavior, std::string name, std::wstring label, bool priority, bool field, bool editable, BehaviorField::Style style=BehaviorField::Style::Normal,bool multiline=false,bool prefab=false,bool objectReference=false) {
         BehaviorField entry; entry.behavior=behavior; entry.name=std::move(name); entry.label=std::move(label); entry.priority=priority;
-        entry.style=style;entry.multiline=multiline;entry.prefab=prefab;
+        entry.style=style;entry.multiline=multiline;entry.prefab=prefab;entry.objectReference=objectReference;
         if (field)
         {
             const auto id=FirstBehaviorField+behaviorFields_.size();
@@ -150,10 +153,22 @@ void InspectorPanel::RefreshBehaviors()
                 0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
             if (!entry.field.window) throw std::runtime_error("Cannot create script field.");
             SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
-            if(!prefab){SendMessageW(entry.field.window,EM_SETLIMITTEXT,multiline?65536:4096,0);SetWindowSubclass(entry.field.window,EditProcedure,1,reinterpret_cast<DWORD_PTR>(this));}
+            if(!prefab)SendMessageW(entry.field.window,EM_SETLIMITTEXT,multiline?65536:4096,0);
+            SetWindowSubclass(entry.field.window,EditProcedure,1,reinterpret_cast<DWORD_PTR>(this));
             if(prefab)EnableWindow(entry.field.window,editable&&editData_);
         }
         behaviorFields_.push_back(std::move(entry));
+        if (style == BehaviorField::Style::BehaviorHeader)
+        {
+            const auto id=FirstBehaviorToggle+static_cast<int>(behaviorToggles_.size());
+            const auto title=collapsedBehaviors_.contains(behavior)?L"+":L"-";
+            const auto toggle=CreateWindowExW(0,L"BUTTON",title,WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
+                0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
+            if (!toggle) throw std::runtime_error("Cannot create behavior collapse control.");
+            SendMessageW(toggle,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+            SetWindowSubclass(toggle,EditProcedure,1,reinterpret_cast<DWORD_PTR>(this));
+            behaviorToggles_.push_back({behavior,toggle});
+        }
     };
     const auto addShape = [&](zengine::physics::Collider* collider) {
         BehaviorField entry;entry.behavior=collider;entry.name="shape";entry.label=L"Shape";entry.combo=true;
@@ -193,7 +208,7 @@ void InspectorPanel::RefreshBehaviors()
                     continue;
                 }
                 add(&behavior,field.name,field.name.empty()?Wide(field.label):Wide(field.name+" ("+field.type+")"),false,!field.name.empty(),field.editable,
-                    field.name.empty()?BehaviorField::Style::ScriptLabel:BehaviorField::Style::Normal,field.multiline,field.type=="prefab");
+                    field.name.empty()?BehaviorField::Style::ScriptLabel:BehaviorField::Style::Normal,field.multiline,field.type=="prefab",field.reference);
             }
         }
     }
@@ -220,8 +235,13 @@ int InspectorPanel::BehaviorHeight() const
 }
 int InspectorPanel::RowHeight(const BehaviorField& entry) const
 {
+    if (entry.style != BehaviorField::Style::BehaviorHeader && IsBehaviorCollapsed(entry)) return 0;
     if(entry.axis>=0)return entry.axis==2?72:0;
     return entry.style==BehaviorField::Style::BehaviorHeader ? behaviorHeaderHeight_ : entry.multiline?112:entry.field.window?52:24;
+}
+bool InspectorPanel::IsBehaviorCollapsed(const BehaviorField& entry) const
+{
+    return entry.behavior && entry.style != BehaviorField::Style::BehaviorHeader && collapsedBehaviors_.contains(entry.behavior);
 }
 std::wstring InspectorPanel::BehaviorValue(std::size_t index)
 {
@@ -300,7 +320,7 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
 void InspectorPanel::FinishBehaviorField(std::size_t index, bool cancel)
 {
     auto& entry=behaviorFields_.at(index);
-    if(entry.combo||entry.prefab)return;
+    if(entry.combo||entry.prefab||entry.objectReference)return;
     if (cancel) { updating_=true; SetWindowTextW(entry.field.window,entry.field.focusText.c_str()); updating_=false; ChangeBehaviorField(index); }
     const auto value=BehaviorValue(index);
     updating_=true; SetWindowTextW(entry.field.window,value.c_str()); updating_=false;
@@ -425,7 +445,7 @@ void InspectorPanel::Layout()
     const bool narrow = client.right < 250;
     const int behaviorHeight = BehaviorHeight();
     const bool hasMesh = object_ && object_->GetBehavior<zengine::MeshRenderer>();
-    const int contentHeight = (narrow ? 480 : 430) + behaviorHeight + (hasMesh ? 122 : 0);
+    const int contentHeight = (narrow ? 488 : 438) + behaviorHeight + (hasMesh ? 122 : 0);
     SCROLLINFO scroll{sizeof(scroll), SIF_RANGE | SIF_PAGE | SIF_POS};
     scroll.nMin = 0; scroll.nMax = contentHeight - 1; scroll.nPage = static_cast<UINT>(client.bottom);
     scroll_ = std::clamp(scroll_, 0, std::max(0, contentHeight - static_cast<int>(client.bottom)));
@@ -451,14 +471,29 @@ void InspectorPanel::Layout()
         }
         place(fields_[index].window, x, y - scroll_, w, 24);
     }
-    int y = (width >= 250 ? 321 : 370) - scroll_;
+    int y = (width >= 250 ? 329 : 378) - scroll_;
     for (auto& entry:behaviorFields_)
     {
+        const int rowHeight=RowHeight(entry);
+        const bool collapsed=IsBehaviorCollapsed(entry);
+        if (entry.style == BehaviorField::Style::BehaviorHeader)
+        {
+            for (auto& toggle:behaviorToggles_)
+                if (toggle.behavior == entry.behavior && toggle.window)
+                {
+                    SetWindowTextW(toggle.window,collapsedBehaviors_.contains(entry.behavior)?L"+":L"-");
+                    place(toggle.window,4,y+4,22,std::max(20,rowHeight-8));
+                    ShowWindow(toggle.window,SW_SHOW);
+                    break;
+                }
+        }
         if (entry.field.window) {
+            ShowWindow(entry.field.window,collapsed?SW_HIDE:SW_SHOW);
+            if (collapsed) { y+=rowHeight; continue; }
             if(entry.axis>=0) {const int cell=std::max(30,(width-36)/3);place(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24);}
             else place(entry.field.window,12,y+21,std::max(30,width-24),entry.multiline?84:24);
         }
-        y+=RowHeight(entry);
+        y+=rowHeight;
     }
     y+=5;
     for (HWND control : {meshEnabled_,chooseMesh_,cubeMesh_,clearMesh_}) ShowWindow(control,hasMesh ? SW_SHOW : SW_HIDE);
@@ -473,18 +508,24 @@ void InspectorPanel::Layout()
     place(addBehaviorButton_,12,y,std::max(30,width-24),28);
     place(addScriptButton_,12,y+34,std::max(30,width-24),28);
     if(positions)EndDeferWindowPos(positions);
-    RedrawWindow(window_,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN);
+    // Child edits are repositioned without drawing individually. Repaint the
+    // complete clipped surface immediately so their old locations cannot
+    // remain as afterimages while the scrollbar is moving.
+    RedrawWindow(window_,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW);
 }
 void InspectorPanel::Paint()
 {
     PAINTSTRUCT paint{}; const HDC dc = BeginPaint(window_, &paint);
     RECT client{}; GetClientRect(window_, &client); FillRect(dc, &client, background_);
     SelectObject(dc, font_); SetTextColor(dc, Text); SetBkMode(dc, TRANSPARENT);
+    const int width = static_cast<int>(client.right);
+    const auto sectionPen=CreatePen(PS_SOLID,2,SectionBorder);const auto oldSectionPen=SelectObject(dc,sectionPen);const auto oldSectionBrush=SelectObject(dc,GetStockObject(HOLLOW_BRUSH));
+    RoundRect(dc,4,109-scroll_,static_cast<int>(client.right)-4,(width>=250?293:342)-scroll_,9,9);
+    SelectObject(dc,oldSectionBrush);SelectObject(dc,oldSectionPen);DeleteObject(sectionPen);
     const auto label = [&](const wchar_t* text, int x, int y, int width) {
         RECT r{x, y - scroll_, x + width, y + 20 - scroll_};
         DrawTextW(dc, text, -1, &r, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     };
-    const int width = static_cast<int>(client.right);
     label(L"Name", 12, 6, width - 24);
     label(L"Tags (comma-separated)", 12, 58, width - 24);
     label(L"Transform", 12, 117, width - 24);
@@ -495,11 +536,13 @@ void InspectorPanel::Paint()
     for (int row = 0; row < 3; ++row)
         label(names[row], 12, width >= 250 ? 170 + row * 37 : 164 + row * 54, width >= 250 ? 54 : width - 24);
     label(L"Rotation: degrees | Shift-drag: fine", 12, width >= 250 ? 275 : 324, width - 24);
-    label(object_ && object_->BehaviorCount() ? L"Behaviors attached" : L"No behaviors attached", 12, width >= 250 ? 297 : 346, width - 24);
-    int rowY=width>=250?321:370;
+    SelectObject(dc,behaviorFont_);
+    label(L"Behaviors attached", 12, width >= 250 ? 305 : 354, width - 24);
+    SelectObject(dc,font_);
+    int rowY=width>=250?329:378;
     if(!behaviorFields_.empty()) {
         const auto sectionPen=CreatePen(PS_SOLID,2,SectionBorder);const auto oldSectionPen=SelectObject(dc,sectionPen);const auto oldSectionBrush=SelectObject(dc,GetStockObject(HOLLOW_BRUSH));
-        RoundRect(dc,4,(width>=250?291:340)-scroll_,width-4,rowY+BehaviorHeight()+6-scroll_,9,9);
+        RoundRect(dc,4,(width>=250?299:348)-scroll_,width-4,rowY+BehaviorHeight()+6-scroll_,9,9);
         SelectObject(dc,oldSectionBrush);SelectObject(dc,oldSectionPen);DeleteObject(sectionPen);
         const auto pen=CreatePen(PS_SOLID,1,BehaviorBorder);const auto oldPen=SelectObject(dc,pen);const auto oldBrush=SelectObject(dc,GetStockObject(HOLLOW_BRUSH));
         int top=rowY;auto* group=behaviorFields_.front().behavior;
@@ -509,13 +552,15 @@ void InspectorPanel::Paint()
             if(end){RoundRect(dc,7,top-scroll_,width-7,bottom-scroll_,7,7);top=bottom;if(i+1<behaviorFields_.size())group=behaviorFields_[i+1].behavior;}
             rowY=bottom;
         }
-        SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);rowY=width>=250?321:370;
+        SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);rowY=width>=250?329:378;
     }
     for (const auto& entry:behaviorFields_)
     {
+        if(IsBehaviorCollapsed(entry))continue;
         SelectObject(dc,entry.style==BehaviorField::Style::BehaviorHeader ? behaviorFont_ :
             entry.style==BehaviorField::Style::ScriptLabel ? labelFont_ : font_);
-        RECT row{12,rowY-scroll_,width-12,rowY-scroll_+(entry.style==BehaviorField::Style::BehaviorHeader?RowHeight(entry):20)};
+        const int left=entry.style==BehaviorField::Style::BehaviorHeader?32:12;
+        RECT row{left,rowY-scroll_,width-12,rowY-scroll_+(entry.style==BehaviorField::Style::BehaviorHeader?RowHeight(entry):20)};
         if(entry.axis<=0)DrawTextW(dc,entry.label.c_str(),-1,&row,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
         if(entry.axis>=0) {
             const int cell=std::max(30,(width-36)/3);
@@ -525,7 +570,7 @@ void InspectorPanel::Paint()
     }
     SelectObject(dc,font_);
     const auto* mesh = object_ ? object_->GetBehavior<zengine::MeshRenderer>() : nullptr;
-    const int base = (width >= 250 ? 326 : 375) + BehaviorHeight();
+    const int base = (width >= 250 ? 334 : 383) + BehaviorHeight();
     if (mesh)
     {
         const auto asset = mesh->Asset().empty() ? L"Model: None" : mesh->Asset() == zengine::MeshRenderer::CubeAsset ? L"Model: Built-in Cube" : L"Model: " + Wide(mesh->Asset());
@@ -553,9 +598,31 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_SIZE: Layout(); return 0;
     case WM_PAINT: Paint(); return 0;
     case WM_ERASEBKGND: return 1;
+    case WM_CONTEXTMENU: ShowBehaviorMenu({GET_X_LPARAM(l),GET_Y_LPARAM(l)}); return 0;
     case WM_COMMAND:
     {
         if (!editData_ && (LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddAreaCommand)) return 0;
+        const int toggleIndex=LOWORD(w)-FirstBehaviorToggle;
+        if (toggleIndex>=0 && toggleIndex<static_cast<int>(behaviorToggles_.size()) && HIWORD(w)==BN_CLICKED)
+        {
+            auto* behavior=behaviorToggles_[toggleIndex].behavior;
+            if (!behavior) return 0;
+            if (!collapsedBehaviors_.erase(behavior)) collapsedBehaviors_.insert(behavior);
+            Layout();
+            InvalidateRect(window_,nullptr,FALSE);
+            return 0;
+        }
+        if(LOWORD(w)==RemoveBehaviorCommand)
+        {
+            auto* behavior=contextBehavior_;contextBehavior_=nullptr;
+            if(!behavior || !editData_ || !object_ || (scriptHost_&&scriptHost_->Playing()))return 0;
+            bool attached=false;for(std::size_t i=0;i<object_->BehaviorCount();++i)if(&object_->BehaviorAt(i)==behavior){attached=true;break;}
+            if(!attached)return 0;
+            if(auto* script=dynamic_cast<zengine::ScriptBehavior*>(behavior);script&&scriptHost_)scriptHost_->Forget(*script);
+            collapsedBehaviors_.erase(behavior);
+            if(object_->RemoveBehavior(*behavior)){RefreshBehaviors();if(changed_)changed_();}
+            return 0;
+        }
         const int dynamicIndex=LOWORD(w)-FirstBehaviorField;
         if (dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()))
         {
@@ -619,7 +686,14 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
         SetBkColor(reinterpret_cast<HDC>(w), valid ? RGB(52, 54, 60) : RGB(92, 45, 45));
         return reinterpret_cast<LRESULT>(valid ? fieldBrush_ : invalidBrush_);
     }
-    case WM_MOUSEWHEEL: scroll_ -= GET_WHEEL_DELTA_WPARAM(w) / WHEEL_DELTA * 37; Layout(); return 0;
+    case WM_MOUSEWHEEL:
+    {
+        wheelRemainder_ += GET_WHEEL_DELTA_WPARAM(w);
+        const int steps=wheelRemainder_/WHEEL_DELTA;
+        wheelRemainder_-=steps*WHEEL_DELTA;
+        if(steps){scroll_-=steps*32;Layout();}
+        return 0;
+    }
     case WM_VSCROLL:
     {
         const int action = LOWORD(w);
@@ -647,6 +721,52 @@ bool InspectorPanel::AssignPrefabAt(POINT point,const std::string& asset)
     }
     return false;
 }
+void InspectorPanel::ShowBehaviorMenu(POINT screenPoint)
+{
+    POINT point=screenPoint;
+    if(point.x==static_cast<LONG>(-1) && point.y==static_cast<LONG>(-1))GetCursorPos(&point);
+    POINT client=point;ScreenToClient(window_,&client);
+    RECT bounds{};GetClientRect(window_,&bounds);const int width=static_cast<int>(bounds.right);
+    int y=(width>=250?329:378)-scroll_;zengine::Behavior* target=nullptr;
+    for(const auto& entry:behaviorFields_)
+    {
+        const int height=RowHeight(entry);
+        if(height>0 && client.y>=y && client.y<y+height){target=entry.behavior;break;}
+        y+=height;
+    }
+    if(!target)return;
+    contextBehavior_=target;
+    HMENU menu=CreatePopupMenu();
+    AppendMenuW(menu,MF_STRING|((!editData_||!object_|| (scriptHost_&&scriptHost_->Playing()))?MF_GRAYED:0),RemoveBehaviorCommand,L"Remove Behavior");
+    const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,window_,nullptr);DestroyMenu(menu);
+    if(command==RemoveBehaviorCommand && editData_ && object_ && !(scriptHost_&&scriptHost_->Playing()))
+    {
+        // Defer destruction until the child control's WM_CONTEXTMENU callback
+        // has unwound. Destroying that control synchronously crashes comctl32.
+        if(!PostMessageW(window_,WM_COMMAND,MAKEWPARAM(RemoveBehaviorCommand,0),0))contextBehavior_=nullptr;
+    }
+    else contextBehavior_=nullptr;
+}
+bool InspectorPanel::AssignObjectReferenceAt(POINT point, zengine::GameObjectId target)
+{
+    const auto control=WindowFromPoint(point);
+    for (std::size_t i=0;i<behaviorFields_.size();++i)
+    {
+        auto& entry=behaviorFields_[i];
+        if (!entry.objectReference || !entry.field.window || (control!=entry.field.window && !IsChild(entry.field.window,control))) continue;
+        if (!editData_ || !IsWindowEnabled(entry.field.window)) return false;
+        auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior);
+        if (!script || !scriptHost_) return false;
+        scriptHost_->SetObjectReference(*script,entry.name,target);
+        const auto fields=scriptHost_->Fields(*script);
+        for (const auto& field:fields) if (field.name==entry.name) { updating_=true;SetWindowTextW(entry.field.window,Wide(field.value).c_str());updating_=false;entry.field.focusText=Wide(field.value);break; }
+        entry.field.valid=true;
+        if (changed_) changed_();
+        InvalidateRect(window_,nullptr,FALSE);
+        return true;
+    }
+    return false;
+}
 LRESULT CALLBACK InspectorPanel::EditProcedure(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR data)
 {
     try { return reinterpret_cast<InspectorPanel*>(data)->HandleEdit(window, message, w, l); }
@@ -654,10 +774,16 @@ LRESULT CALLBACK InspectorPanel::EditProcedure(HWND window, UINT message, WPARAM
 }
 LRESULT InspectorPanel::HandleEdit(HWND window, UINT message, WPARAM w, LPARAM l)
 {
+    if(message==WM_CONTEXTMENU){SendMessageW(this->window_,message,w,l);return 0;}
     const int dynamicIndex=GetDlgCtrlID(window)-FirstBehaviorField;
     if (dynamicIndex>=0 && dynamicIndex<static_cast<int>(behaviorFields_.size()))
     {
-        if(behaviorFields_[dynamicIndex].multiline && (message==WM_KEYDOWN || message==WM_CHAR) && w==VK_RETURN)return DefSubclassProc(window,message,w,l);
+        if(message==WM_CONTEXTMENU){SendMessageW(this->window_,message,w,l);return 0;}
+        if(message==WM_MOUSEWHEEL){SendMessageW(this->window_,message,w,l);return 0;}
+        // Let the character message insert the newline exactly once. Forwarding
+        // both keydown and char makes RichEdit create two lines for one Enter.
+        if(behaviorFields_[dynamicIndex].multiline && message==WM_KEYDOWN && w==VK_RETURN)return 0;
+        if(behaviorFields_[dynamicIndex].multiline && message==WM_CHAR && w==VK_RETURN)return DefSubclassProc(window,message,w,l);
         if (message==WM_GETDLGCODE) return DLGC_WANTALLKEYS;
         if (message==WM_KEYDOWN && (w==VK_RETURN || w==VK_ESCAPE || w==VK_TAB))
         {
@@ -675,6 +801,8 @@ LRESULT InspectorPanel::HandleEdit(HWND window, UINT message, WPARAM w, LPARAM l
         return DefSubclassProc(window,message,w,l);
     }
     const int index = GetDlgCtrlID(window) - NameField;
+    if(index<0 || index>=static_cast<int>(fields_.size()))return DefSubclassProc(window,message,w,l);
+    if(message==WM_MOUSEWHEEL){SendMessageW(this->window_,message,w,l);return 0;}
     if (message == WM_GETDLGCODE) return DLGC_WANTALLKEYS;
     if (message == WM_KEYDOWN && (w == VK_RETURN || w == VK_ESCAPE || w == VK_TAB))
     {

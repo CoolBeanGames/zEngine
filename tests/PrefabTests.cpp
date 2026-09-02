@@ -55,6 +55,15 @@ void PrefabTests()
     Put(innerFile,before+"\n"); Reject([&] { p::Save(assets,innerFile,inner,&before); }); Put(innerFile,before);
     Check(s::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Old scenes no longer load");
     Check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM failed");
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));Check(editor.Create(SW_HIDE,test.path)!=nullptr,"Prefab rename regression editor creation failed");editor.InitializeRenderer();
+        Check(editor.SaveScene(assets/L"RenameRegression.zscene"),"Save prefab rename regression baseline");
+        const auto first=editor.SelectedGameObject()->Id();auto& unsaved=editor.CreateEmptyGameObject();unsaved.SetName("Unsaved survivor");const auto unsavedId=unsaved.Id();
+        const auto created=editor.CreatePrefab(first);editor.RenameAsset(created,L"RenamedPrefab");
+        Check(editor.GameObjects().Size()==2 && editor.GameObjects().Find(unsavedId) && editor.GameObjects().Find(unsavedId)->Name()=="Unsaved survivor","Renaming a new prefab discarded the live scene");
+        Check(editor.SaveScene(),"Save scene after renaming its new prefab");const auto captured=s::Decode(s::Load(editor.ScenePath()));
+        Check(captured.objects.size()==2 && captured.objects[0].prefab.ends_with("RenamedPrefab.zprefab"),"Renaming a new prefab did not preserve/update its live scene link");
+    }
     std::filesystem::path prefab,secondScene,firstScene,nestedPrefab;
     {
         EditorShell editor(GetModuleHandleW(nullptr)); const auto window=editor.Create(SW_HIDE,test.path); editor.InitializeRenderer();
