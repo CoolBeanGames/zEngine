@@ -1,10 +1,15 @@
 #include "ScriptCompletion.h"
 #include "ScriptTyping.h"
 #include "ScriptAssets.h"
+#include "zscript/NativeTypes.h"
+#include <algorithm>
+#include <cwctype>
 #include <functional>
 
 namespace scriptCompletion {
 namespace {
+// Native type names are ASCII; widen them for the wide-string completion index.
+std::wstring Wide(std::string_view text) { return std::wstring(text.begin(), text.end()); }
 struct Token { std::wstring text; std::size_t pos; };
 bool Word(wchar_t c){return std::iswalnum(c)||c==L'_';}
 std::vector<Token> Tokens(const std::wstring& source) {
@@ -31,13 +36,16 @@ std::vector<ClassRange> Classes(const std::vector<Token>& t) {
 }
 Index::Index() {
     auto add=[&](const wchar_t* type,const wchar_t* name,const wchar_t* result,bool function=false){types_[type].members[name]={name,result,function};};
-    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"Vector3",L"array",L"prefab",L"gameObject",L"GameObject",L"Transform",L"Timer",L"Behavior",L"PhysicsBody",L"RigidBody",L"KinematicBody",L"StaticBody",L"Area",L"Collider"})types_[type];
+    for(const auto type:{L"char",L"int",L"float",L"bool",L"string",L"void",L"array"})types_[type];
+    // Native types (Vector3, prefab, gameObject, Transform, physics bodies, ...) come from the shared registry.
+    for(const auto& native:zengine::script::NativeTypes())types_[Wide(native.name)];
     types_[L"GameObject"].base=L"gameObject";
-    types_[L"Behavior"].base=L"gameObject";types_[L"PhysicsBody"].base=L"Behavior";for(const auto type:{L"RigidBody",L"KinematicBody",L"StaticBody",L"Area"})types_[type].base=L"PhysicsBody";types_[L"Collider"].base=L"Behavior";
+    for(const auto& native:zengine::script::NativeTypes())if(!native.base.empty())types_[Wide(native.name)].base=Wide(native.base);
     add(L"gameObject",L"transform",L"Transform");
     add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);add(L"gameObject",L"make_timer",L"Timer",true);
-    add(L"gameObject",L"physics",L"PhysicsBody");
-    add(L"gameObject",L"rigidbody",L"RigidBody");add(L"gameObject",L"kinematic_body",L"KinematicBody");add(L"gameObject",L"static_body",L"StaticBody");add(L"gameObject",L"area",L"Area");add(L"gameObject",L"collider",L"Collider");
+    for(const auto& native:zengine::script::NativeTypes())
+        if(!native.accessor.empty() && native.accessor!=std::string_view("transform"))
+            types_[L"gameObject"].members[Wide(native.accessor)]={Wide(native.accessor),Wide(native.name),false};
     for(const auto name:{L"position",L"rotation",L"scale"})add(L"Transform",name,L"Vector3");
     for(const auto name:{L"global_position",L"global_rotation",L"global_scale"})add(L"Transform",name,L"Vector3");
     for(const auto name:{L"forward",L"up",L"right"})add(L"Transform",name,L"Vector3");
@@ -59,7 +67,12 @@ Index::Index() {
     add(L"PhysicsBody",L"velocity",L"Vector3");add(L"PhysicsBody",L"angular_velocity",L"Vector3");
     for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})add(L"PhysicsBody",name,L"void",true);
     for(const auto name:{L"collision_entered",L"collision_stayed",L"collision_exited",L"area_entered",L"area_stayed",L"area_exited"})add(L"PhysicsBody",name,L"signal");
-    for(const auto& [alias,canonical]:std::initializer_list<std::pair<const wchar_t*,const wchar_t*>>{{L"gameobject",L"gameObject"},{L"transform",L"Transform"},{L"timer",L"Timer"},{L"behavior",L"Behavior"},{L"physicsbody",L"PhysicsBody"},{L"rigidbody",L"RigidBody"},{L"kinematicbody",L"KinematicBody"},{L"staticbody",L"StaticBody"},{L"area",L"Area"},{L"collider",L"Collider"},{L"mathf",L"Mathf"}})types_[alias]=types_.at(canonical);
+    // Accept the lower-case spelling of every native type, matching the compiler's Canonical().
+    for(const auto& native:zengine::script::NativeTypes()) {
+        std::wstring lower=Wide(native.name);
+        std::transform(lower.begin(),lower.end(),lower.begin(),[](wchar_t c){return std::towlower(c);});
+        if(auto it=types_.find(Wide(native.name)); it!=types_.end() && lower!=it->first) types_[lower]=it->second;
+    }
 }
 void Index::AddString(std::wstring value) {
     if(value.empty() || value.size()>128 || strings_.size()>=4096)return;

@@ -1,4 +1,5 @@
 #include "zscript/Script.h"
+#include "zscript/NativeTypes.h"
 #include <fstream>
 #include <functional>
 #include <cmath>
@@ -454,6 +455,22 @@ void NativeTypeAliases() {
     Runtime runtime(program);const auto object=runtime.Create("Native");runtime.Call(object,"take",{object});
     Check(std::get<bool>(runtime.Call(object,"valid")),"Lowercase native behavior aliases were not canonicalized consistently");
     Check(program->HasClass("rigidbody") && program->IsGameObject("staticbody"),"Native aliases were not recognized by Program type queries");
+
+    // The phone book (zscript/NativeTypes.h) is the single source: every registered
+    // native type must be a known class, and every component's gameObject accessor
+    // must resolve - so adding one row there wires the whole compiler automatically.
+    for (const auto& native : zengine::script::NativeTypes()) {
+        if (!native.scriptClass) continue;
+        Check(program->HasClass(std::string(native.name)), "Registered native type not a known class: " + std::string(native.name));
+        if (!native.accessor.empty()) {
+            auto check = Compile("class Probe : gameObject { func start(){ " + std::string(native.accessor) + "; } }");
+            Check(static_cast<bool>(check), "gameObject." + std::string(native.accessor) + " accessor for " + std::string(native.name) + " did not resolve");
+        }
+        if (native.component) {
+            auto derived = Compile("class Derived : " + std::string(native.name) + " { func start(){} }");
+            Check(static_cast<bool>(derived), "Cannot derive a script from registered component " + std::string(native.name));
+        }
+    }
 }
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {

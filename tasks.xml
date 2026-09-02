@@ -722,7 +722,7 @@ a Breakpoint has been reached
     <prompt>if we dont have it already we need type reference systems. some managment system that can easily be expanded (1 line) with new system types as we make them. then to add lets say an audio player, we just make audio_player.cpp then pass the reference to the system, it will then hook up the auto-complete, reference passing, and any other connections needed</prompt>
     <requirements>reference system built</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -730,14 +730,14 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>big,systems,data,scripting</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Built the "phone book": scripting/include/zscript/NativeTypes.h is now the single registry of native types (name, base, gameObject accessor field, component/physicsBody/scriptClass flags). Everything reads from it: the compiler's Canonical() alias resolver, NativeBehavior/NativeClass predicates, the built-in class prelude (gameObject accessor fields + physics-body class construction), the runtime component binding in Create()/BindNativeBehavior(), the read-only-accessor check, ScriptCompletion's type list + base chains + gameObject members + lowercase aliases, and ScriptHost's three former if/else chains (Reference, BindNative, PreviewReference) - now one NativeBindings() table on the engine side. Adding a new referenceable component (e.g. audio_player) = one row in NativeTypes.h + one row in ScriptHost::NativeBindings() + the C++ behavior class; autocomplete, canonical spelling, gameObject.<accessor>, drag-assignment and standalone-build binding all follow. Behaviour is byte-for-byte unchanged: full ctest 27/27 green, plus a new registry-driven check in ScriptTests that every registered type is a known class and every accessor resolves. Physics bodies keep their PhysicsBody base / owner wiring, keyed off the registry's physicsBody flag. Unblocks ZE-34.</notes>
+    <filesChanged>scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptCompletion.cpp; src/ScriptHost.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-38">

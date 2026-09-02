@@ -1,6 +1,8 @@
 #include "ScriptHost.h"
 #include "zscript/Text.h"
+#include "zscript/NativeTypes.h"
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -21,6 +23,32 @@ namespace
     }
     bool Editable(const std::string& type) { return type=="char" || type=="int" || type=="float" || type=="bool" || type=="string" || type=="Vector3" || type=="prefab"; }
     bool ReferenceTypeName(std::string_view type) { return !Editable(std::string(type)) && type!="array"; }
+
+    // Engine half of the native-type phone book: maps a script type name to how the host
+    // detects the component on a GameObject and which Runtime accessor field exposes it.
+    // Add a new referenceable component here (one row) and in zscript/NativeTypes.h.
+    struct NativeBinding {
+        std::string_view type;                        // script type name, e.g. "RigidBody"
+        std::string_view field;                       // Runtime.Get(proxy, field) accessor
+        std::function<bool(const GameObject&)> present;
+    };
+    const std::vector<NativeBinding>& NativeBindings()
+    {
+        static const std::vector<NativeBinding> table = {
+            {"PhysicsBody",   "physics",        [](const GameObject& o){ return o.GetBehavior<physics::Body>()!=nullptr; }},
+            {"RigidBody",     "rigidbody",      [](const GameObject& o){ return o.GetBehavior<physics::RigidBody>()!=nullptr; }},
+            {"KinematicBody", "kinematic_body", [](const GameObject& o){ return o.GetBehavior<physics::KinematicBody>()!=nullptr; }},
+            {"StaticBody",    "static_body",    [](const GameObject& o){ return o.GetBehavior<physics::StaticBody>()!=nullptr; }},
+            {"Area",          "area",           [](const GameObject& o){ return o.GetBehavior<physics::Area>()!=nullptr; }},
+            {"Collider",      "collider",       [](const GameObject& o){ return o.GetBehavior<physics::Collider>()!=nullptr; }},
+        };
+        return table;
+    }
+    const NativeBinding* FindBinding(std::string_view type)
+    {
+        for (const auto& b : NativeBindings()) if (b.type==type) return &b;
+        return nullptr;
+    }
     std::string Format(const Value& value)
     {
         std::ostringstream text; text.imbue(std::locale::classic()); text<<std::setprecision(17);
@@ -114,12 +142,8 @@ namespace
             const auto proxy=Proxy(id);
             if(type=="gameObject")return proxy;
             if(type=="Transform")return std::get<ObjectRef>(runtime.Get(proxy,"transform"));
-            if(type=="PhysicsBody")return native->GetBehavior<physics::Body>()?std::get<ObjectRef>(runtime.Get(proxy,"physics")):ObjectRef{};
-            if(type=="RigidBody")return native->GetBehavior<physics::RigidBody>()?std::get<ObjectRef>(runtime.Get(proxy,"rigidbody")):ObjectRef{};
-            if(type=="KinematicBody")return native->GetBehavior<physics::KinematicBody>()?std::get<ObjectRef>(runtime.Get(proxy,"kinematic_body")):ObjectRef{};
-            if(type=="StaticBody")return native->GetBehavior<physics::StaticBody>()?std::get<ObjectRef>(runtime.Get(proxy,"static_body")):ObjectRef{};
-            if(type=="Area")return native->GetBehavior<physics::Area>()?std::get<ObjectRef>(runtime.Get(proxy,"area")):ObjectRef{};
-            if(type=="Collider")return native->GetBehavior<physics::Collider>()?std::get<ObjectRef>(runtime.Get(proxy,"collider")):ObjectRef{};
+            if(const auto* binding=FindBinding(type))
+                return binding->present(*native)?std::get<ObjectRef>(runtime.Get(proxy,std::string(binding->field))):ObjectRef{};
             if(type=="Behavior") {
                 if(native->GetBehavior<physics::Body>())return std::get<ObjectRef>(runtime.Get(proxy,"physics"));
                 if(native->GetBehavior<physics::Collider>())return std::get<ObjectRef>(runtime.Get(proxy,"collider"));
@@ -129,11 +153,13 @@ namespace
         }
         void BindNative(GameObjectId id,ObjectRef ref) {
             const auto* native=scene.Find(id);if(!native)throw std::runtime_error("Scene object no longer exists.");
-            if(native->GetBehavior<physics::RigidBody>())runtime.BindNativeBehavior(ref,"RigidBody");
-            else if(native->GetBehavior<physics::KinematicBody>())runtime.BindNativeBehavior(ref,"KinematicBody");
-            else if(native->GetBehavior<physics::StaticBody>())runtime.BindNativeBehavior(ref,"StaticBody");
-            else if(native->GetBehavior<physics::Area>())runtime.BindNativeBehavior(ref,"Area");
-            if(native->GetBehavior<physics::Collider>())runtime.BindNativeBehavior(ref,"Collider");
+            bool boundBody=false;
+            for(const auto& binding:NativeBindings()) {
+                if(binding.type=="PhysicsBody" || !binding.present(*native))continue;
+                const auto* info=script::FindNativeType(binding.type);
+                if(info && info->physicsBody){ if(!boundBody){runtime.BindNativeBehavior(ref,std::string(binding.type));boundBody=true;} }
+                else runtime.BindNativeBehavior(ref,std::string(binding.type));
+            }
         }
         GameObjectId NativeId(ObjectRef ref) const {
             if(!ref.id)return 0;
@@ -196,20 +222,19 @@ script::ObjectRef ScriptHost::PreviewReference(Record& record, GameObjectId id, 
     {
         proxy = record.preview->Create("gameObject");
         record.previewProxies.emplace(id, proxy);
-        if (native->GetBehavior<physics::RigidBody>()) record.preview->BindNativeBehavior(proxy, "RigidBody");
-        else if (native->GetBehavior<physics::KinematicBody>()) record.preview->BindNativeBehavior(proxy, "KinematicBody");
-        else if (native->GetBehavior<physics::StaticBody>()) record.preview->BindNativeBehavior(proxy, "StaticBody");
-        else if (native->GetBehavior<physics::Area>()) record.preview->BindNativeBehavior(proxy, "Area");
-        if (native->GetBehavior<physics::Collider>()) record.preview->BindNativeBehavior(proxy, "Collider");
+        bool boundBody = false;
+        for (const auto& binding : NativeBindings())
+        {
+            if (binding.type == "PhysicsBody" || !binding.present(*native)) continue;
+            const auto* info = script::FindNativeType(binding.type);
+            if (info && info->physicsBody) { if (!boundBody) { record.preview->BindNativeBehavior(proxy, binding.type); boundBody = true; } }
+            else record.preview->BindNativeBehavior(proxy, binding.type);
+        }
     }
     if (type == "gameObject") return proxy;
     if (type == "Transform") return std::get<script::ObjectRef>(record.preview->Get(proxy, "transform"));
-    if (type == "PhysicsBody") return native->GetBehavior<physics::Body>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "physics")) : script::ObjectRef{};
-    if (type == "RigidBody") return native->GetBehavior<physics::RigidBody>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "rigidbody")) : script::ObjectRef{};
-    if (type == "KinematicBody") return native->GetBehavior<physics::KinematicBody>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "kinematic_body")) : script::ObjectRef{};
-    if (type == "StaticBody") return native->GetBehavior<physics::StaticBody>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "static_body")) : script::ObjectRef{};
-    if (type == "Area") return native->GetBehavior<physics::Area>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "area")) : script::ObjectRef{};
-    if (type == "Collider") return native->GetBehavior<physics::Collider>() ? std::get<script::ObjectRef>(record.preview->Get(proxy, "collider")) : script::ObjectRef{};
+    if (const auto* binding = FindBinding(type))
+        return binding->present(*native) ? std::get<script::ObjectRef>(record.preview->Get(proxy, std::string(binding->field))) : script::ObjectRef{};
     if (type == "Behavior")
     {
         if (native->GetBehavior<physics::Body>()) return std::get<script::ObjectRef>(record.preview->Get(proxy, "physics"));

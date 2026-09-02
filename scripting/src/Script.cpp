@@ -1,5 +1,6 @@
 #include "zscript/Script.h"
 #include "zscript/Text.h"
+#include "zscript/NativeTypes.h"
 #include "WorldTransform.h"
 
 #include <algorithm>
@@ -27,13 +28,17 @@ struct Token {
 bool Alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
 bool Digit(char c) { return c >= '0' && c <= '9'; }
 std::string Canonical(std::string name) {
-    static const std::map<std::string,std::string> aliases = {
-        {"gameobject","gameObject"},{"transform","Transform"},{"inputservice","InputService"},{"inputaction","InputAction"},
-        {"physicsservice","PhysicsService"},{"mathf","Mathf"},{"timer","Timer"},{"behavior","Behavior"},
-        {"physicsbody","PhysicsBody"},{"rigidbody","RigidBody"},{"kinematicbody","KinematicBody"},
-        {"staticbody","StaticBody"},{"area","Area"},{"collider","Collider"},{"prefab","prefab"},
-        {"vector3","Vector3"},{"gameObject","gameObject"},{"GameObject","gameObject"}
-    };
+    // Lower-case spelling -> canonical native type name, derived once from the phone book.
+    static const std::map<std::string,std::string> aliases = [] {
+        std::map<std::string,std::string> map;
+        for (const auto& type : NativeTypes()) {
+            std::string lower(type.name);
+            std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+            map.emplace(std::move(lower),std::string(type.name));
+        }
+        return map;
+    }();
+    if (name == "GameObject") return "gameObject";
     auto lower=name;std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
     if(const auto it=aliases.find(lower);it!=aliases.end())return it->second;
     return name;
@@ -317,8 +322,8 @@ bool Numeric(const std::string& t) { return t == "int" || t == "float"; }
 bool TextType(const std::string& t) { return t=="string" || t=="char"; }
 bool GlobalField(const std::string& name) {return name=="global_position" || name=="global_rotation" || name=="global_scale";}
 bool DirectionField(const std::string& name) {return name=="forward" || name=="up" || name=="right";}
-bool NativeBehavior(const std::string& name){return name=="Behavior"||name=="PhysicsBody"||name=="RigidBody"||name=="KinematicBody"||name=="StaticBody"||name=="Area"||name=="Collider";}
-bool NativeClass(const std::string& name){return name=="gameObject"||name=="Transform"||name=="InputService"||name=="InputAction"||name=="PhysicsService"||name=="Mathf"||name=="Timer"||name=="prefab"||NativeBehavior(name);}
+bool NativeBehavior(const std::string& name){const auto* t=FindNativeType(name);return t && (t->component || t->name=="Behavior" || t->name=="PhysicsBody");}
+bool NativeClass(const std::string& name){const auto* t=FindNativeType(name);return t && t->scriptClass;}
 Value DefaultValue(const std::string& t) {
     if (t == "int") return std::int64_t{0};
     if (t == "float") return 0.0;
@@ -558,7 +563,8 @@ class BytecodeCompiler {
         auto receiver = Expression(*e.children[0]);
         Require(receiver != "Vector3", e.token, "Cannot assign to a temporary vector component");
         Require(receiver != "InputAction",e.token,"Input state is read-only");
-        Require(!(program.Assignable("gameObject",receiver) && (e.token.text=="physics"||e.token.text=="rigidbody"||e.token.text=="kinematic_body"||e.token.text=="static_body"||e.token.text=="area"||e.token.text=="collider")),e.token,"Native behavior references are read-only");
+        const auto nativeAccessor=[&](const std::string& field){for(const auto& n:NativeTypes())if(!n.accessor.empty()&&n.accessor!="transform"&&n.accessor==field)return true;return false;};
+        Require(!(program.Assignable("gameObject",receiver) && nativeAccessor(e.token.text)),e.token,"Native behavior references are read-only");
             Require(!(program.Assignable("Transform",receiver) && GlobalField(e.token.text)),e.token,"Global transform fields are read-only");
         return {FieldType(receiver, e.token), true, 0, e.token.text};
     }
@@ -680,12 +686,10 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Class gameObject; gameObject.name = "gameObject";
     gameObject.fields.push_back({Token{Token::Identifier, "transform"}, "Transform"});
     gameObject.fields.push_back({Token{Token::Identifier, "parent"}, "gameObject"});
-    gameObject.fields.push_back({Token{Token::Identifier, "physics"}, "PhysicsBody"});
-    gameObject.fields.push_back({Token{Token::Identifier,"rigidbody"},"RigidBody"});
-    gameObject.fields.push_back({Token{Token::Identifier,"kinematic_body"},"KinematicBody"});
-    gameObject.fields.push_back({Token{Token::Identifier,"static_body"},"StaticBody"});
-    gameObject.fields.push_back({Token{Token::Identifier,"area"},"Area"});
-    gameObject.fields.push_back({Token{Token::Identifier,"collider"},"Collider"});
+    // Read-only accessor field per native component type (physics, rigidbody, collider, ...).
+    for(const auto& native:NativeTypes())
+        if(!native.accessor.empty() && native.accessor!="transform")
+            gameObject.fields.push_back({Token{Token::Identifier,std::string(native.accessor)},std::string(native.name)});
     Function find;find.params={"string"};find.result="gameObject";gameObject.methods.emplace("find",std::move(find));
     Function makeTimer;makeTimer.params={"float"};makeTimer.result="Timer";gameObject.methods.emplace("make_timer",std::move(makeTimer));
     Function print;print.params={"string"};print.result="void";gameObject.methods.emplace("print",std::move(print));
@@ -693,7 +697,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Class timer;timer.name="Timer";timer.base="gameObject";timer.fields=program.classes.at("gameObject").fields;timer.signals={"finished"};program.classes.emplace(timer.name,std::move(timer));
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
     auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());
-    for(const auto& name:{"RigidBody","KinematicBody","StaticBody","Area"}){Class body;body.name=name;body.base="PhysicsBody";body.fields=nativePhysics.fields;body.signals=nativePhysics.signals;program.classes.emplace(body.name,std::move(body));}
+    for(const auto& native:NativeTypes())if(native.physicsBody){Class body;body.name=std::string(native.name);body.base=std::string(native.base);body.fields=nativePhysics.fields;body.signals=nativePhysics.signals;program.classes.emplace(body.name,std::move(body));}
     Class collider;collider.name="Collider";collider.base="Behavior";collider.fields=program.classes.at("gameObject").fields;program.classes.emplace(collider.name,std::move(collider));
     std::map<std::string, const ClassAst*> byName;
     for (const auto& ast : asts) {
@@ -1023,13 +1027,12 @@ struct Runtime::Impl {
                 const auto transform=Create("Transform",t);Resolve(transform,t).transformOwner=ref;Set(ref,"transform",transform,t);
                 if(program->Assignable("PhysicsBody",name)){
                     Resolve(ref,t).physicsOwner=ref;Set(ref,"physics",ref,t);
-                    if(program->Assignable("RigidBody",name))Set(ref,"rigidbody",ref,t);
-                    else if(program->Assignable("KinematicBody",name))Set(ref,"kinematic_body",ref,t);
-                    else if(program->Assignable("StaticBody",name))Set(ref,"static_body",ref,t);
-                    else if(program->Assignable("Area",name))Set(ref,"area",ref,t);
+                    for(const auto& native:NativeTypes())
+                        if(native.physicsBody && program->Assignable(std::string(native.name),name)){Set(ref,std::string(native.accessor),ref,t);break;}
                 } else {
                     const auto physics=Create("PhysicsBody",t);Resolve(physics,t).physicsOwner=ref;Set(ref,"physics",physics,t);
-                    if(program->Assignable("Collider",name))Set(ref,"collider",ref,t);
+                    for(const auto& native:NativeTypes())
+                        if(native.component && !native.physicsBody && program->Assignable(std::string(native.name),name)){Set(ref,std::string(native.accessor),ref,t);break;}
                 }
             }
             for (auto it = bases.rbegin(); it != bases.rend(); ++it) Execute(ref, (*it)->initializer, {}, t);
@@ -1038,10 +1041,11 @@ struct Runtime::Impl {
     }
     void BindNativeBehavior(ObjectRef ownerRef,const std::string& type,const Token& t={}) {
         auto& owner=Resolve(ownerRef,t);if(!program->Assignable("gameObject",owner.type->name))Error(t,"Native behaviors require a gameObject owner");
-        const bool body=type=="RigidBody"||type=="KinematicBody"||type=="StaticBody"||type=="Area";if(!body&&type!="Collider")Error(t,"Unknown native behavior type '"+type+"'");
+        const auto* native=FindNativeType(type);
+        if(!native||!native->component)Error(t,"Unknown native behavior type '"+type+"'");
         ObjectRef behavior=program->Assignable(type,owner.type->name)?ownerRef:Create(type,t);
-        if(body){Resolve(behavior,t).physicsOwner=ownerRef;Set(ownerRef,"physics",behavior,t,false);const auto field=type=="RigidBody"?"rigidbody":type=="KinematicBody"?"kinematic_body":type=="StaticBody"?"static_body":"area";Set(ownerRef,field,behavior,t,false);}
-        else Set(ownerRef,"collider",behavior,t,false);
+        if(native->physicsBody){Resolve(behavior,t).physicsOwner=ownerRef;Set(ownerRef,"physics",behavior,t,false);}
+        Set(ownerRef,std::string(native->accessor),behavior,t,false);
     }
     static double Number(const Value& v) { if (auto i = std::get_if<std::int64_t>(&v)) return static_cast<double>(*i); return std::get<double>(v); }
     static bool IsText(const Value& value){return std::holds_alternative<std::string>(value) || std::holds_alternative<char32_t>(value);}
