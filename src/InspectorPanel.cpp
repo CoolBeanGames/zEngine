@@ -16,7 +16,7 @@
 namespace
 {
     constexpr wchar_t ClassName[] = L"zEngineInspector";
-    constexpr COLORREF Background = RGB(40, 42, 47), Text = RGB(214, 216, 221);
+    constexpr COLORREF Background = RGB(40, 42, 47), Text = RGB(214, 216, 221), BehaviorBorder = RGB(83, 87, 98), SectionBorder = RGB(112, 118, 132);
     constexpr COLORREF AxisColor(int axis) { return axis==0?RGB(239,92,92):axis==1?RGB(104,205,120):RGB(100,156,244); }
     std::wstring ReadText(HWND window)
     {
@@ -497,6 +497,20 @@ void InspectorPanel::Paint()
     label(L"Rotation: degrees | Shift-drag: fine", 12, width >= 250 ? 275 : 324, width - 24);
     label(object_ && object_->BehaviorCount() ? L"Behaviors attached" : L"No behaviors attached", 12, width >= 250 ? 297 : 346, width - 24);
     int rowY=width>=250?321:370;
+    if(!behaviorFields_.empty()) {
+        const auto sectionPen=CreatePen(PS_SOLID,2,SectionBorder);const auto oldSectionPen=SelectObject(dc,sectionPen);const auto oldSectionBrush=SelectObject(dc,GetStockObject(HOLLOW_BRUSH));
+        RoundRect(dc,4,(width>=250?291:340)-scroll_,width-4,rowY+BehaviorHeight()+6-scroll_,9,9);
+        SelectObject(dc,oldSectionBrush);SelectObject(dc,oldSectionPen);DeleteObject(sectionPen);
+        const auto pen=CreatePen(PS_SOLID,1,BehaviorBorder);const auto oldPen=SelectObject(dc,pen);const auto oldBrush=SelectObject(dc,GetStockObject(HOLLOW_BRUSH));
+        int top=rowY;auto* group=behaviorFields_.front().behavior;
+        for(std::size_t i=0;i<behaviorFields_.size();++i) {
+            const int bottom=rowY+RowHeight(behaviorFields_[i]);
+            const bool end=i+1==behaviorFields_.size() || behaviorFields_[i+1].behavior!=group;
+            if(end){RoundRect(dc,7,top-scroll_,width-7,bottom-scroll_,7,7);top=bottom;if(i+1<behaviorFields_.size())group=behaviorFields_[i+1].behavior;}
+            rowY=bottom;
+        }
+        SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);rowY=width>=250?321:370;
+    }
     for (const auto& entry:behaviorFields_)
     {
         SelectObject(dc,entry.style==BehaviorField::Style::BehaviorHeader ? behaviorFont_ :

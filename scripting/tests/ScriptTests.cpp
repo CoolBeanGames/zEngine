@@ -445,9 +445,19 @@ void Timers() {
     Error([&]{Compile("class Bad : gameObject { Timer t=Timer(); }");},"supplied by the host");
     auto invalid=Compile("class Invalid : gameObject {func start(){make_timer(-1);}}");Runtime bad(invalid);auto object=bad.Create("Invalid");Error([&]{bad.Start(object);},"nonnegative");
 }
+void NativeTypeAliases() {
+    auto program=Compile(R"(class Native : rigidbody {
+        rigidbody saved; staticbody static_saved; kinematicbody kinematic_saved; physicsbody physics_saved; collider collider_saved; area area_saved; behavior behavior_saved; transform transform_saved;
+        func take(rigidbody body){saved=body;physics_saved=body;behavior_saved=body;transform_saved=body.transform;}
+        func valid():bool{return saved is rigidbody && saved is physicsbody && saved is behavior && saved is gameobject && physics_saved is RigidBody && transform_saved is Transform;}
+    })");
+    Runtime runtime(program);const auto object=runtime.Create("Native");runtime.Call(object,"take",{object});
+    Check(std::get<bool>(runtime.Call(object,"valid")),"Lowercase native behavior aliases were not canonicalized consistently");
+    Check(program->HasClass("rigidbody") && program->IsGameObject("staticbody"),"Native aliases were not recognized by Program type queries");
+}
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
+        {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},

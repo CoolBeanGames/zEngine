@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -22,7 +23,18 @@ struct Token {
 }
 bool Alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
 bool Digit(char c) { return c >= '0' && c <= '9'; }
-std::string Canonical(std::string name) { return name == "GameObject" ? "gameObject" : name; }
+std::string Canonical(std::string name) {
+    static const std::map<std::string,std::string> aliases = {
+        {"gameobject","gameObject"},{"transform","Transform"},{"inputservice","InputService"},{"inputaction","InputAction"},
+        {"physicsservice","PhysicsService"},{"mathf","Mathf"},{"timer","Timer"},{"behavior","Behavior"},
+        {"physicsbody","PhysicsBody"},{"rigidbody","RigidBody"},{"kinematicbody","KinematicBody"},
+        {"staticbody","StaticBody"},{"area","Area"},{"collider","Collider"},{"prefab","prefab"},
+        {"vector3","Vector3"},{"gameObject","gameObject"},{"GameObject","gameObject"}
+    };
+    auto lower=name;std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    if(const auto it=aliases.find(lower);it!=aliases.end())return it->second;
+    return name;
+}
 bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "for", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Transform", "export", "label"};
     return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || s == "not" || s == "and" || s == "or" || s == "nor" || words.contains(s);

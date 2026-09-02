@@ -1,127 +1,264 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="16">
+<tasks project="zEngine" nextIndex="17">
+  <task id="ZE-16">
+    <name>rigidbody / types</name>
+    <prompt>so it now autocompletes rigidbody but it still throws an error and doesnt see it as a type</prompt>
+    <requirements>rigidbody and every type (collider, staticbody,etc) are seen as valid types</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>true</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>bugs,code,scripting</tags>
+    <notes>Native behavior and component types now accept canonical and lowercase spellings throughout script parsing, Program queries, runtime construction, type checks, syntax coloring, and autocomplete. Added regression coverage for rigidbody, physicsbody, behavior, transform, staticbody, kinematicbody, area, and collider aliases.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-14">
+    <name></name>
+    <prompt>inspector:
+lets add a border or something around each behavior in the inspector so its easier to see where one ends and another begins</prompt>
+    <requirements>inspector borders</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>Reconciled the previously implemented inspector work: each attached behavior is surrounded by its own rounded border, with the existing field layout and scrolling preserved.</notes>
+    <filesChanged>src/InspectorPanel.cpp; tasks.xml</filesChanged>
+  </task>
+  <task id="ZE-15">
+    <name></name>
+    <prompt>lets also throw a border around the entire "behaviors attached section"</prompt>
+    <requirements>border around all behaviors</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>true</error>
+    <errorMessage>Inspector section border source is implemented, but the required builds/debug and Git commit/push cannot execute in this environment: Visual Studio FileTracker returns E_ACCESSDENIED and Git cannot create .git/index.lock. Retry ZE-15 when workspace build and repository write permissions are available.</errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>Added the enclosing rounded frame around the Behaviors attached section. The source change is present locally; required build and commit verification was blocked by environment permissions.</notes>
+    <filesChanged>src/InspectorPanel.cpp; tasks.xml</filesChanged>
+  </task>
   <task id="ZE-1">
+    <name></name>
     <prompt>input map:
 when making a new input it automatically jumps to the name section so it can be renamed immediatly, the entire default name is hilighted so it can be replaced easily</prompt>
     <requirements>renaming for inputs is automatic</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>New actions now focus the action-name field and select the complete generated name for immediate replacement. Added focused UI coverage and verified zEngineInputTests.</notes>
     <filesChanged>src/input/InputMapEditor.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-2">
+    <name></name>
     <prompt>a 2d axis should return a Vector3, the X vector should be set to x, and the y vector to y. right now it returns a float</prompt>
     <requirements>2D input axis are fixed</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>InputAction.axis now has the Vector3 script type and receives X/Y values for 2D button and analog actions. Input.get_axis remains the explicit scalar API. Completion metadata and runtime tests were updated and verified.</notes>
     <filesChanged>scripting/src/Script.cpp; src/ScriptCompletion.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-3">
+    <name></name>
     <prompt>add an option to "listen" for inputs when you press a button while creating a new action so it will auto assign</prompt>
     <requirements>input map listen for input button added</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>Added Listen controls for button bindings. Listening detects newly pressed keyboard, mouse, or selected-controller buttons, ignores already-held inputs, assigns the matching binding, and supports Escape cancellation. Focused tests pass.</notes>
     <filesChanged>src/input/InputMap.h; src/input/InputMap.cpp; src/input/InputMapEditor.h; src/input/InputMapEditor.cpp; tests/InputTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-4">
+    <name></name>
     <prompt>script editor:
 if else and loops should also auto insert brackets (and parenthesis)</prompt>
     <requirements>auto brackets expanded</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>Typing a space after if, else, while, or for now inserts the appropriate parentheses and indented brace block, places the caret at the condition/body edit point, and ignores comments or existing delimiters. Focused tests pass.</notes>
     <filesChanged>src/ScriptTyping.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-5">
+    <name></name>
     <prompt>if i manually type a bracket that should also auto complete</prompt>
     <requirements>auto brackets on manual insertion</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>Manual opening parentheses, square brackets, and braces now insert matching closers, wrap selected text, ignore comments/strings, and allow typing an existing closer to advance over it. Focused tests pass.</notes>
     <filesChanged>src/ScriptTyping.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-6">
+    <name></name>
     <prompt>if i am using auto complete and i press enter (for new line) the autocomplete should end</prompt>
     <requirements>autocomplete ended on new line</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
+    <tags></tags>
     <notes>Pressing Enter now dismisses both inline and member-list autocomplete before inserting the new line, so a following Tab indents instead of accepting a stale suggestion. All 27 tests pass and the Debug editor was rebuilt in builds/debug.</notes>
     <filesChanged>src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-7">
+    <name></name>
     <prompt>collapse (and expand) brackets funcs and classes</prompt>
     <requirements>code collapse and expand implemented</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>Added non-destructive brace-block folding for classes, functions, and nested blocks using RichEdit hidden formatting. The toolbar and Ctrl shortcuts toggle the current block or expand all without altering saved source or undo history. Focused tests pass.</notes>
     <filesChanged>src/ScriptEditor.h; src/ScriptEditor.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-8">
+    <name></name>
     <prompt>bug in scripting:
 i tried making a new vector3 and multiplying it by the forward vector from transform but it said "Line 15, column 9: Arithmetic   operands must be numeric or compatible Vector3 values"</prompt>
     <requirements>fixed bug</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>Added component-wise Vector3 multiplication in both compile-time type checking and runtime evaluation. Vector3 values can now multiply transform.forward/up/right directly; regression coverage verifies the reported forward-vector case.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-9">
+    <name></name>
     <prompt>scripting runtime:
 I need a way to be able to pass behaviors (and inherit from them), i for instance tried to pass my rigidbody to my script, but i  cant, I also tried to inherit from rigidbody so i could do it directly and i cant, so theres no possible way at present to actually  control my rigidbody at all, this needs fixed. (basically it does not identify rigidbody as a type at all)</prompt>
     <requirements>ability to reference behaviors</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
+    <tags></tags>
     <notes>Added native Behavior, PhysicsBody, RigidBody, KinematicBody, StaticBody, Area, and Collider script types. They support references, parameters, inheritance, type checks, completion, and typed read-only GameObject component fields. The host binds attached native components to those references; RigidBody-derived scripts can directly control native physics. All 27 tests pass and builds/debug was refreshed.</notes>
     <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/PhysicsTests.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-10">
+    <name></name>
     <prompt>ts add the following methods to a new mathf class:
   -lerp
   -sin
@@ -135,15 +272,23 @@ I need a way to be able to pass behaviors (and inherit from them), i for instanc
     <requirements>new math helper functions implemented</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>true</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>Added the built-in Mathf script service with lerp, trigonometry, square root, exponent, rounding, dot product, and cross product. Calls are type checked, guarded against invalid or non-finite results, documented, exposed to autocomplete, and covered by runtime and editor tests.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-11">
+    <name></name>
     <prompt>timer:
 add a timer the idea is we would deifine it as below and it would create an invisible gameObject which the deletes after its done
   -make_timer(time_float_in_seconds).finished.connect(function_to_run)
@@ -151,66 +296,62 @@ add a timer the idea is we would deifine it as below and it would create an invi
     <requirements>timer is added</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>Added one-shot runtime-owned Timer GameObjects through make_timer(seconds). Timers expose the ordinary finished signal, advance on game Update time, pause with the runtime, fire once, invalidate themselves after completion, support autocomplete, and are covered by runtime and editor tests.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-12">
+    <name></name>
     <prompt>if we dont already then add a not keyworld (not, and, or, nor and ! or !=)
 (this should just modify any expression)</prompt>
     <requirements>verified modifier keywords</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
+    <tags></tags>
     <notes>Verified and retained symbolic ! and !=, and added equivalent not, and, and or keywords plus a short-circuit nor operator. Logical aliases type check as bool expressions, are syntax highlighted and autocompleted, documented, and covered by execution tests.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tasks.xml</filesChanged>
   </task>
   <task id="ZE-13">
+    <name></name>
     <prompt>for loops make sure we have them being conditional (while x=true)</prompt>
     <requirements>for loops are conditional</requirements>
     <inProgress>false</inProgress>
     <done>true</done>
+    <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
+    <tags></tags>
     <notes>Added for(condition) as an explicit condition-controlled loop equivalent to while(condition), matching the editor's existing for-block insertion. The keyword is reserved, highlighted, autocompleted, documented, and execution tested. All 27 tests pass and builds/debug was refreshed.</notes>
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; scripting/README.md; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
-  </task>
-  <task id="ZE-14">
-    <prompt>inspector:
-lets add a border or something around each behavior in the inspector so its easier to see where one ends and another begins</prompt>
-    <requirements>inspector borders</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
-  </task>
-  <task id="ZE-15">
-    <prompt>lets also throw a border around the entire "behaviors attached section"</prompt>
-    <requirements>border around all behaviors</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <commit>true</commit>
-    <build>true</build>
-    <release>false</release>
-    <notes></notes>
-    <filesChanged></filesChanged>
   </task>
 </tasks>

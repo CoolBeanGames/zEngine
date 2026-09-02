@@ -59,6 +59,7 @@ Index::Index() {
     add(L"PhysicsBody",L"velocity",L"Vector3");add(L"PhysicsBody",L"angular_velocity",L"Vector3");
     for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})add(L"PhysicsBody",name,L"void",true);
     for(const auto name:{L"collision_entered",L"collision_stayed",L"collision_exited",L"area_entered",L"area_stayed",L"area_exited"})add(L"PhysicsBody",name,L"signal");
+    for(const auto& [alias,canonical]:std::initializer_list<std::pair<const wchar_t*,const wchar_t*>>{{L"gameobject",L"gameObject"},{L"transform",L"Transform"},{L"timer",L"Timer"},{L"behavior",L"Behavior"},{L"physicsbody",L"PhysicsBody"},{L"rigidbody",L"RigidBody"},{L"kinematicbody",L"KinematicBody"},{L"staticbody",L"StaticBody"},{L"area",L"Area"},{L"collider",L"Collider"},{L"mathf",L"Mathf"}})types_[alias]=types_.at(canonical);
 }
 void Index::AddString(std::wstring value) {
     if(value.empty() || value.size()>128 || strings_.size()>=4096)return;

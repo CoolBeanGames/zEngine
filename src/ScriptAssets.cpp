@@ -146,7 +146,7 @@ namespace zengine::scripts
                 if (word == L"class" || word == L"func" || word == L"return" || word == L"if" || word == L"else" ||
                     word == L"while" || word == L"for" || word == L"true" || word == L"false" || word == L"null" || word == L"this" || word == L"export" || word == L"multiline" || word == L"label" || word == L"signal" || word == L"Input" || word == L"is" || word == L"not" || word == L"and" || word == L"or" || word == L"nor")
                     out.spans.push_back({start,p-start,TokenKind::Keyword});
-                else if (word == L"char" || word == L"int" || word == L"float" || word == L"bool" || word == L"string" || word == L"void" || word == L"gameObject" || word == L"GameObject" || word == L"Transform" || word == L"Vector3" || word == L"array" || word == L"prefab")
+                else if (word == L"char" || word == L"int" || word == L"float" || word == L"bool" || word == L"string" || word == L"void" || word == L"gameObject" || word == L"GameObject" || word == L"gameobject" || word == L"Transform" || word == L"transform" || word == L"Vector3" || word == L"vector3" || word == L"array" || word == L"prefab" || word == L"behavior" || word == L"physicsbody" || word == L"rigidbody" || word == L"kinematicbody" || word == L"staticbody" || word == L"area" || word == L"collider" || word == L"timer" || word == L"mathf")
                     out.spans.push_back({start,p-start,TokenKind::Type});
                 continue;
             }
