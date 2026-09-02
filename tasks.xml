@@ -920,16 +920,16 @@ a Breakpoint has been reached
     <name>start work on 2D Rendering</name>
     <prompt>we need a way to render 2D on top of everything else, right now this will mostly be used for the UI though eventually will be used for a dedicated 2D mode so make it flexible</prompt>
     <requirements>UI rendering framework</requirements>
-    <inProgress>false</inProgress>
+    <inProgress>true</inProgress>
     <done>false</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey></lockKey>
+    <lockKey>k4p9x2wq</lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy>ZE-73</blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
