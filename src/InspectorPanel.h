@@ -23,6 +23,7 @@ public:
     static constexpr int FirstBehaviorToggle = 5000;
     static constexpr int FirstBehaviorBit = 6000; // Collision layer/mask toggle buttons.
     static constexpr int CollisionBits = 16;      // Bits exposed as buttons; higher bits are preserved untouched.
+    static constexpr int AddScriptSubFirst = 7000; // "Add Behavior > Add Script >" submenu items.
     static constexpr int AddBehaviorButton = 1121, MeshEnabled = 1122, ChooseMeshButton = 1123,
         CubeMeshButton = 1124, ClearMeshButton = 1125, AddMeshCommand = 1126, AddScriptCommand = 1127,
         AddColliderCommand=1128,AddRigidBodyCommand=1129,AddKinematicBodyCommand=1130,AddStaticBodyCommand=1131,AddAreaCommand=1132;
@@ -35,6 +36,9 @@ public:
     void SetScriptHost(zengine::ScriptHost* host) { scriptHost_ = host; }
     void RefreshLiveValues();
     void SetAddScriptHandler(std::function<void()> handler) { addScript_ = std::move(handler); }
+    // Populates the "Add Behavior > Add Script" submenu and attaches the chosen script by project-relative path.
+    void SetScriptMenu(std::function<std::vector<std::wstring>()> list, std::function<void(const std::wstring&)> attach)
+    { scriptList_ = std::move(list); attachScript_ = std::move(attach); }
     void SetMeshHandler(std::function<void(MeshAction)> handler) { meshAction_ = std::move(handler); }
     void SetPrefabHandler(std::function<std::optional<std::string>(const std::string&)> handler) { choosePrefab_ = std::move(handler); }
     bool AssignPrefabAt(POINT screenPoint,const std::string& asset);
@@ -103,7 +107,8 @@ private:
     zengine::GameObject* object_ = nullptr;
     std::function<void()> changed_;
     std::function<void()> addScript_;
-    HWND addScriptButton_ = nullptr;
+    std::function<std::vector<std::wstring>()> scriptList_;
+    std::function<void(const std::wstring&)> attachScript_;
     HWND addBehaviorButton_ = nullptr, meshEnabled_ = nullptr, chooseMesh_ = nullptr, cubeMesh_ = nullptr, clearMesh_ = nullptr;
     std::function<void(MeshAction)> meshAction_;
     std::function<std::optional<std::string>(const std::string&)> choosePrefab_;

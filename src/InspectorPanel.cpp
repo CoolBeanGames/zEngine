@@ -100,10 +100,6 @@ void InspectorPanel::Create(HWND parent, HINSTANCE instance, HFONT font, std::fu
         SendMessageW(field.window, EM_SETLIMITTEXT, index < 2 ? 512 : 48, 0);
         SetWindowSubclass(field.window, EditProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
     }
-    addScriptButton_ = CreateWindowExW(0, L"BUTTON", L"+ Add Script", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        0, 0, 1, 1, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(AddScriptButton)), instance, nullptr);
-    if (!addScriptButton_) throw std::runtime_error("Cannot create Add Script button.");
-    SendMessageW(addScriptButton_, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
     const auto button = [&](const wchar_t* title, int id, DWORD style = 0) {
         const auto result = CreateWindowExW(0, L"BUTTON", title, WS_CHILD|WS_VISIBLE|WS_TABSTOP|style,
             0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
@@ -238,7 +234,6 @@ void InspectorPanel::RefreshBehaviors()
         else SetWindowTextW(control,(behaviorFields_[i].prefab&&value.empty())?L"Choose prefab...":value.c_str()); behaviorFields_[i].field.focusText=value;
     }
     updating_=false;
-    EnableWindow(addScriptButton_, object_ != nullptr && editData_);
     EnableWindow(addBehaviorButton_, object_ != nullptr && editData_);
     for (const auto control:{meshEnabled_,chooseMesh_,cubeMesh_,clearMesh_}) EnableWindow(control,object_!=nullptr && editData_);
     const auto* mesh = object_ ? object_->GetBehavior<zengine::MeshRenderer>() : nullptr;
@@ -560,7 +555,6 @@ void InspectorPanel::Layout()
         y += 122;
     }
     place(addBehaviorButton_,12,y,std::max(30,width-24),28);
-    place(addScriptButton_,12,y+34,std::max(30,width-24),28);
     if(positions)EndDeferWindowPos(positions);
     // Child edits are repositioned without drawing individually. Repaint the
     // complete clipped surface immediately so their old locations cannot
@@ -656,7 +650,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_CONTEXTMENU: ShowBehaviorMenu({GET_X_LPARAM(l),GET_Y_LPARAM(l)}); return 0;
     case WM_COMMAND:
     {
-        if (!editData_ && (LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddAreaCommand)) return 0;
+        if (!editData_ && ((LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddAreaCommand) || (LOWORD(w)>=AddScriptSubFirst && LOWORD(w)<AddScriptSubFirst+400))) return 0;
         const int toggleIndex=LOWORD(w)-FirstBehaviorToggle;
         if (toggleIndex>=0 && toggleIndex<static_cast<int>(behaviorToggles_.size()) && HIWORD(w)==BN_CLICKED)
         {
@@ -705,7 +699,18 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
         {
             const auto menu = CreatePopupMenu();
             AppendMenuW(menu,MF_STRING | (object_->GetBehavior<zengine::MeshRenderer>() ? MF_GRAYED : 0),AddMeshCommand,L"Mesh Renderer");
-            AppendMenuW(menu,MF_STRING,AddScriptCommand,L"Script...");
+            // "Add Script" opens a submenu of every .zsh in the project; the last item browses.
+            const auto scripts = CreatePopupMenu();
+            std::size_t listed = 0;
+            if (scriptList_) for (const auto& path : scriptList_())
+            {
+                if (listed >= 400) break;
+                const auto stem = std::filesystem::path(path).stem().wstring();
+                AppendMenuW(scripts,MF_STRING,static_cast<UINT_PTR>(AddScriptSubFirst + listed++),(stem.empty()?path:stem).c_str());
+            }
+            if (listed) AppendMenuW(scripts,MF_SEPARATOR,0,nullptr);
+            AppendMenuW(scripts,MF_STRING,AddScriptCommand,L"Browse…");
+            AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(scripts),L"Add Script");
             AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|(object_->GetBehavior<zengine::physics::Collider>()?MF_GRAYED:0),AddColliderCommand,L"Collider");
             const bool hasBody=object_->GetBehavior<zengine::physics::RigidBody>()||object_->GetBehavior<zengine::physics::KinematicBody>()||object_->GetBehavior<zengine::physics::StaticBody>()||object_->GetBehavior<zengine::physics::Area>();const UINT bodyFlags=MF_STRING|(hasBody?MF_GRAYED:0);
             AppendMenuW(menu,bodyFlags,AddRigidBodyCommand,L"Rigid Body");AppendMenuW(menu,bodyFlags,AddKinematicBodyCommand,L"Kinematic Body");AppendMenuW(menu,bodyFlags,AddStaticBodyCommand,L"Static Body");AppendMenuW(menu,bodyFlags,AddAreaCommand,L"Area");
@@ -716,6 +721,12 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             return 0;
         }
         if (LOWORD(w) == AddScriptCommand) { if (object_ && addScript_) addScript_(); return 0; }
+        if (const int scriptItem=LOWORD(w)-AddScriptSubFirst; scriptItem>=0 && scriptItem<400)
+        {
+            if (object_ && attachScript_ && scriptList_)
+            { const auto list=scriptList_(); if (scriptItem<static_cast<int>(list.size())) attachScript_(list[scriptItem]); }
+            return 0;
+        }
         if(LOWORD(w)>=AddColliderCommand&&LOWORD(w)<=AddAreaCommand&&object_){if(LOWORD(w)==AddColliderCommand)object_->AddBehavior<zengine::physics::Collider>();else if(LOWORD(w)==AddRigidBodyCommand)object_->AddBehavior<zengine::physics::RigidBody>();else if(LOWORD(w)==AddKinematicBodyCommand)object_->AddBehavior<zengine::physics::KinematicBody>();else if(LOWORD(w)==AddStaticBodyCommand)object_->AddBehavior<zengine::physics::StaticBody>();else object_->AddBehavior<zengine::physics::Area>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if (LOWORD(w) == AddMeshCommand || LOWORD(w) == ChooseMeshButton || LOWORD(w) == CubeMeshButton || LOWORD(w) == ClearMeshButton)
         {
@@ -729,8 +740,6 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             if (changed_) changed_();
             return 0;
         }
-        if (LOWORD(w) == AddScriptButton && HIWORD(w) == BN_CLICKED)
-        { if (object_ && addScript_) addScript_(); return 0; }
         const int index = LOWORD(w) - NameField;
         if (index < 0 || index >= static_cast<int>(fields_.size())) break;
         if (HIWORD(w) == EN_CHANGE) ChangeField(index);

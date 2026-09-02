@@ -791,7 +791,7 @@ a Breakpoint has been reached
     <prompt>in inspector get rid of "add script" button, replace with a script menu in add behavior, it should say add script &gt; then when you mouse over it a sub menu appears with a list of all the scripts</prompt>
     <requirements>add script button turned into submenu</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -799,14 +799,14 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <tags>ui,inspector,scripting</tags>
+    <notes>Removed the standalone "+ Add Script" button from the Inspector. "Add Behavior" now opens with an "Add Script" submenu listing every .zsh in the project (by stem, sorted, capped at 400) plus a "Browse..." item that keeps the old file dialog. Choosing a script attaches it to the selected object; the list is re-read on each open so it never goes stale. New EditorShell::ProjectScriptPaths() feeds the menu via InspectorPanel::SetScriptMenu; command ids use InspectorPanel::AddScriptSubFirst. --objects test updated to drive the submenu; full ctest 28/28.</notes>
+    <filesChanged>src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-57">

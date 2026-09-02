@@ -388,7 +388,13 @@ namespace
             // Script creation, attachment and discovery coexist with GameObject editing.
             const auto script = editor.CreateScriptAsset();
             Require(std::filesystem::is_regular_file(script) && script.extension() == ".zsh", "Script asset was not saved");
-            Require(GetDlgItem(inspector, InspectorPanel::AddScriptButton) != nullptr, "Add Script button missing");
+            // "Add Script" is a submenu of project scripts under Add Behavior now, not a standalone button.
+            Require(GetDlgItem(inspector, InspectorPanel::AddScriptButton) == nullptr, "Standalone Add Script button should be gone");
+            SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(50, 167));
+            SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(50, 167));
+            Require(editor.SelectedGameObject()->Id() == object->Id(), "Could not select the empty object for the Add Script submenu test");
+            SendMessageW(inspector, WM_COMMAND, MAKEWPARAM(InspectorPanel::AddScriptSubFirst, 0), 0);
+            Require(object->BehaviorCount() == 1 && dynamic_cast<const zengine::ScriptBehavior*>(&object->BehaviorAt(0)) != nullptr, "Add Behavior > Add Script submenu did not attach the project script");
             RECT client{}; GetClientRect(window, &client);
             const auto rowPoint = MAKELPARAM(50, client.bottom - 220);
             SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, rowPoint);

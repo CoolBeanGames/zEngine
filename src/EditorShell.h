@@ -149,6 +149,7 @@ private:
     RECT ObjectListRectangle() const;
     zengine::GameObjectId ScriptDropTarget(POINT point) const;
     void ChooseScript();
+    std::vector<std::wstring> ProjectScriptPaths() const;
     std::optional<std::string> ChoosePrefabReference(const std::string& current);
     zengine::GameObjectId SpawnPrefab(std::string_view asset);
     void ChooseModel();

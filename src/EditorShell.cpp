@@ -203,6 +203,12 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
         try { ChooseScript(); }
         catch (const std::exception& error) { status_ = L"Cannot attach script: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
     });
+    inspectorPanel_->SetScriptMenu(
+        [this]() { return ProjectScriptPaths(); },
+        [this](const std::wstring& relative) {
+            try { AttachScript(selectedObject_, assetsDirectory_ / std::filesystem::path(relative)); }
+            catch (const std::exception& error) { status_ = L"Cannot attach script: " + WideText(error.what()); InvalidateRect(window_, &statusBar_, FALSE); }
+        });
     inspectorPanel_->SetMeshHandler([this](InspectorPanel::MeshAction action) {
         try
         {
@@ -1198,6 +1204,21 @@ void EditorShell::ChooseScript()
     dialog.lpstrInitialDir=initial.c_str(); dialog.lpstrTitle=L"Attach a script from this project's Assets directory";
     dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
     if (GetOpenFileNameW(&dialog)) AttachScript(selectedObject_, std::filesystem::path(filename.data()));
+}
+std::vector<std::wstring> EditorShell::ProjectScriptPaths() const
+{
+    std::vector<std::wstring> result;
+    if (!project_ || !std::filesystem::exists(assetsDirectory_)) return result;
+    std::error_code error;
+    for (std::filesystem::recursive_directory_iterator it(assetsDirectory_,std::filesystem::directory_options::skip_permission_denied,error),end; it!=end && !error; it.increment(error))
+    {
+        if (result.size()>=400) break;
+        if (!it->is_regular_file(error) || !zengine::scripts::IsScript(it->path())) continue;
+        auto relative=std::filesystem::relative(it->path(),assetsDirectory_,error);
+        if (!error) result.push_back(relative.generic_wstring());
+    }
+    std::sort(result.begin(),result.end());
+    return result;
 }
 std::optional<std::string> EditorShell::ChoosePrefabReference(const std::string& current)
 {
