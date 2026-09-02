@@ -935,7 +935,7 @@ the script editor is now inline, add a column on the left that lists a scrollabl
 this is a big project and will likey take some time, do your best at it!</prompt>
     <requirements>tab interface is in place and working, commit was successful. if commit fails end execution</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -943,14 +943,14 @@ this is a big project and will likey take some time, do your best at it!</prompt
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
     <tags>redesign,scripting,3d</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>The view panel header is now a Scene / Game / Script tab strip (active tab: lighter fill + blue underline). Scene = the 3D edit viewport (unchanged). Game auto-selects on Play and returns to Scene on Stop; it is the same viewport rendering the running scene (a "Press Play / camera view pending" hint shows when idle - real camera view is ZE-58). Script is a fully inline editor: ScriptEditor gained an embedded child mode (SetBounds, Functions(), GoTo()); EditorViewTabs.cpp adds a left column with a scrollable script list (top) and function list (bottom) - clicking a script opens it inline and repopulates the functions, clicking a function scrolls the caret to it. OpenScript now routes to the Script tab instead of a separate window; Play/build/close dirty guards and project-switch teardown cover the inline editor. Known: the Play console is still its own window (ZE-46 scope). Verified: new --view-tabs suite (Play/Stop tab switch, inline editor + both lists + function jump), full ctest 30/30, on-screen screenshots of the Script and Game tabs. Built to builds/debug; committed and pushed.</notes>
+    <filesChanged>src/EditorShell.h; src/EditorShell.cpp; src/EditorViewTabs.cpp; src/EditorProjects.cpp; src/EditorBuild.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; tests/AssetTests.cpp; tests/ProjectTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-58">

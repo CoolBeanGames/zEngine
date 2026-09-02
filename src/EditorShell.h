@@ -102,6 +102,12 @@ public:
     const zengine::ObjectStore& GameObjects() const noexcept { return objects_; }
     const zengine::GameObject* SelectedGameObject() const noexcept { return objects_.Find(selectedObject_); }
 
+    // The view panel is tabbed: Scene (edit), Game (Play), Script (inline editor + browser).
+    enum class ViewTab { Scene, Game, Script };
+    ViewTab CurrentViewTab() const noexcept { return viewTab_; }
+    void SetViewTab(ViewTab tab);
+    static constexpr int ScriptListControl = 3730, FunctionListControl = 3731;
+
 private:
     enum class DragTarget
     {
@@ -279,6 +285,20 @@ private:
     int firstObject_ = 0;
     std::unique_ptr<InspectorPanel> inspectorPanel_;
     std::vector<std::unique_ptr<ScriptEditor>> scriptEditors_;
+    // Script tab: inline editor plus a script list (top) and function list (bottom).
+    ViewTab viewTab_ = ViewTab::Scene;
+    int hoveredTab_ = -1;
+    HWND scriptListBox_ = nullptr, functionListBox_ = nullptr;
+    std::unique_ptr<ScriptEditor> inlineEditor_;
+    std::vector<std::filesystem::path> scriptTabPaths_;
+    std::vector<std::size_t> functionOffsets_;
+    RECT ViewTabRect(int index) const;
+    int ViewTabHit(POINT point) const;
+    void EnsureScriptTab();
+    void RefreshScriptTabList();
+    void RefreshFunctionList();
+    void OpenInlineScript(const std::filesystem::path& path);
+    void LayoutScriptTab();
     int firstAsset_ = 0;
     int selectedAsset_ = -1;
     int draggedAsset_ = -1;

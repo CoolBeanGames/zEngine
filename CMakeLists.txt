@@ -100,6 +100,7 @@ add_executable(zEngine WIN32
     src/EditorFolders.cpp
     src/EditorBuild.cpp
     src/EditorHierarchy.cpp
+    src/EditorViewTabs.cpp
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
@@ -201,6 +202,7 @@ if(BUILD_TESTING)
     target_sources(zEngineAssetTests PRIVATE src/EditorFolders.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorBuild.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorHierarchy.cpp)
+    target_sources(zEngineAssetTests PRIVATE src/EditorViewTabs.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineInputTools)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineGizmos zEnginePrefabs)
     target_compile_features(zEngineAssetTests PRIVATE cxx_std_20)
@@ -214,6 +216,7 @@ if(BUILD_TESTING)
     add_test(NAME GameObjectInspector COMMAND zEngineAssetTests --objects)
     add_test(NAME CollisionLayerButtons COMMAND zEngineAssetTests --collision-bits)
     add_test(NAME ObjectPicker COMMAND zEngineAssetTests --picker)
+    add_test(NAME ViewPanelTabs COMMAND zEngineAssetTests --view-tabs)
     add_test(NAME MeshRendererBehavior COMMAND zEngineAssetTests --meshes)
     add_test(NAME ScriptEditorIntegration COMMAND zEngineAssetTests --scripts)
     add_test(NAME SceneEditorIntegration COMMAND zEngineAssetTests --scenes)

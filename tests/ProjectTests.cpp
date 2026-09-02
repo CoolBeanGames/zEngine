@@ -128,14 +128,12 @@ void ProjectTests(bool capture)
         Check(editor.SelectedGameObject()->GetTransform().Position().x==3,"Project lost Inspector values");
         Check(editor.Play(),"Restored project cannot Play"); Reject([&] { editor.OpenProject(second); }); editor.Stop();
         editor.OpenScript(script);
-        HWND scriptWindow=nullptr;
-        EnumThreadWindows(GetCurrentThreadId(),[](HWND candidate,LPARAM data)->BOOL {
-            if (GetDlgItem(candidate,ScriptEditor::SourceControl)) { *reinterpret_cast<HWND*>(data)=candidate; return FALSE; } return TRUE;
-        },reinterpret_cast<LPARAM>(&scriptWindow));
-        Check(scriptWindow && GetWindow(scriptWindow,GW_OWNER)==window,"Script editor missing");
+        Check(editor.CurrentViewTab()==EditorShell::ViewTab::Script,"OpenScript did not switch to the Script tab");
+        const HWND scriptWindow=FindWindowExW(window,nullptr,L"zEngineScriptEditor",nullptr);
+        Check(scriptWindow && GetDlgItem(scriptWindow,ScriptEditor::SourceControl),"Inline script editor missing");
         SetWindowTextW(GetDlgItem(scriptWindow,ScriptEditor::SourceControl),L"// unsaved edit");
         { DialogAnswers answers(window,{IDCANCEL}); Check(!editor.OpenProject(second) && answers.handled==1 && IsWindow(scriptWindow),"Unsaved script cancel failed"); }
-        { DialogAnswers answers(window,{IDNO}); Check(editor.OpenProject(second) && answers.handled==1 && !IsWindow(scriptWindow),"Old script window survived project switch"); }
+        { DialogAnswers answers(window,{IDNO}); Check(editor.OpenProject(second) && answers.handled==1 && !IsWindow(scriptWindow),"Inline script editor survived project switch"); }
         Check(editor.GameObjects().Size()==1,"Save-and-switch lost second scene object");
         Check(editor.OpenProject(first),"Reopen first project failed");
         std::vector<std::string> warnings;

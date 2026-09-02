@@ -431,11 +431,10 @@ void ScriptIntegrationEditorTests(bool capture)
         const auto cube=editor.SelectedGameObject()->Id();
         const auto path=editor.CreateScriptAsset();
         editor.OpenScript(path);
-        HWND scriptWindow=nullptr;
-        for (HWND candidate=FindWindowExW(nullptr,nullptr,L"zEngineScriptEditor",nullptr); candidate;
-             candidate=FindWindowExW(nullptr,candidate,L"zEngineScriptEditor",nullptr))
-            if (GetWindow(candidate,GW_OWNER)==window) { scriptWindow=candidate; break; }
-        Require(scriptWindow!=nullptr,"Script editor did not open");
+        // The script editor is now an embedded child of the editor's Script tab.
+        Require(editor.CurrentViewTab()==EditorShell::ViewTab::Script,"OpenScript did not switch to the Script tab");
+        const HWND scriptWindow=FindWindowExW(window,nullptr,L"zEngineScriptEditor",nullptr);
+        Require(scriptWindow!=nullptr,"Inline script editor did not open");
         const auto source=GetDlgItem(scriptWindow,ScriptEditor::SourceControl);
         Require(source!=nullptr,"Script source editor missing");
         const wchar_t* code=LR"(class NewBehavior : gameObject {
@@ -894,6 +893,56 @@ void ObjectPickerTests(bool capture)
     CoUninitialize();
     std::cout<<"PASS: object picker window/dropdown, live search, type-filter chips, clear/cancel, editor integration\n";
 }
+void ViewTabsTests(bool capture)
+{
+    Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    TestDirectory test;
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        const HWND window=editor.Create(SW_HIDE,test.path/"Project");
+        editor.InitializeRenderer();
+        Require(editor.CurrentViewTab()==EditorShell::ViewTab::Scene,"Editor did not start on the Scene tab");
+
+        // Play switches to the Game tab; Stop returns to Scene.
+        const auto script=editor.CreateScriptAsset(); (void)script;
+        Require(editor.Play(),"Play failed"); editor.SetPaused(true);
+        Require(editor.CurrentViewTab()==EditorShell::ViewTab::Game,"Play did not switch to the Game tab");
+        editor.Render();
+        if(capture) CaptureScreen(window,L"view-tabs-game-qa.bmp");
+        editor.Stop();
+        Require(editor.CurrentViewTab()==EditorShell::ViewTab::Scene,"Stop did not return to the Scene tab");
+
+        // Script tab: opening a script switches to it and embeds the editor.
+        editor.OpenScript(script);
+        Require(editor.CurrentViewTab()==EditorShell::ViewTab::Script,"OpenScript did not switch to the Script tab");
+        // The editor window is hidden in tests, so check the WS_VISIBLE style bit, not IsWindowVisible.
+        const auto shown=[](HWND h){ return h && (GetWindowLongW(h,GWL_STYLE)&WS_VISIBLE)!=0; };
+        const HWND inlineEditor=FindWindowExW(window,nullptr,L"zEngineScriptEditor",nullptr);
+        Require(shown(inlineEditor),"Inline script editor is not shown on the Script tab");
+        const HWND scriptList=GetDlgItem(window,EditorShell::ScriptListControl);
+        const HWND functionList=GetDlgItem(window,EditorShell::FunctionListControl);
+        Require(shown(scriptList) && shown(functionList),"Script tab side lists missing");
+        Require(SendMessageW(scriptList,LB_GETCOUNT,0,0)>=1,"Script list did not list the project script");
+        // Give the editor a couple of functions and confirm the function list picks them up.
+        SetWindowTextW(GetDlgItem(inlineEditor,ScriptEditor::SourceControl),
+            L"class NewBehavior : gameObject { func start(){} func update(float d){} func draw(){} }");
+        SendMessageW(inlineEditor,WM_COMMAND,ScriptEditor::SaveCommand,0);
+        Require(SendMessageW(functionList,LB_GETCOUNT,0,0)==3,"Function list did not enumerate the script functions");
+        // Jumping to a function moves the caret.
+        SendMessageW(functionList,LB_SETCURSEL,2,0);
+        SendMessageW(window,WM_COMMAND,MAKEWPARAM(EditorShell::FunctionListControl,LBN_SELCHANGE),reinterpret_cast<LPARAM>(functionList));
+        DWORD selStart=0; SendMessageW(GetDlgItem(inlineEditor,ScriptEditor::SourceControl),EM_GETSEL,reinterpret_cast<WPARAM>(&selStart),0);
+        Require(selStart>0,"Clicking a function did not move the caret");
+        editor.Render();
+        if(capture) CaptureScreen(window,L"view-tabs-script-qa.bmp");
+
+        // Switching back to Scene hides the script widgets and re-shows the viewport.
+        editor.SetViewTab(EditorShell::ViewTab::Scene);
+        Require(!shown(scriptList),"Script list stayed visible on the Scene tab");
+    }
+    CoUninitialize();
+    std::cout<<"PASS: view panel tabs - Scene/Game auto-switch on Play/Stop, inline Script tab with script + function lists\n";
+}
 void CollisionBitsTests(bool capture)
 {
     Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM initialization failed");
@@ -968,6 +1017,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--objects") GameObjectEditorTests();
         else if (argc > 1 && std::string(argv[1]) == "--collision-bits") CollisionBitsTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--picker") ObjectPickerTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--view-tabs") ViewTabsTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scripts") ScriptIntegrationEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scenes") SceneEditorTests(argc > 2 && std::string(argv[2]) == "--capture");

@@ -174,6 +174,7 @@ EditorShell::EditorShell(const HINSTANCE instance)
 
 EditorShell::~EditorShell()
 {
+    inlineEditor_.reset();
     scriptEditors_.clear();
     inspectorPanel_.reset();
     renderer_.reset();
@@ -373,6 +374,8 @@ bool EditorShell::Play()
     if (PendingModels()) { status_=L"Wait for this scene's models to finish loading before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     for (const auto& editor:scriptEditors_) if (editor->Dirty())
     { status_=L"Save your script edits (Ctrl+S) before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
+    if (inlineEditor_ && inlineEditor_->Dirty())
+    { status_=L"Save your script edits (Ctrl+S) before Play."; InvalidateRect(window_,nullptr,FALSE); return false; }
     SetFocus(window_); // Finish Inspector edits before snapshotting values/transforms.
     if (!PrepareScripts()) { ReportScriptErrors(); return false; }
     auto authored=zengine::scenes::Capture(objects_,scriptHost_);playObjects_.clear();for(std::size_t i=0;i<objects_.Size();++i)playObjects_.insert(objects_.At(i).Id());
@@ -385,6 +388,7 @@ bool EditorShell::Play()
     paused_=false; stepDraw_=false; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
     status_=L"Playing - Stop restores transforms and discards runtime variable changes";
     inspectorPanel_->RefreshBehaviors(); inspectorPanel_->RefreshLiveValues(); ReportScriptErrors();
+    SetViewTab(ViewTab::Game); // play inside the view panel, not a new window
     InvalidateRect(window_,nullptr,FALSE);
     return true;
 }
@@ -404,6 +408,7 @@ void EditorShell::Stop()
     status_=L"Stopped - authored scene state restored";
     PrepareScripts(); inspectorPanel_->RefreshLiveValues();
     if (const auto* selected=SelectedGameObject()) SelectGameObject(selected->Id());
+    if (viewTab_ == ViewTab::Game) SetViewTab(ViewTab::Scene); // ending the game returns to Scene
     InvalidateRect(window_,nullptr,FALSE);
 }
 void EditorShell::SetPaused(bool paused)
@@ -528,6 +533,7 @@ void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
             std::max<LONG>(0, inspector_.right - inspector_.left - 2),
             std::max<LONG>(0, inspector_.bottom - inspector_.top - PanelHeaderHeight - 1), SWP_NOACTIVATE | SWP_NOZORDER);
     }
+    LayoutScriptTab();
 
     InvalidateRect(window_, nullptr, FALSE);
 }
@@ -578,10 +584,29 @@ void EditorShell::Paint()
     // Main panels
     SelectObject(bufferContext, headerFont_);
     DrawPanel(bufferContext, sceneBrowser_, L"Scene Browser");
-    DrawPanel(bufferContext, viewportPanel_, editingPrefab_.empty()?L"Scene":L"Prefab");
     DrawPanel(bufferContext, inspector_, L"Inspector");
     DrawPanel(bufferContext, mediaLibrary_, L"Media Library");
     SelectObject(bufferContext, uiFont_);
+
+    // View panel: a Scene / Game / Script tab strip instead of a plain header label.
+    {
+        FillRectangle(bufferContext, viewportPanel_, PanelBackground);
+        RECT vpHeader = viewportPanel_; vpHeader.bottom = std::min<LONG>(vpHeader.bottom, vpHeader.top + PanelHeaderHeight);
+        FillRectangle(bufferContext, vpHeader, HeaderBackground);
+        DrawBorder(bufferContext, viewportPanel_, BorderColor);
+        const wchar_t* tabNames[3]{editingPrefab_.empty() ? L"Scene" : L"Prefab", L"Game", L"Script"};
+        for (int i = 0; i < 3; ++i)
+        {
+            const RECT tab = ViewTabRect(i);
+            const bool on = static_cast<int>(viewTab_) == i;
+            FillRectangle(bufferContext, tab, on ? PanelBackground : (hoveredTab_ == i ? RGB(58,62,70) : HeaderBackground));
+            if (on) { RECT underline{tab.left, tab.bottom - 2, tab.right, tab.bottom}; FillRectangle(bufferContext, underline, RGB(108,166,232)); }
+            DrawTextLabel(bufferContext, tabNames[i], tab, on ? TextColor : MutedTextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        }
+        if (viewTab_ == ViewTab::Game && !Playing())
+            DrawTextLabel(bufferContext, L"Press Play to run the scene here.  Camera view arrives with the camera system.",
+                          viewportContent_, MutedTextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    }
 
     // Live GameObject scene tree, indented for prefab hierarchies.
     const int sceneX = sceneBrowser_.left + 13;
@@ -611,9 +636,12 @@ void EditorShell::Paint()
     RestoreDC(bufferContext, treeClip);
 
     // Viewport header controls. Rendering occurs in the child window below this strip.
-    button(3,Playing()?L"\u25a0":L"\u25b6",Playing());
-    button(4,L"\u2016",paused_);
-    button(5,L"\u25b8|");
+    if (viewTab_ != ViewTab::Script)
+    {
+        button(3,Playing()?L"\u25a0":L"\u25b6",Playing());
+        button(4,L"\u2016",paused_);
+        button(5,L"\u25b8|");
+    }
 
     // Inspector content and edit controls are hosted by the reusable InspectorPanel child.
 
@@ -798,6 +826,7 @@ void EditorShell::RefreshAssets()
     }
     const int columns=AssetColumns();firstAsset_=std::clamp(firstAsset_/columns*columns,0,std::max(0,(static_cast<int>(assets_.size())-1)/columns*columns));
     selectedAsset_ = -1;
+    RefreshScriptTabList();
 }
 
 void EditorShell::ReceiveFiles(HDROP drop)
@@ -1155,29 +1184,11 @@ std::filesystem::path EditorShell::CreateScriptAsset()
 void EditorShell::OpenScript(const std::filesystem::path& path)
 {
     RequireProject();
+    // Validate up front (throws for a script outside this project), then open it
+    // inline in the Script tab rather than as a separate window.
     const auto resolved = zengine::scripts::Resolve(assetsDirectory_, path);
-    for (const auto& editor : scriptEditors_)
-        if (_wcsicmp(editor->Path().c_str(), resolved.c_str()) == 0) { editor->Show(); return; }
-    auto editor = std::make_unique<ScriptEditor>(window_, assetsDirectory_, resolved);
-    editor->SetCompletionContext([this]() {
-        std::vector<std::wstring> values;
-        for(std::size_t i=0;i<objects_.Size();++i) {
-            values.push_back(WideText(objects_.At(i).Name()));
-            for(const auto& tag:objects_.At(i).Tags())values.push_back(WideText(tag));
-        }
-        try {for(const auto& action:zengine::input::Decode(zengine::input::Load(assetsDirectory_)))values.push_back(WideText(action.name));}catch(const std::exception&){}
-        std::size_t bytes=0;
-        if(project_)for(const auto& scene:project_->config.scenes)try {
-            const auto text=zengine::scenes::Load(zengine::projects::ScenePath(*project_,scene));bytes+=text.size();if(bytes>16*1024*1024)break;
-            for(const auto& object:zengine::scenes::Decode(text).objects)for(const auto& tag:object.tags)values.push_back(WideText(tag));
-        }catch(const std::exception&){}
-        return values;
-    });
-    editor->SetSavedHandler([this]() {
-        if (!Playing()) PrepareScripts();
-        else { status_=L"Script saved - Stop and Play to run the new code"; InvalidateRect(window_,&statusBar_,FALSE); }
-    });
-    editor->Show(); scriptEditors_.push_back(std::move(editor));
+    OpenInlineScript(resolved);
+    SetViewTab(ViewTab::Script);
 }
 bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::path& path)
 {
@@ -1404,6 +1415,7 @@ void EditorShell::ChooseModel()
 bool EditorShell::ConfirmScriptClose()
 {
     if(inputEditor_ && !inputEditor_->ConfirmClose())return false;
+    if(inlineEditor_ && !inlineEditor_->ConfirmClose())return false;
     for (const auto& editor : scriptEditors_) if (!editor->ConfirmClose()) return false;
     return true;
 }
@@ -1500,6 +1512,8 @@ LRESULT EditorShell::HandleMessage(
         if (!editingPrefab_.empty() && !ClosePrefab()) return 0;
         if (ConfirmScriptClose()) { if (Playing()) Stop(); if (ConfirmSceneClose()) DestroyWindow(window); }
         return 0;
+    case WM_CTLCOLORLISTBOX:
+        return editorStyle::ControlColor(message, wParam);
     case WM_COMMAND:
         if(LOWORD(wParam)>=AddEmptyCommand&&LOWORD(wParam)<=AddAreaObjectCommand){CreateGameObject(static_cast<ObjectPreset>(LOWORD(wParam)-AddEmptyCommand),selectedObject_);return 0;}
         if(LOWORD(wParam)==CopyObjectCommand){if(selectedObject_)CopyGameObject(selectedObject_);return 0;}
@@ -1521,6 +1535,18 @@ LRESULT EditorShell::HandleMessage(
         if (LOWORD(wParam)==SaveSceneCommand) { SaveScene(); return 0; }
         if (LOWORD(wParam)==SaveSceneAsCommand) { SaveSceneAs(); return 0; }
         if (LOWORD(wParam)==OpenSceneCommand) { ChooseScene(); return 0; }
+        if (LOWORD(wParam)==ScriptListControl && (HIWORD(wParam)==LBN_SELCHANGE || HIWORD(wParam)==LBN_DBLCLK))
+        {
+            const auto row=SendMessageW(scriptListBox_,LB_GETCURSEL,0,0);
+            if (row>=0 && row<static_cast<LRESULT>(scriptTabPaths_.size())) OpenInlineScript(scriptTabPaths_[row]);
+            return 0;
+        }
+        if (LOWORD(wParam)==FunctionListControl && (HIWORD(wParam)==LBN_SELCHANGE || HIWORD(wParam)==LBN_DBLCLK))
+        {
+            const auto row=SendMessageW(functionListBox_,LB_GETCURSEL,0,0);
+            if (inlineEditor_ && row>=0 && row<static_cast<LRESULT>(functionOffsets_.size())) inlineEditor_->GoTo(functionOffsets_[row]);
+            return 0;
+        }
         break;
     case WM_CONTEXTMENU:
     {
@@ -1605,6 +1631,11 @@ LRESULT EditorShell::HandleMessage(
         if (draggedObject_) { draggedObject_=0; ReleaseCapture(); }
         SetFocus(window_);
         const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (const int tab=ViewTabHit(point); tab>=0)
+        {
+            SetViewTab(static_cast<ViewTab>(tab));
+            return 0;
+        }
         hoveredChrome_=ChromeHit(point);pressedChrome_=hoveredChrome_;
         if(pressedChrome_>=0){InvalidateRect(window_,nullptr,FALSE);if(!ChromeEnabled(pressedChrome_)){pressedChrome_=-1;return 0;}}
         if(pressedChrome_==10){SendMessageW(window_,WM_COMMAND,UpFolderCommand,0);return 0;}
@@ -1658,6 +1689,7 @@ LRESULT EditorShell::HandleMessage(
     {
         const int hovered=ChromeHit({GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)});
         if(hovered!=hoveredChrome_){hoveredChrome_=hovered;InvalidateRect(window_,nullptr,FALSE);}
+        if(const int tab=ViewTabHit({GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)}); tab!=hoveredTab_){hoveredTab_=tab;InvalidateRect(window_,&viewportPanel_,FALSE);}
         TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE,window_,0};TrackMouseEvent(&tracking);
         if (draggedObject_)
         {

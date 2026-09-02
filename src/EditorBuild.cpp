@@ -10,6 +10,7 @@ bool EditorShell::BuildProject(const std::filesystem::path& outputParent) {
     if(Playing() || !editingPrefab_.empty())throw std::runtime_error("Stop Play and close prefab editing before building.");
     if(assetWork_.valid() || !assetJobs_.empty())throw std::runtime_error("Wait for imports and model loading before building.");
     for(const auto& editor:scriptEditors_)if(editor->Dirty())throw std::runtime_error("Save open script edits before building.");
+    if(inlineEditor_ && inlineEditor_->Dirty())throw std::runtime_error("Save open script edits (Ctrl+S) before building.");
     if(inputEditor_ && inputEditor_->Dirty())throw std::runtime_error("Save the Input Map before building.");
     if(!PrepareScripts() || !SaveScene())return false;
     auto player=zengine::game::ExecutableDirectory();

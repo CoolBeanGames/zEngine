@@ -62,6 +62,8 @@ void EditorShell::ActivateProject(zengine::projects::Project project)
     zengine::input::Ensure(assets); // Validate/ensure the one project-owned root asset before switching state.
     inspectorPanel_->Bind(nullptr);
     scriptEditors_.clear();
+    inlineEditor_.reset();
+    if (viewTab_ == ViewTab::Script) viewTab_ = ViewTab::Scene;
     inputEditor_.reset(); inputSystem_.Configure({});
     ++sceneGeneration_;
     assetJobs_.clear(); activeAssetJob_.reset();

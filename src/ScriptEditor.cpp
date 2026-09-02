@@ -6,6 +6,7 @@
 #include <tom.h>
 #include <windowsx.h>
 #include <algorithm>
+#include <cwctype>
 #include <stdexcept>
 #ifdef ZENGINE_SCRIPT_COMPILER
 #include "zscript/Script.h"
@@ -31,8 +32,8 @@ namespace
         return result;
     }
 }
-ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, const std::filesystem::path& path)
-    : assets_(assets), path_(zengine::scripts::Resolve(assets, path))
+ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, const std::filesystem::path& path, HWND embedIn)
+    : assets_(assets), path_(zengine::scripts::Resolve(assets, path)), embedded_(embedIn != nullptr)
 {
     // Validate before opening a window. No partial document on failed reads.
     loaded_ = zengine::scripts::Load(path_);
@@ -44,8 +45,11 @@ ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, cons
     type.hbrBackground = editorStyle::Shared().panel;
     if (!RegisterClassW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
     { FreeLibrary(richEdit_); throw std::runtime_error("Cannot register script editor window."); }
-    window_ = CreateWindowExW(0, ClassName, L"Script Editor", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-        CW_USEDEFAULT, CW_USEDEFAULT, 900, 700, owner, nullptr, instance, this);
+    window_ = embedded_
+        ? CreateWindowExW(0, ClassName, L"Script Editor", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+            0, 0, 1, 1, embedIn, nullptr, instance, this)
+        : CreateWindowExW(0, ClassName, L"Script Editor", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+            CW_USEDEFAULT, CW_USEDEFAULT, 900, 700, owner, nullptr, instance, this);
     if (!window_) { FreeLibrary(richEdit_); throw std::runtime_error("Cannot open script editor."); }
     try
     {
@@ -99,7 +103,39 @@ void ScriptEditor::Show()
 {
     RefreshCompletionIndex();HideCompletion();
     if (!dirty_) Reload();
+    if (embedded_) { ShowWindow(window_, SW_SHOW); SetFocus(source_); return; }
     ShowWindow(window_, SW_SHOWNORMAL); SetForegroundWindow(window_); SetFocus(source_);
+}
+std::vector<std::pair<std::wstring, std::size_t>> ScriptEditor::Functions() const
+{
+    std::vector<std::pair<std::wstring, std::size_t>> result;
+    const auto source = Text();
+    const auto code = scriptTyping::Code(source); // comments and strings blanked out
+    for (std::size_t i = 0; i + 4 < code.size(); ++i)
+    {
+        if (code.compare(i, 4, L"func") != 0) continue;
+        if (i && (std::iswalnum(code[i-1]) || code[i-1] == L'_')) continue;
+        std::size_t j = i + 4;
+        while (j < code.size() && std::iswspace(code[j])) ++j;
+        const std::size_t nameStart = j;
+        while (j < code.size() && (std::iswalnum(code[j]) || code[j] == L'_')) ++j;
+        if (j == nameStart) continue;
+        result.emplace_back(source.substr(nameStart, j - nameStart), i);
+        i = j;
+    }
+    return result;
+}
+void ScriptEditor::GoTo(std::size_t offset)
+{
+    if (!source_) return;
+    CHARRANGE range{static_cast<LONG>(offset), static_cast<LONG>(offset)};
+    SendMessageW(source_, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&range));
+    // Put the target line a few rows below the top rather than pinned to the caret.
+    const auto line = SendMessageW(source_, EM_EXLINEFROMCHAR, 0, static_cast<LPARAM>(offset));
+    const auto first = SendMessageW(source_, EM_GETFIRSTVISIBLELINE, 0, 0);
+    SendMessageW(source_, EM_LINESCROLL, 0, static_cast<LPARAM>(line - first - 3));
+    SendMessageW(source_, EM_SCROLLCARET, 0, 0);
+    SetFocus(source_);
 }
 void ScriptEditor::Title()
 {

@@ -5,6 +5,9 @@
 #include <commctrl.h>
 #include <functional>
 #include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 // Native RichEdit window; no renderer or VM ownership. One document per window.
 class ScriptEditor final
@@ -13,7 +16,9 @@ public:
     static constexpr int SourceControl = 2100, SaveCommand = 2101, ReloadCommand = 2102, ErrorCommand = 2103,FoldCommand=2104,ExpandCommand=2105;
     // Width in pixels of the right-hand line-number gutter reserved inside the source control.
     static constexpr int LineNumberGutter = 44;
-    ScriptEditor(HWND owner, const std::filesystem::path& assets, const std::filesystem::path& path);
+    // Pass a non-null embedIn to build the editor as a borderless child of that window
+    // (the inline Script tab) instead of a standalone top-level window.
+    ScriptEditor(HWND owner, const std::filesystem::path& assets, const std::filesystem::path& path, HWND embedIn = nullptr);
     ~ScriptEditor();
     void Show();
     bool ConfirmClose();
@@ -22,6 +27,12 @@ public:
     bool Dirty() const noexcept { return dirty_; }
     void SetSavedHandler(std::function<void()> handler) { saved_ = std::move(handler); }
     void SetCompletionContext(std::function<std::vector<std::wstring>()> provider) { completionContext_=std::move(provider); }
+    // Inline (embedded) editor helpers.
+    void SetBounds(RECT bounds) const { if (window_) MoveWindow(window_, bounds.left, bounds.top, bounds.right-bounds.left, bounds.bottom-bounds.top, TRUE); }
+    // Function declarations in the current buffer as (name, character offset), source order.
+    std::vector<std::pair<std::wstring, std::size_t>> Functions() const;
+    // Move the caret to a character offset and scroll it into view.
+    void GoTo(std::size_t offset);
 private:
     static LRESULT CALLBACK WindowProcedure(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK EditProcedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
@@ -54,7 +65,7 @@ private:
     HWND save_ = nullptr, reload_ = nullptr, jump_ = nullptr,fold_ = nullptr,expand_ = nullptr;
     HMODULE richEdit_ = nullptr;
     HFONT font_ = nullptr;
-    bool dirty_ = false, formatting_ = false;
+    bool dirty_ = false, formatting_ = false, embedded_ = false;
     std::set<std::size_t> foldedBlocks_;
     zengine::scripts::Analysis analysis_;
     std::function<void()> saved_;
