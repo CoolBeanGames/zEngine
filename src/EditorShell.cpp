@@ -1320,7 +1320,11 @@ zengine::GameObjectId EditorShell::SpawnPrefab(std::string_view asset)
         }
         for(std::size_t j=0;j<object.BehaviorCount();++j)if(auto* behavior=dynamic_cast<zengine::ScriptBehavior*>(&object.BehaviorAt(j))){
             const auto& value=behavior->Asset();const auto script=zengine::scripts::Resolve(assetsDirectory_,std::filesystem::path(std::u8string(value.begin(),value.end())));
-            if(!scriptHost_.Prepare(*behavior,zengine::scripts::Load(script),Utf8Text(script.stem().wstring())))throw std::runtime_error(scriptHost_.Error(*behavior));
+            // A broken spawned script must not fault the script that spawned it: report it,
+            // leave the behavior inert, and let the rest of the prefab run.
+            try { if(!scriptHost_.Prepare(*behavior,zengine::scripts::Load(script),Utf8Text(script.stem().wstring())))
+                { status_=L"Spawned "+file.filename().wstring()+L": "+WideText(scriptHost_.Error(*behavior)); InvalidateRect(window_,&statusBar_,FALSE); } }
+            catch(const std::exception& error) { status_=L"Spawned "+file.filename().wstring()+L": "+WideText(error.what()); InvalidateRect(window_,&statusBar_,FALSE); }
         }
     }
     status_=L"Spawned prefab: "+file.filename().wstring();InvalidateRect(window_,&sceneBrowser_,FALSE);return root;

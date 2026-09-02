@@ -241,7 +241,7 @@ when the first bullet shoots it freezes up all my input and processing (physics 
 also the bullet spawns in the wrong position, its spawning at 0,0,0 even though shoot_points global is nowhere near there</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>true</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -249,14 +249,14 @@ also the bullet spawns in the wrong position, its spawning at 0,0,0 even though 
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>bugs,scripting</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Root cause: scenes::Append (runtime prefab spawn) passed the prefab's OWN object ids to RestoreReferences without remapping. The bullet's "export rigidbody rb" self-reference then pointed at a stale id, so BoundScript's reference binding threw "Scene object no longer exists" out of spawn() and faulted the calling script - freezing the player while physics kept running (same class as ZE-49). Fix: Append now remaps every script objectReference through its id remap table in a second pass (references that leave the prefab are dropped). EditorShell::SpawnPrefab also no longer rethrows a spawned script's Prepare failure - it reports it to the status bar and leaves that one behavior inert instead of faulting the spawner. New SceneTests regression spawns a prefab whose script self-references its rigidbody and asserts the stored reference is the live id, not the prefab id. The "bullet at 0,0,0" was a downstream symptom of shoot() aborting before the position line; with the fault gone the position assignment runs (not verifiable here without a running game - reopen if it persists). Full ctest 29/29.</notes>
+    <filesChanged>src/Scene.cpp; src/EditorShell.cpp; tests/SceneTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-56">

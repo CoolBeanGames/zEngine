@@ -72,6 +72,28 @@ int main()
         auto* linkedRestored=linkedInstance.objects.Find(linkedOwner.Id())->GetBehavior<ScriptBehavior>();
         Check(linkedRestored && linkedInstance.scripts.Prepare(*linkedRestored,linkedCode,"References"),"Scene object reference was not restored");
         Check(linkedInstance.scripts.Fields(*linkedRestored).front().value=="Target (RigidBody)","Restored object reference target mismatch");
+        // ZE-59: spawning a prefab remaps its internal object references onto the fresh live IDs,
+        // so a bullet's "export rigidbody rb" self-reference resolves instead of faulting the spawner.
+        {
+            scenes::Document prefab;
+            scenes::ObjectData bulletData; bulletData.id=10; bulletData.name="BulletRoot";
+            scenes::BehaviorData bodyData; bodyData.kind=scenes::BehaviorData::Kind::RigidBody;
+            bodyData.mass=1; bodyData.friction=0.5f; bodyData.bounciness=0;
+            bulletData.behaviors.push_back(bodyData);
+            scenes::BehaviorData scriptData; scriptData.kind=scenes::BehaviorData::Kind::Script; scriptData.asset="Bullet.zsh";
+            scriptData.objectReferences["rb"]=10; // the prefab's own object id
+            bulletData.behaviors.push_back(scriptData);
+            prefab.objects.push_back(bulletData);
+            ObjectStore live; ScriptHost liveHost; liveHost.SetObjectStore(&live);
+            (void)live.Create("Player");
+            const auto spawnedRoot=scenes::Append(prefab,live,liveHost);
+            Check(spawnedRoot!=0 && spawnedRoot!=10 && live.Find(spawnedRoot)!=nullptr,"Append did not create the prefab root");
+            auto* spawnedScript=live.Find(spawnedRoot)->GetBehavior<ScriptBehavior>();
+            Check(spawnedScript!=nullptr,"Append lost the spawned script");
+            const auto spawnedRefs=liveHost.AuthoredReferences(*spawnedScript);
+            Check(spawnedRefs.count("rb")==1 && spawnedRefs.at("rb")==spawnedRoot && spawnedRefs.at("rb")!=10,
+                  "Prefab self-reference was not remapped to the live object ID");
+        }
         Reject([&]{objects.Restore(42,"Duplicate");});
         Reject([&]{objects.Restore(std::numeric_limits<GameObjectId>::max(),"Overflow");});
         std::filesystem::remove_all(root); // Only this test's freshly reserved directory.

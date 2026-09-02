@@ -238,6 +238,7 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
     if(parent)Require(objects.Find(parent)!=nullptr,"Cannot spawn under a missing parent.");
     std::map<GameObjectId,GameObjectId> remap;
     GameObjectId root=0;
+    std::vector<std::pair<ScriptBehavior*,const std::map<std::string,GameObjectId>*>> pendingReferences;
     for(const auto& data:scene.objects)
     {
         Require(data.prefab.empty(),"Resolve prefab references before spawning scene data.");
@@ -248,11 +249,20 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
         {
             Behavior* behavior=nullptr;
             if(b.kind==BehaviorData::Kind::Mesh)behavior=&object.AddBehavior<MeshRenderer>(b.asset);
-            else if(b.kind==BehaviorData::Kind::Script){auto& value=object.AddBehavior<ScriptBehavior>(b.asset);scripts.RestoreValues(value,b.variables);scripts.RestoreReferences(value,b.objectReferences);behavior=&value;}
+            else if(b.kind==BehaviorData::Kind::Script){auto& value=object.AddBehavior<ScriptBehavior>(b.asset);scripts.RestoreValues(value,b.variables);pendingReferences.emplace_back(&value,&b.objectReferences);behavior=&value;}
             else if(b.kind==BehaviorData::Kind::Collider){auto* existing=object.GetBehavior<physics::Collider>();auto& value=existing?*existing:object.AddBehavior<physics::Collider>();value.SetShape(b.shape);value.SetOffset(b.colliderOffset);value.SetSize(b.colliderSize);behavior=&value;}
             else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& value=object.AddBehavior<physics::RigidBody>();value.SetMass(b.mass);value.SetGravityScale(b.gravityScale);body=&value;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
             behavior->SetEnabled(b.enabled);behavior->SetPriority(b.priority);
         }
+    }
+    // Prefab-internal object references point at the prefab's own object IDs; translate
+    // them to the freshly created live IDs. References that leave the prefab are dropped.
+    for(const auto& [behavior,references]:pendingReferences)
+    {
+        std::map<std::string,GameObjectId> remapped;
+        for(const auto& [field,id]:*references)
+            if(const auto it=remap.find(id);it!=remap.end())remapped.emplace(field,it->second);
+        scripts.RestoreReferences(*behavior,std::move(remapped));
     }
     for(const auto& data:scene.objects)
     {
