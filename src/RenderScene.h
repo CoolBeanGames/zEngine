@@ -2,6 +2,7 @@
 #include "core/GameObject.h"
 #include "TransformGizmo.h"
 #include "ViewportCamera.h"
+#include "Render2D.h"
 #include "physics/PhysicsBehavior.h"
 #include <memory>
 #include <optional>
@@ -39,4 +40,7 @@ struct ViewportFrame
     std::optional<DirectX::XMFLOAT4X4> selectionParent;
     SceneCamera camera;
     std::optional<unsigned> fps;
+    // 2D / UI overlay, drawn last in screen pixels, unlit and depth-independent.
+    std::vector<SpriteDraw> sprites;
+    std::vector<TextDraw> texts;
 };

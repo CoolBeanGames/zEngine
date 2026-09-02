@@ -76,8 +76,8 @@ target_link_libraries(zEngineProjects PRIVATE shell32 ole32)
 add_library(zEngineGameRuntime STATIC src/runtime/GameSession.cpp src/runtime/GamePackage.cpp)
 target_link_libraries(zEngineGameRuntime PUBLIC zEngineProjects zEnginePrefabs zEngineScriptTools zEngineInputTools zEngineAssets)
 target_compile_definitions(zEngineGameRuntime PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-add_library(zEngineRenderer STATIC src/Renderer.cpp)
-target_link_libraries(zEngineRenderer PUBLIC zEngineAssets zEngineCore zEngineGizmos d3d11 dxgi d3dcompiler windowscodecs ole32)
+add_library(zEngineRenderer STATIC src/Renderer.cpp src/Render2D.cpp src/FontAtlas.cpp)
+target_link_libraries(zEngineRenderer PUBLIC zEngineAssets zEngineCore zEngineGizmos d3d11 dxgi d3dcompiler windowscodecs ole32 gdi32 user32)
 target_compile_definitions(zEngineRenderer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 add_executable(zPlayer WIN32 src/runtime/PlayerMain.cpp)
 target_compile_definitions(zPlayer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -85,6 +85,7 @@ target_link_libraries(zPlayer PRIVATE zEngineGameRuntime zEngineRenderer)
 add_custom_command(TARGET zPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:zPlayer>/shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorCube.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/ColorCube.hlsl"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Sprite.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/Sprite.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx/LICENSE" "$<TARGET_FILE_DIR:zPlayer>/ufbx-LICENSE.txt")
 add_custom_command(TARGET zPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/third_party/JoltPhysics/LICENSE" "$<TARGET_FILE_DIR:zPlayer>/Jolt-LICENSE.txt")
@@ -152,6 +153,9 @@ add_custom_command(TARGET zEngine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorCube.hlsl"
             "$<TARGET_FILE_DIR:zEngine>/shaders/ColorCube.hlsl"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Sprite.hlsl"
+            "$<TARGET_FILE_DIR:zEngine>/shaders/Sprite.hlsl"
     COMMENT "Copying shaders"
 )
 
@@ -194,6 +198,13 @@ if(BUILD_TESTING)
     add_executable(zEngineCoreTests tests/CoreTests.cpp)
     target_link_libraries(zEngineCoreTests PRIVATE zEngineCore)
     add_test(NAME GameObjectCore COMMAND zEngineCoreTests)
+
+    add_executable(zEngineRender2DTests tests/Render2DTests.cpp src/Render2D.cpp src/FontAtlas.cpp)
+    target_include_directories(zEngineRender2DTests PRIVATE src)
+    target_compile_features(zEngineRender2DTests PRIVATE cxx_std_20)
+    target_compile_definitions(zEngineRender2DTests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(zEngineRender2DTests PRIVATE gdi32 user32)
+    add_test(NAME Render2D COMMAND zEngineRender2DTests)
     add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ObjectPicker.cpp src/ProjectDialog.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineRenderer zEngineGameRuntime)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)

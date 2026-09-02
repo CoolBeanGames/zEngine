@@ -7,9 +7,11 @@
 #include <filesystem>
 #include <optional>
 #include <memory>
+#include <vector>
 #include "ModelData.h"
 #include "core/GameObject.h"
 #include "RenderScene.h"
+#include "FontAtlas.h"
 
 class Renderer final
 {
@@ -28,16 +30,26 @@ public:
     MeshHandle Cube() const noexcept { return cube_; }
     std::size_t LastMeshCount() const noexcept { return lastMeshCount_; }
 
+    // Self-contained 2D texture path (ZE-60): RGBA8, row-major, `width * height * 4`
+    // bytes. Independent of the future material / material-instance systems.
+    TextureHandle UploadTexture(std::uint32_t width, std::uint32_t height, const std::uint8_t* rgba);
+    TextureHandle WhiteTexture();
+    std::size_t LastSpriteCount() const noexcept { return lastSpriteCount_; }
+
 private:
     using Vertex = MeshVertex;
     struct SceneConstants;
+    struct SpriteConstants;
 
     void CreateDeviceAndSwapChain(HWND window, std::uint32_t width, std::uint32_t height);
     void CreateRenderTargets(std::uint32_t width, std::uint32_t height);
     void CreateShaders();
     void CreateCube();
     void CreateEditorGuides();
+    void CreateSpritePass();
+    void RenderSprites(const ViewportFrame& frame);
     [[nodiscard]] std::filesystem::path FindShaderPath() const;
+    [[nodiscard]] std::filesystem::path ShaderFile(const wchar_t* name) const;
 
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
@@ -60,6 +72,20 @@ private:
     UINT axesVertexCount_ = 0;
     MeshHandle cube_;
     std::size_t lastMeshCount_ = 0;
+
+    // 2D sprite / UI pass.
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> spriteVertexShader_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> spritePixelShader_;
+    Microsoft::WRL::ComPtr<ID3D11InputLayout> spriteInputLayout_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> spriteVertexBuffer_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> spriteConstantBuffer_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> spriteBlend_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> spriteSampler_;
+    TextureHandle whiteHandle_;
+    TextureHandle fontTexture_;
+    FontAtlas fontAtlas_;
+    std::size_t lastSpriteCount_ = 0;
+    static constexpr UINT kSpriteVertexCapacity = 24576;
 
     D3D11_VIEWPORT viewport_{};
     std::uint32_t width_ = 0;

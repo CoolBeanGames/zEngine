@@ -19,7 +19,9 @@
 #include <shlobj.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -163,6 +165,27 @@ namespace
             renderer.Render(frame); // Singular scales must not cause inverse-matrix NaNs.
             renderer.Render({});
             Require(renderer.LastMeshCount() == 0, "An empty scene must not render an implicit preview mesh");
+
+            // ZE-60: 2D / UI overlay pass - screen-space sprites, nine-slice, rotation, and text.
+            const std::array<std::uint8_t, 16> checker{255,0,0,255, 0,255,0,255, 0,0,255,255, 255,255,255,255};
+            const auto panel = renderer.UploadTexture(2, 2, checker.data());
+            Require(static_cast<bool>(panel) && static_cast<bool>(renderer.WhiteTexture()), "2D texture upload failed");
+            bool textureRejected = false;
+            try { renderer.UploadTexture(0, 4, checker.data()); } catch (const std::exception&) { textureRejected = true; }
+            Require(textureRejected, "Invalid 2D texture dimensions must be rejected");
+
+            ViewportFrame ui;
+            ui.sprites.push_back({renderer.WhiteTexture(), {8, 8, 120, 40}, {}, {}, {0.1f, 0.1f, 0.12f, 0.7f}, 0, {0.5f, 0.5f}});
+            ui.sprites.push_back({panel, {160, 40, 200, 120}, {}, {6, 6, 6, 6}, {1, 1, 1, 1}, 0, {0.5f, 0.5f}});
+            ui.sprites.push_back({panel, {60, 140, 48, 48}, {}, {}, {1, 1, 1, 1}, 30, {0.5f, 0.5f}});
+            ui.texts.push_back({"Hello 2D", 12, 60, 18, {1, 1, 1, 1}});
+            ui.fps = 60;
+            renderer.Render(ui);
+            Require(renderer.LastSpriteCount() >= 3 + 1, "2D overlay did not submit sprites and text");
+            renderer.Resize(300, 220);
+            renderer.Render(ui); // screen-space overlay must survive a resize
+            renderer.Render({});
+            Require(renderer.LastSpriteCount() == 0, "An empty frame must not draw a stale overlay");
         }
         DestroyWindow(window);
         UnregisterClassW(windowClass.lpszClassName, instance);

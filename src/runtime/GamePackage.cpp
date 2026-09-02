@@ -33,7 +33,7 @@ std::filesystem::path Export(const projects::Project& project,const std::filesys
     Require(std::filesystem::is_directory(parent),"Choose an existing build destination folder.");
     Require(!Within(source,parent),"Build outside the source project so exported files cannot become project assets.");
     const auto player=std::filesystem::canonical(playerDirectory);
-    Require(std::filesystem::is_regular_file(player/L"zPlayer.exe") && std::filesystem::is_regular_file(player/L"shaders"/L"ColorCube.hlsl"),"Standalone player is missing. Build the zPlayer target first.");
+    Require(std::filesystem::is_regular_file(player/L"zPlayer.exe") && std::filesystem::is_regular_file(player/L"shaders"/L"ColorCube.hlsl") && std::filesystem::is_regular_file(player/L"shaders"/L"Sprite.hlsl"),"Standalone player is missing. Build the zPlayer target first.");
     Require(projects::Open(project.file).source==project.source,"Project config changed on disk. Reopen it before building.");
     auto config=project.config;const auto startup=std::filesystem::relative(assetLibrary::Resolve(projects::Assets(project),startupScene),source).generic_u8string();
     config.lastScene.assign(startup.begin(),startup.end());projects::Decode(projects::Encode(config));
@@ -68,7 +68,8 @@ std::filesystem::path Export(const projects::Project& project,const std::filesys
         for(std::size_t i=0;i<files.size();++i){const auto target=staging/L"Data"/L"Assets"/std::filesystem::relative(files[i],assets);std::filesystem::create_directories(target.parent_path());std::filesystem::copy_file(files[i],target);report(20+static_cast<unsigned>(60*(i+1)/files.size()),"Copying project assets");}
         Write(staging/L"Data"/L"Game.zproject",projects::Encode(config));Write(staging/L"Data"/L"Game.settings",settingsText);
         std::filesystem::copy_file(player/L"zPlayer.exe",staging/(name+L".exe"));
-        std::filesystem::create_directory(staging/L"shaders");std::filesystem::copy_file(player/L"shaders"/L"ColorCube.hlsl",staging/L"shaders"/L"ColorCube.hlsl");
+        std::filesystem::create_directory(staging/L"shaders");
+        for(const auto* shader:{L"ColorCube.hlsl",L"Sprite.hlsl"})std::filesystem::copy_file(player/L"shaders"/shader,staging/L"shaders"/shader);
         Require(std::filesystem::is_regular_file(player/L"ufbx-LICENSE.txt"),"Player third-party license is missing.");
         std::filesystem::copy_file(player/L"ufbx-LICENSE.txt",staging/L"ufbx-LICENSE.txt");
         Require(std::filesystem::is_regular_file(player/L"Jolt-LICENSE.txt"),"Player Jolt license is missing.");std::filesystem::copy_file(player/L"Jolt-LICENSE.txt",staging/L"Jolt-LICENSE.txt");

@@ -1,5 +1,6 @@
 #include "Renderer.h"
 #include "RenderTransform.h"
+#include "Render2D.h"
 
 #include <DirectXMath.h>
 #include <d3dcompiler.h>
@@ -26,6 +27,13 @@ struct RenderMesh
     std::vector<MeshPart> parts;
     DXGI_FORMAT indexFormat = DXGI_FORMAT_R32_UINT;
     ID3D11Device* device = nullptr; // Buffers keep their creating device alive.
+};
+
+struct RenderTexture
+{
+    ComPtr<ID3D11ShaderResourceView> view;
+    std::uint32_t width = 0, height = 0;
+    ID3D11Device* device = nullptr;
 };
 
 namespace
@@ -76,6 +84,12 @@ struct Renderer::SceneConstants
     XMFLOAT4 lightDirection;
 };
 
+struct Renderer::SpriteConstants
+{
+    XMFLOAT2 inverseScreen;
+    XMFLOAT2 padding;
+};
+
 void Renderer::Initialize(HWND window, const std::uint32_t width, const std::uint32_t height)
 {
     CreateDeviceAndSwapChain(window, width, height);
@@ -106,6 +120,7 @@ void Renderer::Initialize(HWND window, const std::uint32_t width, const std::uin
     rasterizer.DepthClipEnable = TRUE;
     ThrowIfFailed(device_->CreateRasterizerState(&rasterizer, &rasterizer_), "Create rasterizer");
     CreateEditorGuides();
+    CreateSpritePass();
 }
 
 void Renderer::CreateDeviceAndSwapChain(HWND window, const std::uint32_t width, const std::uint32_t height)
@@ -332,6 +347,186 @@ void Renderer::CreateEditorGuides()
     ThrowIfFailed(device_->CreateDepthStencilState(&depth, &overlayDepth_), "Create editor overlay depth state");
 }
 
+void Renderer::CreateSpritePass()
+{
+    const std::filesystem::path shaderPath = ShaderFile(L"Sprite.hlsl");
+    const ComPtr<ID3DBlob> vertexBytecode = CompileShader(shaderPath, "VSMain", "vs_5_0");
+    const ComPtr<ID3DBlob> pixelBytecode = CompileShader(shaderPath, "PSMain", "ps_5_0");
+    ThrowIfFailed(device_->CreateVertexShader(vertexBytecode->GetBufferPointer(), vertexBytecode->GetBufferSize(),
+                                              nullptr, &spriteVertexShader_), "Create sprite vertex shader");
+    ThrowIfFailed(device_->CreatePixelShader(pixelBytecode->GetBufferPointer(), pixelBytecode->GetBufferSize(),
+                                             nullptr, &spritePixelShader_), "Create sprite pixel shader");
+
+    constexpr std::array spriteElements{
+        D3D11_INPUT_ELEMENT_DESC{"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0,
+                                 offsetof(SpriteVertex, position), D3D11_INPUT_PER_VERTEX_DATA, 0},
+        D3D11_INPUT_ELEMENT_DESC{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0,
+                                 offsetof(SpriteVertex, uv), D3D11_INPUT_PER_VERTEX_DATA, 0},
+        D3D11_INPUT_ELEMENT_DESC{"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
+                                 offsetof(SpriteVertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    ThrowIfFailed(device_->CreateInputLayout(spriteElements.data(), static_cast<UINT>(spriteElements.size()),
+                                             vertexBytecode->GetBufferPointer(), vertexBytecode->GetBufferSize(),
+                                             &spriteInputLayout_), "Create sprite input layout");
+
+    D3D11_BUFFER_DESC vertexDescription{};
+    vertexDescription.ByteWidth = kSpriteVertexCapacity * static_cast<UINT>(sizeof(SpriteVertex));
+    vertexDescription.Usage = D3D11_USAGE_DYNAMIC;
+    vertexDescription.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    vertexDescription.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    ThrowIfFailed(device_->CreateBuffer(&vertexDescription, nullptr, &spriteVertexBuffer_), "Create sprite vertex buffer");
+
+    D3D11_BUFFER_DESC constantDescription{};
+    constantDescription.ByteWidth = sizeof(SpriteConstants);
+    constantDescription.Usage = D3D11_USAGE_DYNAMIC;
+    constantDescription.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    constantDescription.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    ThrowIfFailed(device_->CreateBuffer(&constantDescription, nullptr, &spriteConstantBuffer_), "Create sprite constant buffer");
+
+    D3D11_BLEND_DESC blend{};
+    blend.RenderTarget[0].BlendEnable = TRUE;
+    blend.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    blend.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    blend.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    blend.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    blend.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+    blend.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    blend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    ThrowIfFailed(device_->CreateBlendState(&blend, &spriteBlend_), "Create sprite blend state");
+
+    D3D11_SAMPLER_DESC sampler{};
+    sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampler.MaxLOD = D3D11_FLOAT32_MAX;
+    ThrowIfFailed(device_->CreateSamplerState(&sampler, &spriteSampler_), "Create sprite sampler");
+
+    const std::array<std::uint8_t, 4> white{255, 255, 255, 255};
+    whiteHandle_ = UploadTexture(1, 1, white.data());
+}
+
+TextureHandle Renderer::UploadTexture(std::uint32_t width, std::uint32_t height, const std::uint8_t* rgba)
+{
+    if (!device_) throw std::runtime_error("Initialize the renderer before uploading textures.");
+    if (!rgba || width == 0 || height == 0 || width > 16384 || height > 16384)
+        throw std::runtime_error("Texture dimensions are invalid or oversized.");
+
+    D3D11_TEXTURE2D_DESC description{};
+    description.Width = width;
+    description.Height = height;
+    description.MipLevels = description.ArraySize = 1;
+    description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    description.SampleDesc.Count = 1;
+    description.Usage = D3D11_USAGE_IMMUTABLE;
+    description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA data{rgba, width * 4, 0};
+    ComPtr<ID3D11Texture2D> texture;
+    ThrowIfFailed(device_->CreateTexture2D(&description, &data, &texture), "Create 2D texture");
+    auto result = std::make_shared<RenderTexture>();
+    ThrowIfFailed(device_->CreateShaderResourceView(texture.Get(), nullptr, &result->view), "Create 2D texture view");
+    result->width = width;
+    result->height = height;
+    result->device = device_.Get();
+    return result;
+}
+
+TextureHandle Renderer::WhiteTexture()
+{
+    return whiteHandle_;
+}
+
+void Renderer::RenderSprites(const ViewportFrame& frame)
+{
+    if (frame.sprites.empty() && frame.texts.empty() && !frame.fps) return;
+
+    std::vector<SpriteDraw> draws;
+    draws.reserve(frame.sprites.size() + 64);
+
+    if ((!frame.texts.empty() || frame.fps) && !fontAtlas_.Valid())
+    {
+        fontAtlas_ = FontAtlas::Build(32);
+        fontTexture_ = UploadTexture(static_cast<std::uint32_t>(fontAtlas_.Width()),
+                                     static_cast<std::uint32_t>(fontAtlas_.Height()),
+                                     fontAtlas_.Pixels().data());
+    }
+    for (const auto& text : frame.texts)
+    {
+        auto glyphs = fontAtlas_.Layout(text.text, text.x, text.y, text.pixelHeight, text.color, fontTexture_);
+        draws.insert(draws.end(), glyphs.begin(), glyphs.end());
+    }
+    if (frame.fps)
+    {
+        const std::string label = "FPS " + std::to_string(*frame.fps);
+        const float height = 16;
+        const float width = fontAtlas_.Measure(label, height);
+        auto glyphs = fontAtlas_.Layout(label, static_cast<float>(width_) - width - 8, 8, height,
+                                        Float4{0.92f, 0.95f, 1.0f, 1.0f}, fontTexture_);
+        draws.insert(draws.end(), glyphs.begin(), glyphs.end());
+    }
+    draws.insert(draws.end(), frame.sprites.begin(), frame.sprites.end());
+    if (draws.empty()) return;
+
+    SpriteConstants constants{};
+    constants.inverseScreen = {1.0f / static_cast<float>(width_), 1.0f / static_cast<float>(height_)};
+    D3D11_MAPPED_SUBRESOURCE mappedConstants{};
+    ThrowIfFailed(context_->Map(spriteConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedConstants), "Map sprite constants");
+    *static_cast<SpriteConstants*>(mappedConstants.pData) = constants;
+    context_->Unmap(spriteConstantBuffer_.Get(), 0);
+
+    constexpr UINT stride = sizeof(SpriteVertex);
+    constexpr UINT offset = 0;
+    const float blendFactor[4]{0, 0, 0, 0};
+    context_->IASetInputLayout(spriteInputLayout_.Get());
+    context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context_->VSSetShader(spriteVertexShader_.Get(), nullptr, 0);
+    context_->VSSetConstantBuffers(0, 1, spriteConstantBuffer_.GetAddressOf());
+    context_->PSSetShader(spritePixelShader_.Get(), nullptr, 0);
+    context_->PSSetSamplers(0, 1, spriteSampler_.GetAddressOf());
+    context_->OMSetBlendState(spriteBlend_.Get(), blendFactor, 0xffffffff);
+    context_->OMSetDepthStencilState(overlayDepth_.Get(), 0);
+    context_->RSSetState(rasterizer_.Get());
+
+    std::vector<SpriteVertex> batch;
+    batch.reserve(1024);
+    const RenderTexture* currentTexture = nullptr;
+    bool haveTexture = false;
+
+    const auto flush = [&] {
+        if (batch.empty()) return;
+        if (batch.size() > kSpriteVertexCapacity) throw std::runtime_error("Sprite batch overflowed the vertex buffer.");
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        ThrowIfFailed(context_->Map(spriteVertexBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map sprite vertices");
+        std::memcpy(mapped.pData, batch.data(), batch.size() * sizeof(SpriteVertex));
+        context_->Unmap(spriteVertexBuffer_.Get(), 0);
+        ID3D11ShaderResourceView* view = (currentTexture ? currentTexture : whiteHandle_.get())->view.Get();
+        context_->PSSetShaderResources(0, 1, &view);
+        ID3D11Buffer* buffer = spriteVertexBuffer_.Get();
+        context_->IASetVertexBuffers(0, 1, &buffer, &stride, &offset);
+        context_->Draw(static_cast<UINT>(batch.size()), 0);
+        batch.clear();
+    };
+
+    for (const auto& draw : draws)
+    {
+        const RenderTexture* texture = draw.texture ? draw.texture.get() : whiteHandle_.get();
+        if (texture && texture->device != device_.Get())
+            throw std::runtime_error("Sprite texture belongs to another render device.");
+        if (haveTexture && texture != currentTexture) flush();
+        currentTexture = texture;
+        haveTexture = true;
+        const float tw = texture ? static_cast<float>(texture->width) : 1.0f;
+        const float th = texture ? static_cast<float>(texture->height) : 1.0f;
+        if (batch.size() + 54 > kSpriteVertexCapacity) flush();
+        AppendSprite(batch, draw, tw, th);
+        ++lastSpriteCount_;
+    }
+    flush();
+
+    ID3D11ShaderResourceView* noTexture = nullptr;
+    context_->PSSetShaderResources(0, 1, &noTexture);
+    context_->OMSetBlendState(nullptr, blendFactor, 0xffffffff);
+    context_->OMSetDepthStencilState(nullptr, 0);
+}
+
 MeshHandle Renderer::UploadModel(const ModelData& model, std::vector<std::string>& warnings)
 {
     if (!device_) throw std::runtime_error("Initialize the renderer before uploading meshes.");
@@ -442,6 +637,7 @@ MeshHandle Renderer::UploadModel(const ModelData& model, std::vector<std::string
 void Renderer::Render(const ViewportFrame& frame)
 {
     lastMeshCount_ = 0;
+    lastSpriteCount_ = 0;
     if (!renderTargetView_ || width_ == 0 || height_ == 0)
     {
         return;
@@ -556,12 +752,8 @@ void Renderer::Render(const ViewportFrame& frame)
         context_->OMSetDepthStencilState(overlayDepth_.Get(), 0);
         drawLines(axesBuffer_.Get(), axesVertexCount_, parent);
     }
-    if(frame.fps) {
-        const auto glyph=[](char c)->std::string_view{switch(c){case 'F':return "11111100001000011110100001000010000";case 'P':return "11110100011000111110100001000010000";case 'S':return "01111100001000001110000010000111110";case '0':return "01110100011001110101110011000101110";case '1':return "00100011000010000100001000010001110";case '2':return "01110100010000100010001000100011111";case '3':return "11110000010000101110000010000111110";case '4':return "00010001100101010010111110001000010";case '5':return "11111100001000011110000010000111110";case '6':return "01110100001000011110100011000101110";case '7':return "11111000010001000100010000100001000";case '8':return "01110100011000101110100011000101110";case '9':return "01110100011000101111000010000101110";default:return "00000000000000000000000000000000000";}};
-        const auto label=std::string("FPS ")+std::to_string(*frame.fps);std::vector<Vertex> text;const float cellX=.012f,cellY=.027f;const float left=std::max(-.95f,.96f-static_cast<float>(label.size()*6)*cellX),top=.94f;
-        for(std::size_t character=0;character<label.size();++character){const auto bits=glyph(label[character]);for(int row=0;row<7;++row)for(int column=0;column<5;++column)if(bits[row*5+column]=='1'){const float x=left+(character*6+column)*cellX,y=top-row*cellY;text.push_back({{x,y,0},{0,1,0},{.92f,.95f,1}});text.push_back({{x+cellX*.8f,y,0},{0,1,0},{.92f,.95f,1}});}}
-        if(text.size()<=1024){D3D11_MAPPED_SUBRESOURCE mapped{};ThrowIfFailed(context_->Map(axesBuffer_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"Map FPS overlay");std::memcpy(mapped.pData,text.data(),text.size()*sizeof(Vertex));context_->Unmap(axesBuffer_.Get(),0);SceneConstants constants{};XMStoreFloat4x4(&constants.worldViewProjection,XMMatrixIdentity());XMStoreFloat4x4(&constants.normalWorld,XMMatrixIdentity());constants.lightDirection=XMFLOAT4{0,0,1,1};ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"Map FPS constants");*static_cast<SceneConstants*>(mapped.pData)=constants;context_->Unmap(sceneConstantBuffer_.Get(),0);ID3D11Buffer* buffer=axesBuffer_.Get();context_->IASetVertexBuffers(0,1,&buffer,&stride,&offset);context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);context_->OMSetDepthStencilState(overlayDepth_.Get(),0);context_->PSSetShaderResources(0,1,whiteTexture_.GetAddressOf());context_->Draw(static_cast<UINT>(text.size()),0);}
-    }
+    // 2D / UI overlay (sprites + text + the FPS readout), in screen pixels.
+    RenderSprites(frame);
 
     // Do not let pipeline bindings keep an otherwise released model alive in an empty scene.
     ID3D11Buffer* noBuffer = nullptr;
@@ -572,7 +764,7 @@ void Renderer::Render(const ViewportFrame& frame)
     ThrowIfFailed(swapChain_->Present(1, 0), "Present frame");
 }
 
-std::filesystem::path Renderer::FindShaderPath() const
+std::filesystem::path Renderer::ShaderFile(const wchar_t* name) const
 {
     std::array<wchar_t, 32768> executablePath{};
     const DWORD length = GetModuleFileNameW(nullptr, executablePath.data(),
@@ -583,10 +775,15 @@ std::filesystem::path Renderer::FindShaderPath() const
     }
 
     const std::filesystem::path shaderPath =
-        std::filesystem::path(executablePath.data()).parent_path() / "shaders" / "ColorCube.hlsl";
+        std::filesystem::path(executablePath.data()).parent_path() / "shaders" / name;
     if (!std::filesystem::exists(shaderPath))
     {
         throw std::runtime_error("Shader file was not found: " + shaderPath.string());
     }
     return shaderPath;
+}
+
+std::filesystem::path Renderer::FindShaderPath() const
+{
+    return ShaderFile(L"ColorCube.hlsl");
 }

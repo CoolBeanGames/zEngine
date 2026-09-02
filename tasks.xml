@@ -920,12 +920,12 @@ a Breakpoint has been reached
     <name>start work on 2D Rendering</name>
     <prompt>we need a way to render 2D on top of everything else, right now this will mostly be used for the UI though eventually will be used for a dedicated 2D mode so make it flexible</prompt>
     <requirements>UI rendering framework</requirements>
-    <inProgress>true</inProgress>
-    <done>false</done>
+    <inProgress>false</inProgress>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey>k4p9x2wq</lockKey>
+    <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy>ZE-73</blockedBy>
@@ -935,16 +935,16 @@ a Breakpoint has been reached
     <build>true</build>
     <release>true</release>
     <tags>2D,rendering,scripting</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Added a screen-space 2D / UI rendering pass that runs after the 3D forward pass with depth testing off and straight-alpha blending, so it is untouched by any current or future lighting system. New submission layer src/Render2D.h (SpriteDraw with dest rect, normalised source region, nine-slice borders, straight-alpha tint, and z-rotation about a 0..1 pivot; TextDraw). AppendSprite() is a pure, unit-tested tessellator: 6 verts for a plain quad, 54 for a nine-slice, region mapped through, rotation applied, oversized borders clamped to the dest/source rect. shaders/Sprite.hlsl maps pixel positions (origin top-left) straight to clip space and samples one texture * tint. Renderer gains a self-contained texture path - UploadTexture(w,h,RGBA) + WhiteTexture() - independent of the future material/material-instance systems (the renderer is free to back these with materials internally later; callers never build a material for a UI image). Text: src/FontAtlas.cpp builds a glyph atlas once from "Segoe UI" via GDI into an RGBA coverage bitmap, uploaded as an ordinary texture; Layout()/Measure() expand a UTF-8 run into sprites, scale linearly with pixel height, and handle newlines. The renderer's FPS overlay was moved off its hand-rolled 5x7 line glyphs onto this text path (a real shipping use in both the editor and the player). ViewportFrame gained `sprites` and `texts` lists for ZE-61 to fill. Batches consecutive draws by texture. Scaling and cropping fall out of dest != source and a sub-region. Tests: new Render2D ctest (tessellation, regions, rotation, nine-slice, atlas, layout); GpuTests extended with texture upload/reject, sprites (plain, nine-slice, rotated, tinted), text and the FPS readout, plus a resize. Packaging (GamePackage.cpp) now ships Sprite.hlsl alongside ColorCube.hlsl. Full build green: 33/33 ctest, plus builds/debug (Debug) and builds/release (Release); the Release output is zipped for GitHub upload.</notes>
+    <filesChanged>shaders/Sprite.hlsl; src/Render2D.h; src/Render2D.cpp; src/FontAtlas.h; src/FontAtlas.cpp; src/ModelData.h; src/RenderScene.h; src/Renderer.h; src/Renderer.cpp; src/runtime/GamePackage.cpp; CMakeLists.txt; tests/Render2DTests.cpp; tests/AssetTests.cpp</filesChanged>
     <image></image>
     <subtasks>
-      <subtask done="false">tasks required for rendering 2D on the screen</subtask>
-      <subtask done="false">tasks required for rendering text on the screen</subtask>
-      <subtask done="false">everything uses screen coordinates</subtask>
-      <subtask done="false">prepared for the material and material instance systems we will build later, although it should have its own way to add textures. I want it to use materials/material instances on the back end but i dont want to have to make one for every ui texture</subtask>
-      <subtask done="false">should be ready to support, 9 slices, reggions, scaling, cropping, z axis rotation</subtask>
-      <subtask done="false">shoudl be unaffected by the later lighting systems</subtask>
+      <subtask done="true">tasks required for rendering 2D on the screen</subtask>
+      <subtask done="true">tasks required for rendering text on the screen</subtask>
+      <subtask done="true">everything uses screen coordinates</subtask>
+      <subtask done="true">prepared for the material and material instance systems we will build later, although it should have its own way to add textures. I want it to use materials/material instances on the back end but i dont want to have to make one for every ui texture</subtask>
+      <subtask done="true">should be ready to support, 9 slices, reggions, scaling, cropping, z axis rotation</subtask>
+      <subtask done="true">shoudl be unaffected by the later lighting systems</subtask>
     </subtasks>
   </task>
   <task id="ZE-61">
