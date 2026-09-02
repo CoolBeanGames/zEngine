@@ -145,6 +145,10 @@ public:
     void SetMouse(const MouseFrame& frame, bool emitEvents = true);
     // Host lookup returns same-VM scene proxies. Missing names return a null reference.
     void SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup);
+    // find_by_type(Type): host returns the first scene proxy carrying that native component (null if none).
+    void SetTypeLookup(std::function<ObjectRef(std::string_view)> lookup);
+    // get_tags()/has_tag(): host returns the tags of the given scene proxy.
+    void SetTagLookup(std::function<std::vector<std::string>(ObjectRef)> lookup);
     using PhysicsBodyCall = std::function<Value(ObjectRef, std::string_view, const std::vector<Value>&)>;
     using PhysicsCastCall = std::function<std::vector<ObjectRef>(Vector3, Vector3, std::uint32_t)>;
     using PrefabSpawnCall = std::function<ObjectRef(std::string_view)>;

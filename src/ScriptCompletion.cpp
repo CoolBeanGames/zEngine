@@ -42,7 +42,8 @@ Index::Index() {
     types_[L"GameObject"].base=L"gameObject";
     for(const auto& native:zengine::script::NativeTypes())if(!native.base.empty())types_[Wide(native.name)].base=Wide(native.base);
     add(L"gameObject",L"transform",L"Transform");
-    add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);add(L"gameObject",L"make_timer",L"Timer",true);
+    add(L"gameObject",L"parent",L"gameObject");add(L"gameObject",L"find",L"gameObject",true);add(L"gameObject",L"make_timer",L"Timer",true);add(L"gameObject",L"getBehavior",L"Behavior",true);
+    add(L"gameObject",L"find_by_type",L"gameObject",true);add(L"gameObject",L"get_tags",L"array",true);add(L"gameObject",L"has_tag",L"bool",true);
     for(const auto& native:zengine::script::NativeTypes())
         if(!native.accessor.empty() && native.accessor!=std::string_view("transform"))
             types_[L"gameObject"].members[Wide(native.accessor)]={Wide(native.accessor),Wide(native.name),false};

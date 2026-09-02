@@ -457,6 +457,44 @@ void Timers() {
     Error([&]{Compile("class Bad : gameObject { Timer t=Timer(); }");},"supplied by the host");
     auto invalid=Compile("class Invalid : gameObject {func start(){make_timer(-1);}}");Runtime bad(invalid);auto object=bad.Create("Invalid");Error([&]{bad.Start(object);},"nonnegative");
 }
+void GetBehavior() {
+    auto p=Compile(R"(class Player : rigidbody {
+        func check():bool {
+            rigidbody rb = getBehavior(rigidbody);
+            transform tr = getBehavior(Transform);
+            physicsbody pb = this.getBehavior(PhysicsBody);
+            return rb is RigidBody && tr is Transform && pb is PhysicsBody && rb is behavior;
+        }
+    })");
+    Runtime r(p); auto o=r.Create("Player");
+    Check(std::get<bool>(r.Call(o,"check")),"getBehavior did not return the native components");
+    Error([&]{Compile("class A : gameObject { func f(){ collider c = getBehavior(Vector3); } }");},"native component type");
+    Error([&]{Compile("class A : gameObject { func f(){ int x=0; collider c = getBehavior(x); } }");},"native component type");
+    Error([&]{Compile("class A : gameObject { func f(){ getBehavior(RigidBody, Collider); } }");},"one component type");
+    Error([&]{Compile("class A : gameObject { func f(){ getBehavior(gameObject); } }");},"native component type");
+}
+void FindAndTags() {
+    auto p=Compile(R"(class Q : gameObject {
+        func by_type():gameObject { return find_by_type(RigidBody); }
+        func by_type_static():gameObject { return GameObject.find_by_type(Collider); }
+        func by_name():gameObject { return GameObject.find("Target"); }
+        func first_tag():string { array t=get_tags(); return t[0]; }
+        func tag_count():int { return get_tags().size(); }
+        func is_boss():bool { return has_tag("boss"); }
+        func is_minion():bool { return has_tag("minion"); }
+    })");
+    Runtime r(p); auto q=r.Create("Q"); auto target=r.Create("gameObject");
+    r.SetObjectLookup([&](std::string_view n){ return n=="Target"?target:ObjectRef{}; });
+    r.SetTypeLookup([&](std::string_view type){ return type=="RigidBody"?target:ObjectRef{}; });
+    r.SetTagLookup([&](ObjectRef){ return std::vector<std::string>{"boss","elite"}; });
+    Check(std::get<ObjectRef>(r.Call(q,"by_type"))==target,"find_by_type did not use the host type lookup");
+    Check(std::get<ObjectRef>(r.Call(q,"by_type_static")).id==0,"find_by_type(Collider) should be null here");
+    Check(std::get<ObjectRef>(r.Call(q,"by_name"))==target,"GameObject.find did not resolve");
+    Check(Int(r.Call(q,"tag_count"))==2 && std::get<std::string>(r.Call(q,"first_tag"))=="boss","get_tags did not return the host tags");
+    Check(std::get<bool>(r.Call(q,"is_boss")) && !std::get<bool>(r.Call(q,"is_minion")),"has_tag membership check failed");
+    Error([&]{Compile("class A : gameObject { func f(){ find_by_type(Vector3); } }");},"native component type");
+    Error([&]{Compile("class A : gameObject { func f(){ find_by_type(\"x\"); } }");},"find_by_type takes one component type");
+}
 void NativeTypeAliases() {
     auto program=Compile(R"(class Native : rigidbody {
         rigidbody saved; staticbody static_saved; kinematicbody kinematic_saved; physicsbody physics_saved; collider collider_saved; area area_saved; behavior behavior_saved; transform transform_saved;
@@ -534,7 +572,7 @@ void MouseInput() {
 }
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"mouse input", MouseInput},
+        {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},

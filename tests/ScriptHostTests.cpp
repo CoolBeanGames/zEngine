@@ -225,6 +225,24 @@ int main()
         Check(Value(mouseHost,cursor,"clicks")=="1","Mouse click signal did not reach the script");
         Check(Value(mouseHost,cursor,"px")=="0.75" && Value(mouseHost,cursor,"dx")=="0.25","Mouse position/delta not exposed to the script");
         mouseHost.Stop(mouseStore);
+        // ZE-70 / ZE-69: find_by_type scans the live store; get_tags/has_tag read the owner's tags.
+        ObjectStore tagStore; ScriptHost tagHost; tagHost.SetObjectStore(&tagStore);
+        auto& seeker=tagStore.Create("Seeker"); seeker.SetTags({"player","alive"});
+        auto& prey=tagStore.Create("Prey"); prey.AddBehavior<physics::RigidBody>();
+        auto& seekScript=seeker.AddBehavior<ScriptBehavior>("Seeker.zsh");
+        Check(tagHost.Prepare(seekScript,R"(class Seeker : gameObject {
+            export bool found_prey=false; export bool is_player=false; export bool is_enemy=false; export int tag_count=0;
+            func start(){
+                found_prey = find_by_type(RigidBody) != null;
+                is_player = has_tag("player"); is_enemy = has_tag("enemy");
+                tag_count = get_tags().size();
+            }
+        })","Seeker"),"Tag/find fixture compile");
+        Check(tagHost.Play(tagStore) && !seekScript.Faulted(),"Tag/find fixture Play");
+        Check(Value(tagHost,seekScript,"found_prey")=="true","find_by_type did not locate the RigidBody object");
+        Check(Value(tagHost,seekScript,"is_player")=="true" && Value(tagHost,seekScript,"is_enemy")=="false","has_tag membership wrong");
+        Check(Value(tagHost,seekScript,"tag_count")=="2","get_tags count wrong");
+        tagHost.Stop(tagStore);
         std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;
     }

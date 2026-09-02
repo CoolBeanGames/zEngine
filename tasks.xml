@@ -983,7 +983,7 @@ a Breakpoint has been reached
 rigidbody rb = gameObject.getBehavior(rigidbody);</prompt>
     <requirements>can now get references like this</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -991,14 +991,14 @@ rigidbody rb = gameObject.getBehavior(rigidbody);</prompt>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>scritping</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>gameObject.getBehavior(TypeName) is compile-time sugar for the read-only native accessor field: getBehavior(RigidBody) -&gt; the "rigidbody" field, getBehavior(Transform) -&gt; "transform", also KinematicBody/StaticBody/Area/Collider/Camera/PhysicsBody. Works as a bare call (implicit this), this.getBehavior(...), or obj.getBehavior(...); a class that defines its own getBehavior method keeps it. The argument must be a native component type name (checked against the phone book); a value, an unknown type, gameObject/Behavior, or the wrong argument count is a compile error. Returns the component type so `rigidbody rb = getBehavior(rigidbody);` type-checks. No runtime/host change - the accessor fields were already bound by ScriptHost. Autocomplete lists getBehavior on gameObject. New scripting GetBehavior test; ctest 32/32.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptCompletion.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-70">
@@ -1008,7 +1008,7 @@ GameObject.find("name") - returns the first gameobject in the scene with that na
 GameObject.find_by_type(type) - returns the first gameobject in the scene with that behavior</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -1016,14 +1016,14 @@ GameObject.find_by_type(type) - returns the first gameobject in the scene with t
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>scripting</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>find() already existed as an implicit-this gameObject method; it now also accepts the static-style spelling GameObject.find("name") / gameObject.find("name") (the base type name reads as "the current gameObject", same as a bare call - this also enables gameObject.getBehavior(...) from ZE-68). Added find_by_type(Type): compile-time recognised (arg must be a native component type - RigidBody, KinematicBody, StaticBody, Area, Collider, Camera, PhysicsBody, Behavior), emits new Op::FindType which calls a host type-lookup callback (Runtime::SetTypeLookup) returning the first scene proxy carrying that component, or null. ScriptHost wires it via ObjectMatchesReferenceType over the live store. Autocomplete lists find_by_type. New scripting FindAndTags test + ScriptHostTests find/tag block. ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-69">
@@ -1031,7 +1031,7 @@ GameObject.find_by_type(type) - returns the first gameobject in the scene with t
     <prompt>member of game object, returns the tag field seperated by by commas into an array. also add has_tag("tag") which returns bool if the object uses that tag</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -1039,14 +1039,14 @@ GameObject.find_by_type(type) - returns the first gameobject in the scene with t
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>gameObject.get_tags() returns the object's tags as a script string array; has_tag("tag") returns bool. Both are gameObject methods (work as bare calls, this.get_tags(), obj.get_tags() or GameObject.get_tags()). The engine already stores tags as a list (the editor's comma-separated tag field is split there), so the runtime just exposes them via a new host callback Runtime::SetTagLookup, wired by ScriptHost to GameObject::Tags() of the proxy's live object. Autocomplete lists get_tags/has_tag. Covered by the scripting FindAndTags test and the ScriptHostTests find/tag block. ctest 32/32.</notes>
+    <filesChanged>scripting/include/zscript/Script.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptHost.cpp; src/ScriptCompletion.cpp; tests/ScriptHostTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-71">

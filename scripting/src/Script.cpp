@@ -301,7 +301,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, MakeVector, SetComponent, Self, Input, Physics, Math, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -466,9 +466,34 @@ class BytecodeCompiler {
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
             std::string receiver;
-            if (callee.kind == Expr::Name) { Emit(Op::Self, t); receiver = owner.name; }
+            // GameObject.find(...) / gameObject.find_by_type(...) - the base type name reads
+            // as "the current gameObject" (a static-style call), like a bare call would.
+            const bool typePrefixed = callee.kind == Expr::Member && callee.children[0]->kind == Expr::Name
+                && Canonical(callee.children[0]->token.text) == "gameObject" && Local(callee.children[0]->token.text) == std::numeric_limits<std::size_t>::max();
+            if (callee.kind == Expr::Name || typePrefixed) { Emit(Op::Self, t); receiver = owner.name; }
             else if (callee.kind == Expr::Member) receiver = Expression(*callee.children[0]);
             else Fail(program.source, t, "Expected a method or class name");
+            // getBehavior(RigidBody) / this.getBehavior(...) / obj.getBehavior(...) -
+            // compile-time sugar for the native accessor field on a gameObject.
+            if (callee.token.text == "getBehavior" && (callee.kind == Expr::Name || callee.kind == Expr::Member)
+                && program.Assignable("gameObject", receiver) && !program.Method(receiver, "getBehavior")) {
+                Require(e.children.size() == 2 && e.children[1]->kind == Expr::Name, t, "getBehavior takes one component type, e.g. getBehavior(RigidBody)");
+                const auto typeName = Canonical(e.children[1]->token.text);
+                const auto* nt = FindNativeType(typeName);
+                Require(nt && !nt->accessor.empty(), e.children[1]->token, "getBehavior needs a native component type (RigidBody, KinematicBody, StaticBody, Area, Collider, Camera, PhysicsBody, Transform)");
+                Emit(Op::LoadField, t, 0, std::string(nt->accessor));
+                return typeName;
+            }
+            // find_by_type(RigidBody) - first scene object carrying that native component.
+            if (callee.token.text == "find_by_type" && program.Assignable("gameObject", receiver) && !program.Method(receiver, "find_by_type")) {
+                Require(e.children.size() == 2 && e.children[1]->kind == Expr::Name, t, "find_by_type takes one component type, e.g. find_by_type(RigidBody)");
+                const auto typeName = Canonical(e.children[1]->token.text);
+                const auto* nt = FindNativeType(typeName);
+                Require(nt && (nt->component || nt->name == "PhysicsBody" || nt->name == "Behavior"), e.children[1]->token,
+                        "find_by_type needs a native component type (RigidBody, KinematicBody, StaticBody, Area, Collider, Camera, PhysicsBody, Behavior)");
+                Emit(Op::FindType, t, 0, std::string(nt->name));
+                return "gameObject";
+            }
             if(receiver=="string" || (receiver=="any" && (callee.token.text=="truncate" || callee.token.text=="substr"))) {
                 const auto& method=callee.token.text;
                 Require(method=="size" || method=="truncate" || method=="substr",t,"Unknown string method");
@@ -698,6 +723,8 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Function find;find.params={"string"};find.result="gameObject";gameObject.methods.emplace("find",std::move(find));
     Function makeTimer;makeTimer.params={"float"};makeTimer.result="Timer";gameObject.methods.emplace("make_timer",std::move(makeTimer));
     Function print;print.params={"string"};print.result="void";gameObject.methods.emplace("print",std::move(print));
+    Function getTags;getTags.result="array";gameObject.methods.emplace("get_tags",std::move(getTags));
+    Function hasTag;hasTag.params={"string"};hasTag.result="bool";gameObject.methods.emplace("has_tag",std::move(hasTag));
     program.classes.emplace("gameObject", std::move(gameObject));
     Class timer;timer.name="Timer";timer.base="gameObject";timer.fields=program.classes.at("gameObject").fields;timer.signals={"finished"};program.classes.emplace(timer.name,std::move(timer));
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
@@ -838,6 +865,8 @@ struct Runtime::Impl {
     struct TimerRecord { ObjectRef object; double remaining = 0; };
     std::vector<TimerRecord> timers;
     std::function<ObjectRef(std::string_view)> objectLookup;
+    std::function<ObjectRef(std::string_view)> typeLookup;              // find_by_type
+    std::function<std::vector<std::string>(ObjectRef)> tagLookup;       // get_tags / has_tag
     Runtime::PhysicsBodyCall physicsBodyCall;
     Runtime::PhysicsCastCall physicsCastCall;
     Runtime::PrefabSpawnCall prefabSpawnCall;
@@ -1207,6 +1236,19 @@ struct Runtime::Impl {
             const auto requested=std::get<std::string>(Coerce(args[0],"string",t));
             return Coerce(objectLookup?Value{objectLookup(requested)}:Value{ObjectRef{}},"gameObject",t);
         }
+        if((name=="get_tags"||name=="has_tag") && program->Method(object.type->name,name)==&program->classes.at("gameObject").methods.at(name)) {
+            Tick(t);
+            const std::vector<std::string> tags = tagLookup ? tagLookup(ref) : std::vector<std::string>{};
+            if(name=="has_tag") {
+                if(args.size()!=1)Error(t,"has_tag takes one tag string");
+                const auto want=std::get<std::string>(Coerce(args[0],"string",t));
+                return std::any_of(tags.begin(),tags.end(),[&](const auto& s){return s==want;});
+            }
+            if(!args.empty())Error(t,"get_tags takes no arguments");
+            std::vector<Value> values;values.reserve(tags.size());
+            for(const auto& s:tags)values.push_back(s);
+            return MakeArray(std::move(values),t);
+        }
         if(object.type->name=="InputService") {
             if(args.size()!=1)Error(t,"Input calls take one action name");
             const auto action=std::get<std::string>(Coerce(args[0],"string",t));const auto found=inputFrame.find(action);
@@ -1281,6 +1323,10 @@ struct Runtime::Impl {
             case Op::IsType: {
                 const auto actual = Type(pop(),t);
                 stack.push_back(actual == ins.name || (actual != "null" && program->classes.contains(ins.name) && program->Assignable(ins.name,actual))); break;
+            }
+            case Op::FindType: {
+                Tick(t); pop(); // discard the implicit receiver
+                stack.push_back(Coerce(typeLookup ? Value{typeLookup(ins.name)} : Value{ObjectRef{}}, "gameObject", t)); break;
             }
             case Op::MakeVector: {
                 Vector3 v; if (ins.a == 3) { v.z = Number(pop()); v.y = Number(pop()); v.x = Number(pop()); }
@@ -1472,6 +1518,8 @@ void Runtime::RemoveArrayElement(ArrayRef array, std::size_t index) {
     --impl_->arrayElements;
 }
 void Runtime::SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->objectLookup=std::move(lookup);}
+void Runtime::SetTypeLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->typeLookup=std::move(lookup);}
+void Runtime::SetTagLookup(std::function<std::vector<std::string>(ObjectRef)> lookup){impl_->tagLookup=std::move(lookup);}
 void Runtime::SetPhysicsCallbacks(PhysicsBodyCall bodyCall,PhysicsCastCall castCall){impl_->physicsBodyCall=std::move(bodyCall);impl_->physicsCastCall=std::move(castCall);}
 void Runtime::BindNativeBehavior(ObjectRef owner,std::string_view behaviorType){impl_->Reset();impl_->BindNativeBehavior(owner,std::string(behaviorType));}
 void Runtime::SetPrefabSpawnCallback(PrefabSpawnCall callback){impl_->prefabSpawnCall=std::move(callback);}

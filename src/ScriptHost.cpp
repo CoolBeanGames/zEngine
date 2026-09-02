@@ -133,6 +133,14 @@ namespace
                 GameObjectId id=0;for(std::size_t i=0;i<scene.Size();++i)if(scene.At(i).Name()==name){if(id)throw std::runtime_error("Ambiguous object name; give scene objects unique names for find().");id=scene.At(i).Id();}
                 return Proxy(id);
             });
+            runtime.SetTypeLookup([this](std::string_view type){
+                for(std::size_t i=0;i<scene.Size();++i)if(ScriptHost::ObjectMatchesReferenceType(scene.At(i),type))return Proxy(scene.At(i).Id());
+                return ObjectRef{};
+            });
+            runtime.SetTagLookup([this](ObjectRef ref)->std::vector<std::string>{
+                const auto id=NativeId(ref);const auto* native=scene.Find(id);
+                return native?native->Tags():std::vector<std::string>{};
+            });
             if(physicsWorld)runtime.SetPhysicsCallbacks(
                 [this,physicsWorld](ObjectRef ownerRef,std::string_view method,const std::vector<Value>& arguments)->Value{
                     const auto id=NativeId(ownerRef);if(!physicsWorld->Contains(id))throw std::runtime_error("GameObject has no active physics body.");
