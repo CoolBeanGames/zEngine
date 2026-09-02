@@ -756,6 +756,37 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     gameObject2D.methods.emplace("get_tags", [] { Function f; f.result="array"; return f; }());
     gameObject2D.methods.emplace("has_tag", [] { Function f; f.params={"string"}; f.result="bool"; return f; }());
     program.classes.emplace("gameObject2D", std::move(gameObject2D));
+    // UI controls (ZE-61): a native class chain rooted at gameObject2D. A user's
+    // "class Menu : PanelContainer" inherits the transform, the layout fields and
+    // the "clicked" signal. The engine ui:: behaviors are the source of truth;
+    // these classes let scripts drive and listen to them.
+    {
+        auto uiField = [](const char* name, const char* type) { return Field{Token{Token::Identifier, name}, type}; };
+        auto uiClass = [&](const char* name, const char* base, std::vector<Field> extra) {
+            Class c; c.name = name; c.base = base;
+            c.fields = program.classes.at(base).fields;
+            c.signals = program.classes.at(base).signals;
+            c.signals.insert("clicked");
+            for (auto& f : extra) c.fields.push_back(std::move(f));
+            program.classes.emplace(name, std::move(c));
+        };
+        uiClass("uiControl", "gameObject2D", {uiField("anchor", "string"), uiField("size", "Vector2"), uiField("min_size", "Vector2"),
+                                             uiField("order", "int"), uiField("visible", "bool"), uiField("clickable", "bool")});
+        uiClass("uiContainer", "uiControl", {uiField("padding", "float"), uiField("spacing", "float")});
+        uiClass("uiHTileBox", "uiContainer", {uiField("fill_cross", "bool")});
+        uiClass("uiVTileBox", "uiContainer", {uiField("fill_cross", "bool")});
+        uiClass("uiCenterBox", "uiContainer", {});
+        uiClass("uiMarginBox", "uiContainer", {uiField("margin_left", "float"), uiField("margin_top", "float"),
+                                               uiField("margin_right", "float"), uiField("margin_bottom", "float")});
+        uiClass("uiPanel", "uiContainer", {uiField("texture", "string"), uiField("tint", "Vector3")});
+        uiClass("uiText", "uiControl", {uiField("text", "string"), uiField("pixel_height", "float"), uiField("color", "Vector3")});
+        uiClass("uiLongText", "uiText", {});
+        uiClass("uiTextEntry", "uiControl", {uiField("text", "string"), uiField("placeholder", "string"), uiField("pixel_height", "float")});
+        uiClass("uiTextureRect", "uiControl", {uiField("texture", "string"), uiField("tint", "Vector3")});
+        uiClass("uiColorRect", "uiControl", {uiField("color", "Vector3")});
+        uiClass("uiProgressBar", "uiControl", {uiField("value", "float"), uiField("vertical", "bool"),
+                                              uiField("fill_color", "Vector3"), uiField("background_color", "Vector3")});
+    }
     Class timer;timer.name="Timer";timer.base="gameObject";timer.fields=program.classes.at("gameObject").fields;timer.signals={"finished"};program.classes.emplace(timer.name,std::move(timer));
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
     auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());

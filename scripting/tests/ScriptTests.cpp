@@ -572,6 +572,36 @@ void GameObject2DScript() {
     Check(std::get<bool>(r.Call(s, "mine")), "gameObject2D type identity wrong");
     Error([&] { Compile("class B : gameObject2D { func f(){ transform.position = Vector3(1,2,3); } }"); }, "Cannot assign 'Vector3'");
 }
+void UiControlClasses() {
+    auto p = Compile(R"(class Menu : uiPanel {
+        export string title = "Play";
+        int clicks = 0;
+        func start() {
+            anchor = "center";
+            size = Vector2(220, 140);
+            tint = Vector3(0.1, 0.1, 0.12);
+            clicked.connect(on_click);
+        }
+        func on_click() { clicks += 1; }
+        func shown():string { return title; }
+    }
+    class Row : uiHTileBox { func start() { fill_cross = true; spacing = 4; } }
+    class Caption : uiText { func start() { text = "hi"; pixel_height = 18; color = Vector3(1,1,1); } }
+    class Bar : uiProgressBar { func start() { value = 0.5; vertical = false; } }
+    class Field : uiTextEntry { func start() { placeholder = "name"; } })");
+    Check(static_cast<bool>(p), "UI control subclasses did not compile");
+    Check(p->IsGameObject("Menu") && p->IsGameObject("Row") && p->IsGameObject("Bar"), "UI controls are gameObject2D-like");
+
+    Runtime r(p); auto m = r.Create("Menu"); r.Start(m);
+    Check(std::get<std::string>(r.Call(m, "shown")) == "Play", "inherited + own fields work on a UI subclass");
+    Check(std::get<Vector2>(r.Get(m, "size")) == Vector2{220, 140}, "layout field set from start()");
+    Check(std::get<Vector2>(r.Get(std::get<ObjectRef>(r.Get(m, "transform")), "position")) == Vector2{0, 0}, "UI control carries a Transform2D");
+    r.Emit({m, "clicked"}, {});
+    Check(std::get<std::int64_t>(r.Get(m, "clicks")) == 1, "the clicked signal reaches a connected handler");
+
+    Error([&] { Compile("class X { func f(){ int uiColorRect; } }"); }, "type keywords");
+    Error([&] { Compile("class Bad : uiContainer { func f(){ transform.position = Vector3(1,2,3); } }"); }, "Cannot assign 'Vector3'");
+}
 void MouseInput() {
     auto program=Compile(R"(class Cursor : gameObject {
         int clicks; int releases; int held; int moves;
@@ -623,7 +653,7 @@ void MouseInput() {
 }
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
+        {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"UI control classes", UiControlClasses}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
