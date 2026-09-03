@@ -1003,7 +1003,7 @@ a Breakpoint has been reached
     <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
-    <blockedBy>ZE-64</blockedBy>
+    <blockedBy></blockedBy>
     <dateStarted></dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
