@@ -31,6 +31,7 @@ class Renderer;
 class InspectorPanel;
 class ScriptEditor;
 class InputMapEditor;
+class MaterialEditor;
 
 class EditorShell final
 {
@@ -102,6 +103,10 @@ public:
     // ZE-64: HLSL material shader assets (.shader).
     std::filesystem::path CreateShaderAsset();
     void OpenShader(const std::filesystem::path& path);
+    // ZE-102: standalone editor for a .material asset (shader ref + pinned values).
+    void OpenMaterial(const std::filesystem::path& path);
+    // Test seam: open the material editor and return its window (nullptr on failure).
+    HWND OpenMaterialEditor(const std::filesystem::path& path);
     // ZE-65: material instance assets (.material).
     std::filesystem::path CreateMaterialAsset();
     // ZE-97: encode the images in a folder (sorted by name) into a .zvid clip.
@@ -254,6 +259,7 @@ private:
     void OpenInputMap();
     void TickInput();
     std::unique_ptr<InputMapEditor> inputEditor_;
+    std::unique_ptr<MaterialEditor> materialEditor_;
     zengine::input::System inputSystem_;
     std::optional<zengine::projects::Project> project_;
     std::filesystem::path recentSessionFile_;

@@ -6,6 +6,7 @@
 #include "physics/PhysicsBehavior.h"
 #include "ui/UiControl.h"
 #include "InspectorPanel.h"
+#include "MaterialEditor.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
 #include "ScriptAssets.h"
@@ -305,6 +306,19 @@ namespace
                 const auto materialFrame = editor.BuildSceneFrame();
                 Require(!materialFrame.meshes.empty() && materialFrame.meshes[0].material != nullptr,
                         "Assigned material did not reach the render submission");
+
+                // ZE-102: a .material opens in a standalone editor whose fields save back to the file.
+                const HWND matWin = editor.OpenMaterialEditor(materialPath);
+                Require(matWin != nullptr, "Material editor did not open for a .material");
+                const HWND tintR = GetDlgItem(matWin, MaterialEditor::Field0); // row 0 = tint, component 0
+                Require(tintR != nullptr, "Material editor has no tint value field");
+                SetWindowTextW(tintR, L"0.25");
+                SendMessageW(matWin, WM_COMMAND, MAKEWPARAM(MaterialEditor::Save, BN_CLICKED), 0);
+                const auto editedDoc = zengine::materials::Load(materialPath);
+                const zengine::materials::Value* editedTint = nullptr;
+                for (const auto& v : editedDoc.values) if (v.name == "tint") editedTint = &v;
+                Require(editedTint && std::abs(editedTint->numbers[0] - 0.25f) < 0.001f,
+                        "Material editor did not save the edited value to the .material file");
             }
             auto& first = editor.CreateEmptyGameObject();
             const auto inspector = FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);

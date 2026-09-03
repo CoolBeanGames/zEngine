@@ -111,6 +111,8 @@ add_executable(zEngine WIN32
     src/EditorShell.h
     src/InspectorPanel.cpp
     src/InspectorPanel.h
+    src/MaterialEditor.cpp
+    src/MaterialEditor.h
     src/ObjectPicker.cpp
     src/ObjectPicker.h
     src/ProjectDialog.cpp
@@ -215,7 +217,7 @@ if(BUILD_TESTING)
     add_executable(zEngineUiTests tests/UiTests.cpp)
     target_link_libraries(zEngineUiTests PRIVATE zEngineUi)
     add_test(NAME UiToolkit COMMAND zEngineUiTests)
-    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/ObjectPicker.cpp src/ProjectDialog.cpp)
+    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/MaterialEditor.cpp src/ObjectPicker.cpp src/ProjectDialog.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineRenderer zEngineGameRuntime)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorInput.cpp)

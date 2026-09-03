@@ -1,6 +1,7 @@
 #include "EditorShell.h"
 #include "EditorStyle.h"
 #include "input/InputMapEditor.h"
+#include "MaterialEditor.h"
 
 #include "Renderer.h"
 #include "FbxImporter.h"
@@ -315,6 +316,13 @@ void EditorShell::Render()
     PollAssetWork();
     for (auto it = meshCache_.begin(); it != meshCache_.end();)
         if (it->second.expired()) it = meshCache_.erase(it); else ++it;
+    // While a material editor is open its file may be saved to disk from under us;
+    // drop its cached handle each frame so edits show live on assigned meshes.
+    if (materialEditor_ && IsWindowVisible(materialEditor_->Window()))
+    {
+        const auto rel = std::filesystem::relative(materialEditor_->File(), assetsDirectory_).generic_u8string();
+        materialCache_.erase(std::string(reinterpret_cast<const char*>(rel.data()), rel.size()));
+    }
     if (!renderer_ || requestedViewportWidth_ == 0 || requestedViewportHeight_ == 0)
     {
         return;
@@ -1260,6 +1268,12 @@ bool EditorShell::TranslateShortcut(const MSG& message)
         }
         MSG copy=message;return IsDialogMessageW(inputEditor_->Window(),&copy)!=FALSE;
     }
+    if(materialEditor_ && (message.hwnd==materialEditor_->Window() || IsChild(materialEditor_->Window(),message.hwnd))) {
+        if(message.message==WM_KEYDOWN && (GetKeyState(VK_CONTROL)&0x8000) && message.wParam=='S') {
+            SendMessageW(materialEditor_->Window(),WM_COMMAND,MAKEWPARAM(MaterialEditor::Save,BN_CLICKED),0);return true;
+        }
+        MSG copy=message;return IsDialogMessageW(materialEditor_->Window(),&copy)!=FALSE;
+    }
     if (message.message!=WM_KEYDOWN || message.wParam!='S' || !(GetKeyState(VK_CONTROL)&0x8000) ||
         (message.hwnd!=window_ && !IsChild(window_,message.hwnd))) return false;
     SendMessageW(window_,WM_COMMAND,(GetKeyState(VK_SHIFT)&0x8000)?SaveSceneAsCommand:SaveSceneCommand,0); return true;
@@ -1315,6 +1329,24 @@ std::filesystem::path EditorShell::CreateMaterialAsset()
     InvalidateRect(window_, nullptr, FALSE);
     BeginAssetRename(path);
     return path;
+}
+void EditorShell::OpenMaterial(const std::filesystem::path& path)
+{
+    RequireProject();
+    if (Playing()) throw std::runtime_error("Stop Play before editing a material.");
+    const auto file = zengine::materials::Resolve(assetsDirectory_, path);
+    if (materialEditor_ && materialEditor_->File() != file)
+    {
+        if (!materialEditor_->ConfirmClose()) return;
+        materialEditor_.reset();
+    }
+    if (!materialEditor_) materialEditor_ = std::make_unique<MaterialEditor>(window_, assetsDirectory_, file);
+    materialEditor_->Show();
+}
+HWND EditorShell::OpenMaterialEditor(const std::filesystem::path& path)
+{
+    try { OpenMaterial(path); } catch (const std::exception&) { return nullptr; }
+    return materialEditor_ ? materialEditor_->Window() : nullptr;
 }
 std::filesystem::path EditorShell::BuildVideoClipFromImages()
 {
@@ -1648,6 +1680,7 @@ void EditorShell::ChooseModel()
 bool EditorShell::ConfirmScriptClose()
 {
     if(inputEditor_ && !inputEditor_->ConfirmClose())return false;
+    if(materialEditor_ && !materialEditor_->ConfirmClose())return false;
     if(inlineEditor_ && !inlineEditor_->ConfirmClose())return false;
     for (const auto& editor : scriptEditors_) if (!editor->ConfirmClose()) return false;
     return true;
@@ -1839,6 +1872,7 @@ LRESULT EditorShell::HandleMessage(
                 else if (asset.extension()==L".zinput") OpenInputMap();
                 else if (zengine::scripts::IsScript(asset)) OpenScript(asset);
                 else if (zengine::shaders::IsShader(asset)) OpenShader(asset);
+                else if (zengine::materials::IsMaterial(asset)) OpenMaterial(asset);
                 else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
                 else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
             }
