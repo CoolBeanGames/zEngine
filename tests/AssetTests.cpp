@@ -405,6 +405,17 @@ namespace
                     && b.audioLoop && b.audioSpatial && std::abs(b.audioVolume - 0.4f) < 0.001f && b.audioMaxDistance == 30.0f)
                     foundAudio = true;
             Require(foundAudio, "the editor did not serialize the AudioSource into the scene");
+
+            // ZE-111: the selected 3D source contributes an audible-range gizmo; a global one does not.
+            src->SetSpatial(true); src->SetMinDistance(2); src->SetMaxDistance(18);
+            const auto rangeFrame = editor.BuildSceneFrame();
+            Require(rangeFrame.audioRanges.size() == 1
+                    && std::abs(rangeFrame.audioRanges[0].minDistance - 2.0f) < 0.001f
+                    && std::abs(rangeFrame.audioRanges[0].maxDistance - 18.0f) < 0.001f
+                    && rangeFrame.audioRanges[0].selected,
+                    "selected 3D AudioSource did not produce an audible-range gizmo");
+            src->SetSpatial(false);
+            Require(editor.BuildSceneFrame().audioRanges.empty(), "a global (2D) AudioSource must show no range gizmo");
         }
         CoUninitialize();
         std::cout << "PASS: Mesh Renderer component, Inspector add/enable/clear, independent transforms, shared GPU meshes, captured async targets, scene instantiation, material instances\n";

@@ -22,6 +22,9 @@ struct MeshDraw
     MaterialHandle material;
 };
 struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; };
+// ZE-111: audible range of a 3D AudioSource - inner (full volume) + outer (silent)
+// wireframe spheres centred on the object. 2D / global sources emit no AudioRange.
+struct AudioRange { zengine::Transform transform; std::optional<DirectX::XMFLOAT4X4> parentMatrix; float minDistance=1, maxDistance=25; bool selected=false; };
 // A Camera GameObject: its frustum is drawn as an editor guide, and the main one
 // replaces the orbit camera as the view when set as gameView.
 struct CameraView
@@ -36,6 +39,7 @@ struct ViewportFrame
 {
     std::vector<MeshDraw> meshes;
     std::vector<ColliderDraw> colliders;
+    std::vector<AudioRange> audioRanges;
     std::vector<CameraView> cameraGizmos;
     std::optional<CameraView> gameView; // when set, the renderer views the scene through this camera
     std::optional<zengine::Transform> selectionTransform;

@@ -819,8 +819,28 @@ void Renderer::Render(const ViewportFrame& frame)
         }
         ++lastMeshCount_;
     }
-    if(frame.showEditorGuides && (!frame.colliders.empty() || !frame.cameraGizmos.empty())) {
-        std::vector<Vertex> vertices;vertices.reserve(frame.colliders.size()*160+frame.cameraGizmos.size()*48);const auto segment=[&](Float3 a,Float3 b,Float3 color){vertices.push_back({a,{0,1,0},color});vertices.push_back({b,{0,1,0},color});};
+    if(frame.showEditorGuides && (!frame.colliders.empty() || !frame.cameraGizmos.empty() || !frame.audioRanges.empty())) {
+        std::vector<Vertex> vertices;vertices.reserve(frame.colliders.size()*160+frame.cameraGizmos.size()*48+frame.audioRanges.size()*288);const auto segment=[&](Float3 a,Float3 b,Float3 color){vertices.push_back({a,{0,1,0},color});vertices.push_back({b,{0,1,0},color});};
+        for(const auto& range:frame.audioRanges){
+            const auto world=TransformMatrix(range.transform)*(range.parentMatrix?XMLoadFloat4x4(&*range.parentMatrix):XMMatrixIdentity());
+            XMFLOAT3 wp;XMStoreFloat3(&wp,XMVector3TransformCoord(XMVectorSet(0,0,0,1),world));
+            const Float3 centre{wp.x,wp.y,wp.z};
+            const auto sphere=[&](float radius,Float3 color){
+                if(radius<=0.0001f)return;
+                constexpr int slices=32;
+                for(int plane=0;plane<3;++plane)for(int i=0;i<slices;++i){
+                    const float a=2*3.14159265f*i/slices,b=2*3.14159265f*(i+1)/slices;
+                    auto pt=[&](float ang){const float c=std::cos(ang)*radius,s=std::sin(ang)*radius;
+                        return plane==0?Float3{centre.x+c,centre.y+s,centre.z}
+                              :plane==1?Float3{centre.x+c,centre.y,centre.z+s}
+                                       :Float3{centre.x,centre.y+c,centre.z+s};};
+                    segment(pt(a),pt(b),color);
+                }
+            };
+            const Float3 outer=range.selected?Float3{1,.8f,.15f}:Float3{.35f,.7f,.95f};
+            sphere(range.maxDistance,outer);
+            sphere(range.minDistance,Float3{outer.x*0.6f,outer.y*0.6f,outer.z*0.6f});
+        }
         for(const auto& cam:frame.cameraGizmos){
             const auto world=TransformMatrix(cam.transform)*(cam.parentMatrix?XMLoadFloat4x4(&*cam.parentMatrix):XMMatrixIdentity());
             const auto point=[&](float x,float y,float z){XMFLOAT3 o;XMStoreFloat3(&o,XMVector3TransformCoord(XMVectorSet(x,y,z,1),world));return Float3{o.x,o.y,o.z};};

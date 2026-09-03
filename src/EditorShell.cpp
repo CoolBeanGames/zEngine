@@ -533,6 +533,12 @@ ViewportFrame EditorShell::BuildSceneFrame() const
         const auto& object = *object3d;
         const auto* mesh = object.GetBehavior<zengine::MeshRenderer>();
         if(!Playing())if(const auto* collider=object.GetBehavior<zengine::physics::Collider>();collider&&collider->Enabled()){DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));frame.colliders.push_back({collider->Shape(),object.GetTransform(),collider->Offset(),collider->Size(),parent,object.Id()==selectedObject_});}
+        // ZE-111: audible-range spheres for a selected 3D (positional) AudioSource; global/2D sources show nothing.
+        if(!Playing() && object.Id()==selectedObject_)
+            if(const auto* audioSrc=object.GetBehavior<zengine::audio::AudioSource>();audioSrc && audioSrc->Enabled() && audioSrc->Spatial()){
+                DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
+                frame.audioRanges.push_back({object.GetTransform(),parent,audioSrc->MinDistance(),audioSrc->MaxDistance(),true});
+            }
         if(const auto* camera=object.GetBehavior<zengine::Camera>())
         {
             DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
