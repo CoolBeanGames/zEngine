@@ -1,100 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <tasks project="zEngine" nextIndex="100">
-  <task id="ZE-95">
-    <name>UI click detection breaks for the control with GameObject id 1</name>
-    <prompt>UiSystem::Interact uses the literal GameObjectId{1} as a sentinel meaning "the primary button press began over empty space". When the top-most / first clickable UI control actually has id 1 (e.g. a Button created as the only object in a fresh ObjectStore), a press+release over it is discarded as an empty-space press, so no click / clicked signal is produced. Reproduce: create one GameObject2D with a Button behavior, Build, Interact(press) then Interact(release) over it - expect one click, get none.</prompt>
-    <requirements>Interact reports a click for a press+release over a control regardless of its GameObjectId; the empty-space case still produces no click.</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>true</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>true</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>bug,ui</tags>
-    <notes>UiSystem::Interact tracked an in-progress primary press with pressedOn_ and overloaded the literal GameObjectId{1} as a "began over empty space" sentinel, so a control whose real id was 1 could never register a click. Replaced the magic value with an explicit bool pressActive_; pressedOn_ now holds 0 for the empty-space case. Found while building ZE-66 (a Button that is the only object in a store gets id 1). Covered by the new UiTests ButtonStatesAndSignals case. Full ctest 35/35.</notes>
-    <filesChanged>src/ui/UiSystem.h; src/ui/UiSystem.cpp; tests/UiTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-65">
-    <name>Material Instances</name>
-    <prompt>take a  shader and applies values to parameters, this is what the objects (2D and 3D) actually accept. these are created as asset files in the library (through right click)</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-03 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>true</release>
-    <tags>rendering</tags>
-    <notes>A ".material" asset pins values to a shader's parameters and is what a Model references for rendering. src/MaterialAssets.{h,cpp} (in zEngineScriptTools): MaterialDoc { shader path (empty = built-in Standard: albedo texture x tint, sampled through the model UVs); pinned Value list }. IsMaterial/Resolve/Load/Save/Create (right-click "Create Material (.material)")/Encode/Decode (ZMATERIAL 1 text). materials::Resolve(doc, shaderLoader) -&gt; Effective { builtin, pixelShaderHlsl, merged parameters (shader-declared defaults overridden by pinned values), ok, error } - built-in Standard params or shaders::Parse of a referenced .shader (compiled to validate). assetLibrary::Kind::Material (icon + label). Renderer: UploadImage(file) decodes PNG/JPEG/BMP/TIFF/GIF via WIC; UploadMaterial(albedo, tint) -&gt; MaterialHandle (RenderMaterial{albedo SRV, tint}); MeshDraw.material; SceneConstants gains float4 MaterialTint bound to the PS (PSSetConstantBuffers(0)); ColorCube.hlsl PSMain multiplies the albedo sample by MaterialTint.rgb; the per-draw loop overrides the albedo SRV with the material's when set. MeshRenderer gains a material_ path; scene bumped to v10 with a "mesh_material" line (Capture/Encode/Decode/Instantiate/Append). Editor + PlayerMain each cache MaterialHandles by path and feed MeshDraw.material. Inspector: a MeshRenderer shows a "Material (.material asset)" edit row plus a row per resolved parameter (float4 -&gt; 4 axis fields, texture -&gt; path); edits write back to the .material via EditorShell::ApplyMaterialValue. SCOPE NOTE: custom-".shader" pixel-shader execution in the renderer is NOT wired yet - the .material carries the shader ref + its parameters through the data model, inspector and validation, but 3D rendering uses the built-in Standard path (albedo x tint x UVs); running a non-Standard shader is a small follow-up and a natural fit for the ZE-74 lighting pixel-shader rework. Tests: ScriptEditorTests material create/encode/decode/save + Resolve (builtin + custom shader + broken); SceneTests v10 mesh_material round-trip; AssetTests --meshes creates a material, assigns it via the Inspector, edits tint, checks persistence + render submission. Inspector row-index shifts fixed in --scripts/--scenes/--arrays. Full ctest 35/35; builds/debug + builds/test built; release build zipped.</notes>
-    <filesChanged>src/MaterialAssets.h; src/MaterialAssets.cpp; src/AssetLibrary.h; src/Renderer.h; src/Renderer.cpp; src/RenderScene.h; shaders/ColorCube.hlsl; src/core/MeshRenderer.h; src/Scene.h; src/Scene.cpp; src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; src/runtime/PlayerMain.cpp; CMakeLists.txt; tests/ScriptEditorTests.cpp; tests/SceneTests.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">Inspector for assigning values</subtask>
-      <subtask done="true">basic Material Instance 3D (albedo and UVs for now)</subtask>
-      <subtask done="true">basic Material Instance 3D (also Albedo and UVs)</subtask>
-      <subtask done="true">connect to they can be set on Models (and optionally UI elements)</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-96">
-    <name>UI runtime + scripting - make the UI fully interactive and script-driven</name>
-    <prompt>The UI subsystem (ZE-61/66/81/95) can be authored in the editor and rendered, but it is not yet a usable interactive UI at runtime. Close every runtime gap so a real game menu / HUD can be built entirely from scripts and the editor, with nothing left for 1.0 except bug fixes and small tweaks.
-
-Current state to build on:
-- ui:: control classes exist (17 types), the GameObject2D tree is the UI tree, UiSystem lays out + batches + hit-tests + does press/release/click + TextEntry focus/typing at the engine level, and UiControl/UiSerialize expose every property. Scripts get native classes (uiControl..uiHtml) with clicked / pressed / released signals that DO dispatch to handlers in a running game.
-- The hard gap: ScriptHost::Synchronize / Invoke write-back is 3D-only (`As3D(native); if(!g) return;` at src/ScriptHost.cpp ~251 and the write-back loop ~270-279). A script attached to a UI control can LISTEN but cannot READ OR WRITE its own control's fields at runtime - `size = Vector2(...)`, `anchor = "center"`, `text = "Hi"`, `value = 0.5`, `visible = false`, `color = ...` etc. are all silently dropped. Transform2D position/rotation/scale is not synced either.
-- PlayerMain never pumps WM_CHAR into ui.Interact(..., typed), so TextEntry cannot be typed into in a built game. The editor Play preview does not route UI pointer or keyboard input at all.
-- Button and UiHtml only fire a bare "clicked" - a script cannot tell WHICH button or link inside an html block was activated.
-
-What "done" means: build a scripted, interactive menu (buttons that change state, a text field you can type into, a value the script drives, a panel the script shows/hides) that works both in the editor Play preview and in a standalone build, using only scripts + the scene tree.</prompt>
-    <requirements>A script class that inherits a ui:: type (e.g. class Menu : uiPanel) can read and write EVERY serialized property of its control at runtime (base: anchor, size, min_size, order, visible, clickable; and every per-type field - text, value, color/tint, texture names, padding, spacing, fill_cross, scroll_x/y, horizontal, playing, loop, speed, html, background, margins, slice, pixel_height, placeholder, region, vertical, fill_color, background_color, disabled, per-state button colours/textures). Transform2D position/rotation/scale on a 2D object round-trips through the script proxy like the 3D Transform does. TextEntry can be typed into (keyboard) and queried both in the editor Play preview and in a standalone build; Enter fires a `submitted` signal. Button / UiHtml report which element was activated (a script can identify the clicked button or link). Hover and focus signals (mouse_entered, mouse_exited, focus_entered, focus_exited) fire on controls. Tab / Shift-Tab move focus between focusable controls; Enter / Space activate the focused button; Esc blurs. A control (or panel subtree) under the pointer consumes the click so it does NOT also reach the 3D game input / raycast layer, and the game can query "did the UI take the pointer / keyboard this frame". The editor Play preview routes UI pointer + wheel + keyboard so UI can be tested without a build. Scripts can build and change the UI tree at runtime: get parent / children, find a descendant by name, add / remove / reparent ui controls, spawn a UI prefab and get its root. Full ctest green; editor + player build; the demo menu described in the prompt works end to end.</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-03 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>false</release>
-    <tags>ui,scripting,input</tags>
-    <notes>Two-way ScriptHost sync for gameObject2D / ui:: control proxies (SyncUiControl): every serialized control property + Transform2D round-trip through the script proxy each tick, matching the 3D path. 2D natives now get a gameObject2D proxy (Proxy in ScriptHost.cpp) so parent chains, find() and reparent coerce correctly. Scripts: get_children(), find(name), reparent via parent=, spawn UI prefab root. Raw AddBehavior-from-script is intentionally not exposed - scripts inherit a control or spawn a prefab. UiSystem focus model: Tab/Shift-Tab cycle focusables, Enter/Space activate focused button, Esc blurs; hover/focus enter-exit tracking; TextEntry submitted; TookPointer/TookKeyboard capture flags for game-input/raycast skip. PlayerMain pumps WM_CHAR into ui.Interact and builds UI before session.Tick; editor Play preview routes viewport pointer+wheel+keyboard into its UiSystem. GameSession dispatches mouse_entered/mouse_exited/focus_entered/focus_exited/submitted. Full ctest 35/35; editor+player build. Commit 72a5ad6.</notes>
-    <filesChanged>src/ScriptHost.cpp, src/ui/UiSystem.h, src/ui/UiSystem.cpp, src/ui/UiControl.h, src/runtime/GameSession.h, src/runtime/PlayerMain.cpp, src/EditorShell.h, src/EditorShell.cpp, scripting/src/Script.cpp, scripting/include/zscript/Script.h, CMakeLists.txt, tests/ScriptHostTests.cpp, tests/UiTests.cpp, scripting/tests/ScriptTests.cpp</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">ScriptHost: two-way field sync for ui:: control proxies - read the control's live values into the proxy before each lifecycle callback, and commit the script's writes back to the control after (every serialized property, per control type)</subtask>
-      <subtask done="true">Transform2D sync for 2D objects through the script proxy (position/rotation/scale + was_moved/was_rotated/was_scaled signals), matching the 3D path</subtask>
-      <subtask done="true">Scripts can manipulate the UI tree at runtime: parent/children accessors, find descendant by name, add/remove/reparent ui controls, spawn a UI prefab and get its root</subtask>
-      <subtask done="true">PlayerMain: pump WM_CHAR (and backspace/enter) into ui.Interact typed input; standalone TextEntry typing works</subtask>
-      <subtask done="true">Focus model in UiSystem: Tab / Shift-Tab cycle focusable controls, Enter/Space activate the focused button, Esc blurs; focusable flag per control</subtask>
-      <subtask done="true">Hover + focus signals: mouse_entered / mouse_exited / focus_entered / focus_exited on ui controls (engine detection + script signal dispatch)</subtask>
-      <subtask done="true">TextEntry `submitted` signal on Enter; Button and UiHtml report the activated element (button index / link href or id) so a script can branch on it</subtask>
-      <subtask done="true">Pointer/keyboard capture: a control under the pointer consumes the event; expose "UI took the pointer/keyboard this frame" so game input / raycasting can skip; a modal/blocking panel option</subtask>
-      <subtask done="true">Editor Play preview: route viewport pointer (incl. wheel) + keyboard into the editor's UiSystem so scripted UI is testable in the editor without a build</subtask>
-      <subtask done="true">Regression tests for all of the above (UiTests, ScriptHostTests, ScriptTests, AssetTests --ui) plus an end-to-end scripted-menu test</subtask>
-    </subtasks>
-  </task>
   <task id="ZE-97">
     <name>UI visuals + assets - real images, text layout, scaling, video, so nothing UI is left for 1.0</name>
     <prompt>Finish the UI's visual + asset side using the texture/material infrastructure from ZE-64/65. After this task the UI system is considered feature-complete for 1.0 - only bug fixes and minor tweaks after here.
@@ -108,12 +13,12 @@ Current gaps:
 - VideoTexture shows a white rect in the editor (no resolveVideoFrame wired in EditorShell) and there is no way to create a .zvid asset from the editor (VideoClip::Encode exists but is not exposed), so video is not usable end to end.
 - Confirm real font-atlas text rendering works for every text-bearing control at the final scale.</prompt>
     <requirements>TextureRect, PanelContainer, Button (all states) and UiHtml &lt;img&gt; display real image files (png/jpg/bmp/tga/... from the asset library) via the renderer texture path; nine-slice samples the real texture correctly. The Inspector exposes a proper asset picker for every texture field (browse + drag an image asset from the library onto the field), and the field stores the project-relative asset path. Text and LongText support horizontal (left/center/right) and vertical (top/middle/bottom) alignment, and a word-wrap mode that wraps to the control's width; UiHtml lays out wrapped paragraphs. A UI reference/design resolution + scale mode (keep-aspect / stretch / fixed) makes authored UI look correct at any window size, in the editor and in a build. Disabling a container or panel disables input for and visually dims its whole subtree. VideoTexture previews real frames in the editor viewport, and a .zvid asset can be created from the editor (e.g. right-click -&gt; build .zvid from an image-sequence folder, or import); the player already plays it. All text-bearing controls render through the real font atlas at the active scale. Full ctest green; editor + player + a RELEASE build (zip the release build for GitHub); a visual QA capture of a populated UI.</requirements>
-    <inProgress>true</inProgress>
-    <done>false</done>
+    <inProgress>false</inProgress>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey>k7m2x9qp</lockKey>
+    <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy>ZE-96</blockedBy>
@@ -123,18 +28,18 @@ Current gaps:
     <build>true</build>
     <release>true</release>
     <tags>ui,rendering,assets</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>src/UiAssetBinding.h (header-only, host-side): binds UiContext resolveTexture/textureSize/resolveVideoFrame to Renderer::UploadImage + assetLibrary::Resolve with per-path caches; PlayerMain and the editor viewport both use it (images show in edit mode too). Render2D.h: TextureSize(handle) + DecodeImageFileRGBA(wpath,w,h) (WIC, impl Renderer.cpp). Nine-slice samples the real texture. Text/LongText: HAlign/VAlign + wrap (greedy word-wrap via measureText); LongText wraps by default; UiHtml wraps text/button blocks to width in Arrange. UiControl base enabled_ flag; UiSystem propagates effective enabled down the tree, HitTest/FocusableOrder skip disabled, Emit dims a disabled subtree (tint/color .w*=0.4). Reference-resolution scaling: UiContext.referenceResolution + ScaleMode (Disabled/KeepAspect/Stretch/FixedWidth/FixedHeight); UiSystem::Build computes Scale()/Offset(), lays out in authored space, Emit maps geometry to window px, Interact maps the cursor back. Game Settings -&gt; ZENGINE_GAME 3 (ui_scale line; v1/v2 still read). UiPropertyKind::Texture: InspectorPanel::AssignAssetPathAt + EditorShell::FinishAssetDrag route a dropped library image/.zvid onto a UI texture field (EditorShell::DropAssetPathOnInspector test seam). Serialize: enabled/align_h/align_v/wrap keys + schema rows. .zvid authoring: library right-click 'Build Video Clip (.zvid) from Images...' -&gt; EditorShell::BuildVideoClipFromImages (folder of sorted images -&gt; DecodeImageFileRGBA -&gt; VideoClip::Encode @ 12fps). Tests: UiTests +TextAlignAndWrap/ReferenceResolutionScaling/DisabledPropagation; SceneTests UI round-trip exercises the new props; AssetTests --ui texture-drop; ui-editor-qa.bmp capture. Full ctest 35/35 debug + release; builds/debug + builds/test + builds/release built; builds/release/zEngine-release.zip regenerated for GitHub upload. FOLLOW-UP (minor, allowed post-ZE-97): a per-field Browse button for texture fields (drop-from-library + typing a path both work); no editor settings-dialog control for the UI reference resolution yet (the Settings field exists and the player honours it). Commit e0fea18.</notes>
+    <filesChanged>src/UiAssetBinding.h (new), src/Render2D.h, src/Renderer.cpp, src/ui/UiControl.h, src/ui/UiControl.cpp, src/ui/UiSystem.h, src/ui/UiSystem.cpp, src/ui/UiSerialize.h, src/ui/UiSerialize.cpp, src/runtime/GamePackage.h, src/runtime/GamePackage.cpp, src/runtime/PlayerMain.cpp, src/EditorShell.h, src/EditorShell.cpp, src/InspectorPanel.h, src/InspectorPanel.cpp, tests/UiTests.cpp, tests/SceneTests.cpp, tests/AssetTests.cpp</filesChanged>
     <image></image>
     <subtasks>
-      <subtask done="false">Real image loading for UI: TextureRect / PanelContainer / Button textures / UiHtml &lt;img&gt; load png/jpg/bmp/tga/etc from the asset library through the renderer texture path (shared cache); nine-slice samples the real texture</subtask>
-      <subtask done="false">Inspector asset picker for every texture field (browse dialog + drag an image asset from the library onto the field); fields store project-relative paths and round-trip in the scene</subtask>
-      <subtask done="false">Text / LongText: horizontal + vertical alignment and a word-wrap mode; UiHtml wraps paragraph text to width</subtask>
-      <subtask done="false">UI reference resolution + scale mode (keep-aspect / stretch / fixed) so authored UI is resolution-independent in the editor and the player</subtask>
-      <subtask done="false">Disabled-state propagation: disabling a container/panel disables input for and dims its entire subtree</subtask>
-      <subtask done="false">VideoTexture: editor viewport preview wired; create a .zvid asset from the editor (image-sequence folder -&gt; .zvid, or import), library right-click</subtask>
-      <subtask done="false">Verify real font-atlas rendering for every text control at the active scale; visual QA capture of a full UI</subtask>
-      <subtask done="false">Regression tests (UiTests, Render2DTests, SceneTests, AssetTests --ui) + release build zipped</subtask>
+      <subtask done="true">Real image loading for UI: TextureRect / PanelContainer / Button textures / UiHtml &lt;img&gt; load png/jpg/bmp/tga/etc from the asset library through the renderer texture path (shared cache); nine-slice samples the real texture</subtask>
+      <subtask done="true">Inspector asset picker for every texture field (browse dialog + drag an image asset from the library onto the field); fields store project-relative paths and round-trip in the scene</subtask>
+      <subtask done="true">Text / LongText: horizontal + vertical alignment and a word-wrap mode; UiHtml wraps paragraph text to width</subtask>
+      <subtask done="true">UI reference resolution + scale mode (keep-aspect / stretch / fixed) so authored UI is resolution-independent in the editor and the player</subtask>
+      <subtask done="true">Disabled-state propagation: disabling a container/panel disables input for and dims its entire subtree</subtask>
+      <subtask done="true">VideoTexture: editor viewport preview wired; create a .zvid asset from the editor (image-sequence folder -&gt; .zvid, or import), library right-click</subtask>
+      <subtask done="true">Verify real font-atlas rendering for every text control at the active scale; visual QA capture of a full UI</subtask>
+      <subtask done="true">Regression tests (UiTests, Render2DTests, SceneTests, AssetTests --ui) + release build zipped</subtask>
     </subtasks>
   </task>
   <task id="ZE-67">
@@ -772,131 +677,5 @@ Everything below this entry is for V2.0 do not close this task, only work on tas
     <notes></notes>
     <filesChanged></filesChanged>
     <image></image>
-  </task>
-  <task id="ZE-99">
-    <name>book-keeping</name>
-    <prompt>Housekeeping. Archived tasks are ignored during processing, so keep them out of the working file: every task whose &lt;archived&gt; is true lives in archived.xml (project root, sibling of tasks.xml) instead of tasks.xml. A future task-editor feature will manage this move automatically; for now it is done by hand to speed up working the queue. When new tasks become archived, move them to archived.xml too.</prompt>
-    <requirements>All &lt;archived&gt;true&lt;/archived&gt; tasks are in archived.xml and none remain in tasks.xml. tasks.xml stays well-formed XML and keeps its &lt;tasks project nextIndex&gt; root. archived.xml is well-formed and carries the same project attribute.</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>true</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-03 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>bookkeeping</tags>
-    <notes>Extracted all 66 archived tasks from tasks.xml into archived.xml (new file at the project root, same &lt;tasks project&gt; root). tasks.xml now holds only the 29 active tasks. This bookkeeping task is kept at the top of tasks.xml as a marker; the task editor will own the archive/restore flow later.</notes>
-    <filesChanged>tasks.xml; archived.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-66">
-    <name>UI 2</name>
-    <prompt>add more types to the UI, and additional options for it</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>true</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>false</release>
-    <tags>scripting, UI</tags>
-    <notes>Four new ui:: controls on the ZE-61 subsystem. ScrollContainer ("scroll"): stacks children on one axis, wheel-scrolls, clamps to content; its rect clips descendants via a new optional clip rect on SpriteDraw/TextDraw (CPU rect-clip in AppendSprite, propagated to glyphs by Renderer); UiSystem::Layout carries the intersected clip down, HitTest respects it (AcceptsPoint), Interact gained a wheelDelta arg. Button ("button"): normal/hover/pressed/disabled visuals (state tints + optional textures + nine-slice) + centred label; UiSystem refreshes pointer state each frame and now also returns press/release events (Presses()/Releases()) -&gt; GameSession::UiPressed/UiReleased emit "pressed"/"released" ("uiButton" script class carries both signals). VideoTexture ("video"): plays a clip as a textured rect; new src/ui/VideoClip = engine ".zvid" container (ASCII header + raw RGBA, no codec dep); control owns a playback clock (UiSystem::Build gained a deltaSeconds arg -&gt; UiControl::Tick); host feeds frames through UiContext::resolveVideoFrame (PlayerMain caches clips + uploads current frame; wheel via WM_MOUSEWHEEL). UiHtml ("html"): bounded subset parser (div/p/h1-3/span/b/i/br/hr/img/a/button/ul/li + inline color/background/font-size) -&gt; self-laid-out/painted blocks; clicking a rendered link/button fires clicked. All four: scene v9 round-trip (UiSerialize type names + Save/LoadUiProperty), editor Add&gt;UI menu (data-driven, no code), script native classes uiScroll/uiButton/uiVideo/uiHtml (+ NativeTypes rows). Tests: UiTests scroll/button/video/html, Render2DTests clip, SceneTests ZE-66 round-trip, ScriptTests new classes + button signals. Full ctest 35/35; builds/debug + builds/test built. Follow-ups: real image texture loading still white 1x1 (ZE-64/65); editor viewport has no resolveVideoFrame so video previews as a white rect; ZE-81 will add Inspector rows for all UI controls.</notes>
-    <filesChanged>src/ui/UiControl.h; src/ui/UiControl.cpp; src/ui/UiSystem.h; src/ui/UiSystem.cpp; src/ui/UiSerialize.cpp; src/ui/VideoClip.h; src/ui/VideoClip.cpp; src/Render2D.h; src/Render2D.cpp; src/Renderer.cpp; src/runtime/GameSession.h; src/runtime/PlayerMain.cpp; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; tests/UiTests.cpp; tests/Render2DTests.cpp; tests/SceneTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">scrolling container (allows scrolling through the contents, they still support clicking, and other subcontainers. use the parent/child relationship)</subtask>
-      <subtask done="true">video texture (play a video as a standard texture)</subtask>
-      <subtask done="true">button (reusable button with, clicked, down, up states and visuals)</subtask>
-      <subtask done="true">Add a UI HTML interpreter</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-81">
-    <name>implement UI inspector editng</name>
-    <prompt>right now there is no way to setup the UI in the inspector, all elements need inspector elements added</prompt>
-    <requirements>all elements can now be set in the inspector</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>true</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>ui,inspector</tags>
-    <notes>The Inspector now binds to 2D objects and edits every ui:: control. InspectorPanel::Bind takes ObjectCore* (was GameObject*); EditorShell::SelectGameObject passes the object directly instead of As3D(...) (UI objects are GameObject2D, so As3D was null and the panel showed nothing). Transform rows branch on Is2D(): a 2D object edits Position X/Y, Rotation (in the Z slot) and Scale X/Y; the unused axis fields are disabled/blank (TransformFieldUsed). New ui::UiControlSchema(control) in UiSerialize returns the ordered editable properties as {key,label,UiPropertyKind} (Line/Multiline/Float/Int/Bool/Vec2/Color/Anchor); values are still exchanged as the SaveUiControl/LoadUiProperty strings. RefreshBehaviors renders a row per schema entry for any UiControl behavior: bool -&gt; false/true combo, anchor -&gt; 20-name combo, Vec2 -&gt; 2 axis fields, Color/region/margins/slice -&gt; 4 axis fields, float/int/line -&gt; edit field, markup -&gt; multiline. ChangeBehaviorField writes via LoadUiProperty (rebuilding the whole tuple for axis rows); generic combos handled through the existing CBN_SELCHANGE path. The Add Behavior menu greys Mesh/Collider/bodies/Camera for 2D objects (and the handlers refuse them). Test seams: InspectorPanel::FieldWindowForProperty + EditorShell::InspectorUiField. AssetTests --ui drives the Inspector to set ProgressBar value/vertical/fill_color/anchor and the 2D rotation, asserting each reaches the control. Full ctest 35/35; builds/debug + builds/test built.</notes>
-    <filesChanged>src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; src/ui/UiSerialize.h; src/ui/UiSerialize.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-63">
-    <name>Add in Scene Managment</name>
-    <prompt>a Base class Scene with methods to load new scenes by passing the stringName of the scene, resolve same names by warning and just picking the first.</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>true</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>false</commit>
-    <build>false</build>
-    <release>false</release>
-    <tags>scene managment</tags>
-    <notes>Added a script-facing `Scene` service (like Input / Physics / Mathf). Scripting VM: `Scene` keyword -&gt; Op::Scene -&gt; a `SceneService` object with `load(string)` and `current():string`; NativeTypes row + BuildDeclarations class + host callbacks `Runtime::SetSceneCallbacks(load,current)`. ScriptHost threads a `SceneLoader` + scene name into every BoundScript (`SetSceneLoader` / `SetSceneName`). GameSession: ctor split into a reusable `LoadScene(reference)`; `ChangeScene(name)` resolves the name (exact project reference, else by filename stem; multiple matches -&gt; std::cerr warning + first) and queues it; `Session::Tick` applies the swap at the end of the tick (Stop scripts, reset physics, LoadScene, ++generation, Start) so a `Scene.load()` mid-script never pulls the rug. `Session::SceneGeneration()` lets hosts drop per-scene caches: PlayerMain clears its uploaded-mesh map on a generation bump. Editor Play preview sets a loader that reports "only applied in a built game" to the status bar rather than switching the live document. Tests: ScriptTests "Scene service" (load reaches host, current returns name, missing callback faults cleanly, not inheritable/constructible); AssetTests StandaloneGameBuild adds a Switcher scene whose start() calls Scene.load("Second") and asserts the running Session swaps by name + advances the generation. Full ctest 35/35.</notes>
-    <filesChanged>scripting/src/Script.cpp; scripting/include/zscript/Script.h; scripting/include/zscript/NativeTypes.h; scripting/tests/ScriptTests.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/runtime/GameSession.h; src/runtime/GameSession.cpp; src/runtime/PlayerMain.cpp; src/EditorShell.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
-    <image></image>
-  </task>
-  <task id="ZE-64">
-    <name>Materials</name>
-    <prompt>the first half of the Material system, it is esentially a shader. Later though we will build a visual editor for now just support HLSL.</prompt>
-    <requirements>we can now create and compile HLSL code.</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>true</archived>
-    <blockedBy></blockedBy>
-    <dateStarted>2026-09-02 00:00</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>false</release>
-    <tags>rendering</tags>
-    <notes>First half of the Material system: a ".shader" asset is plain HLSL text. New src/ShaderAssets.{h,cpp} (in zEngineScriptTools, links d3dcompiler): IsShader/Resolve/Load/Save/Create (atomic writes, project containment - mirrors ScriptAssets) with a template shader (cbuffer Parameters + Texture2D + PSMain). shaders::Parse(source) extracts the parameters - cbuffer scalars (float/float2/3/4, default read from a trailing "// default: ..." comment) and top-level Texture2D slots - and compiles the pixel entry (PSMain, ps_5_0) with D3DCompile to prove the HLSL is valid, returning {parameters, compiled, errors}. shaders::Analyze(wsource) is the editor tokeniser (HLSL keyword/type/preprocessor sets, bracket balance) and folds in the D3DCompile diagnostics as inline errors. Editor: assetLibrary::Kind::Shader (icon + "Material Shader" label); library right-click "Create Material Shader (.shader)"; double-click opens it in the inline ScriptEditor. ScriptEditor is now extension-aware (bool hlsl_): shader vs script Resolve/Load/Save, shaders::Analyze for highlighting/errors, and the zEngine-script compiler pass + autocomplete index are skipped for HLSL. It only defines code + parameters - nothing is applied to any object yet (that is ZE-65). Tests: ScriptEditorTests gains an HLSL block (create/round-trip, Parse params + compile ok, invalid HLSL reported, Analyze valid/invalid, .shader opened + saved through the editor). Full ctest 35/35; builds/debug + builds/test built.</notes>
-    <filesChanged>src/ShaderAssets.h; src/ShaderAssets.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; src/AssetLibrary.h; src/EditorShell.h; src/EditorShell.cpp; src/EditorViewTabs.cpp; tests/ScriptEditorTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">use text editor for HLSL</subtask>
-      <subtask done="true">call the extension .shader</subtask>
-      <subtask done="true">only defines code and parameters, cannot be applied to objefcts</subtask>
-    </subtasks>
   </task>
 </tasks>
