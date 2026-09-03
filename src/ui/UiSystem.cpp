@@ -45,6 +45,10 @@ namespace zengine::ui
             else roots_.push_back(n);
         }
 
+        // Drop focus / hover / press targets that no longer exist.
+        for (GameObjectId* id : {&focused_, &hovered_, &pressedOn_})
+            if (*id && index_.find(*id) == index_.end()) *id = 0;
+
         for (auto& node : nodes_) SortChildren(node.children);
         SortChildren(roots_);
 
@@ -144,15 +148,63 @@ namespace zengine::ui
         return 0;
     }
 
+    std::vector<GameObjectId> UiSystem::FocusableOrder() const
+    {
+        // Paint order = front-to-back visually; Tab walks it front to back.
+        std::vector<GameObjectId> order;
+        for (std::size_t n : PaintOrder())
+            if (nodes_[n].visible && nodes_[n].control->Clickable()) order.push_back(nodes_[n].id);
+        return order;
+    }
+
+    void UiSystem::ChangeFocus(GameObjectId next)
+    {
+        if (next == focused_) return;
+        if (focused_)
+        {
+            if (const auto it = index_.find(focused_); it != index_.end())
+            {
+                if (auto* entry = dynamic_cast<TextEntry*>(nodes_[it->second].control)) entry->SetFocused(false);
+                if (auto* button = dynamic_cast<Button*>(nodes_[it->second].control)) button->SetFocused(false);
+                focusExited_ = focused_;
+            }
+        }
+        focused_ = next;
+        if (focused_)
+        {
+            if (const auto it = index_.find(focused_); it != index_.end())
+            {
+                if (auto* entry = dynamic_cast<TextEntry*>(nodes_[it->second].control)) entry->SetFocused(true);
+                if (auto* button = dynamic_cast<Button*>(nodes_[it->second].control)) button->SetFocused(true);
+                focusEntered_ = focused_;
+            }
+        }
+    }
+
+    void UiSystem::SetFocus(GameObjectId id)
+    {
+        if (id && index_.find(id) == index_.end()) return;
+        ChangeFocus(id);
+    }
+
     std::vector<GameObjectId> UiSystem::Interact(Vec2 pixel, bool pressed,
-                                                const std::vector<char32_t>& typed, float wheelDelta)
+                                                const std::vector<char32_t>& typed, float wheelDelta, bool shiftHeld)
     {
         std::vector<GameObjectId> clicks;
-        presses_.clear();
-        releases_.clear();
+        presses_.clear(); releases_.clear(); entered_.clear(); exited_.clear(); submissions_.clear();
+        focusEntered_ = focusExited_ = 0;
         const GameObjectId under = HitTest(pixel);
 
+        // Hover enter / exit.
+        if (under != hovered_)
+        {
+            if (hovered_ && index_.find(hovered_) != index_.end()) exited_.push_back(hovered_);
+            if (under) entered_.push_back(under);
+            hovered_ = under;
+        }
+
         // Mouse wheel -> nearest scrolling container under the cursor.
+        bool wheelConsumed = false;
         if (wheelDelta != 0.0f)
         {
             const auto painted = PaintOrder();
@@ -164,6 +216,7 @@ namespace zengine::ui
                 const float step = 32.0f * wheelDelta;
                 if (scroll->Horizontal()) scroll->SetScrollX(scroll->ScrollX() - step);
                 else scroll->SetScrollY(scroll->ScrollY() - step);
+                wheelConsumed = true;
                 break;
             }
         }
@@ -173,17 +226,8 @@ namespace zengine::ui
             pressActive_ = true;
             pressedOn_ = under; // 0 == press began over empty space
             if (under) presses_.push_back(under);
-            focused_ = 0;
-            if (under)
-            {
-                const auto it = index_.find(under);
-                if (it != index_.end())
-                    if (auto* entry = dynamic_cast<TextEntry*>(nodes_[it->second].control))
-                    { focused_ = under; entry->SetFocused(true); }
-            }
-            for (auto& node : nodes_)
-                if (node.id != focused_)
-                    if (auto* entry = dynamic_cast<TextEntry*>(node.control)) entry->SetFocused(false);
+            // Clicking focuses a clickable control (blurs otherwise).
+            ChangeFocus(under && nodes_[index_.at(under)].control->Clickable() ? under : GameObjectId{0});
         }
         else if (!pressed && pressActive_)
         {
@@ -196,19 +240,52 @@ namespace zengine::ui
             pressedOn_ = 0;
         }
 
-        if (focused_ && !typed.empty())
+        // Keyboard focus model: Tab / Shift-Tab cycle, Esc blurs, Enter submits a
+        // focused TextEntry or activates a focused Button, Space activates a Button.
+        bool navHandled = false;
+        for (char32_t c : typed)
         {
-            const auto it = index_.find(focused_);
-            if (it != index_.end())
-                if (auto* entry = dynamic_cast<TextEntry*>(nodes_[it->second].control))
-                    for (char32_t codepoint : typed) entry->Type(codepoint);
+            if (c == 9) // Tab
+            {
+                const auto focusable = FocusableOrder();
+                if (!focusable.empty())
+                {
+                    auto pos = std::find(focusable.begin(), focusable.end(), focused_);
+                    std::size_t index = pos == focusable.end() ? 0 : static_cast<std::size_t>(pos - focusable.begin());
+                    if (pos == focusable.end()) index = shiftHeld ? focusable.size() - 1 : 0;
+                    else index = shiftHeld ? (index + focusable.size() - 1) % focusable.size()
+                                           : (index + 1) % focusable.size();
+                    ChangeFocus(focusable[index]);
+                }
+                navHandled = true;
+            }
+            else if (c == 27) { ChangeFocus(0); navHandled = true; } // Esc
+            else if ((c == 13 || c == 32) && focused_) // Enter / Space
+            {
+                if (const auto it = index_.find(focused_); it != index_.end())
+                {
+                    if (dynamic_cast<TextEntry*>(nodes_[it->second].control))
+                    { if (c == 13) { submissions_.push_back(focused_); navHandled = true; } }
+                    else if (dynamic_cast<Button*>(nodes_[it->second].control))
+                    { clicks.push_back(focused_); navHandled = true; }
+                }
+            }
         }
+
+        // Printable text into the focused TextEntry (skip the nav codepoints).
+        if (focused_ && !typed.empty())
+            if (const auto it = index_.find(focused_); it != index_.end())
+                if (auto* entry = dynamic_cast<TextEntry*>(nodes_[it->second].control))
+                    for (char32_t codepoint : typed)
+                        if (codepoint != 9 && codepoint != 27 && codepoint != 13) entry->Type(codepoint);
 
         // Refresh Button pointer state for visuals (after pressedOn_ is updated).
         for (auto& node : nodes_)
             if (auto* button = dynamic_cast<Button*>(node.control))
                 button->SetInteraction(node.id == under, pressed && pressedOn_ == node.id);
 
+        tookPointer_ = under != 0 || pressActive_ || wheelConsumed;
+        tookKeyboard_ = focused_ != 0 || navHandled;
         return clicks;
     }
 }

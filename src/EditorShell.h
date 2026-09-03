@@ -347,6 +347,10 @@ private:
     bool mouseButtonsPrev_[3] = {}; // L/R/M pressed last TickInput, for just_pressed/just_released
     std::unique_ptr<Renderer> renderer_;
     zengine::ui::UiSystem uiViewport_; // screen-space UI preview for the viewport
+    // ZE-96: viewport UI input, accumulated by the WndProc and applied in Render()
+    // while Playing so scripted UI is testable in the editor without a build.
+    struct { POINT cursor{-1,-1}; bool primary=false; float wheel=0; std::vector<char32_t> typed; } uiInput_;
+    bool RouteUiViewportPress(POINT clientPoint); // true if a UI control took the press
 
     HFONT uiFont_ = nullptr;
     HFONT headerFont_ = nullptr;

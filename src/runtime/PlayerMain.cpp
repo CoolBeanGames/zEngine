@@ -21,12 +21,13 @@
 #include <string_view>
 
 namespace {
-struct WindowState {unsigned width=1280,height=720;bool closed=false;float wheel=0;};
+struct WindowState {unsigned width=1280,height=720;bool closed=false;float wheel=0;std::vector<char32_t> typed;};
 LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM w,LPARAM l) {
     auto* state=reinterpret_cast<WindowState*>(GetWindowLongPtrW(window,GWLP_USERDATA));
     if(message==WM_NCCREATE){state=static_cast<WindowState*>(reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams);SetWindowLongPtrW(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(state));}
     if(message==WM_SIZE && state){state->width=LOWORD(l);state->height=HIWORD(l);return 0;}
     if(message==WM_MOUSEWHEEL && state){state->wheel+=GET_WHEEL_DELTA_WPARAM(w)/120.0f;return 0;}
+    if(message==WM_CHAR && state){ if(state->typed.size()<256) state->typed.push_back(static_cast<char32_t>(w)); return 0; } // ZE-96: UI text/keys
     if(message==WM_CLOSE && state){state->closed=true;return 0;}
     if(message==WM_ERASEBKGND)return 1;
     return DefWindowProcW(window,message,w,l);
@@ -131,6 +132,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                 if(!state.width||!state.height||IsIconic(window)){Sleep(10);continue;}
                 if(width!=state.width||height!=state.height){renderer.Resize(state.width,state.height);width=state.width;height=state.height;}
                 zengine::script::MouseFrame mouse;
+                // ZE-96: run the UI first so it can consume the pointer / keyboard before
+                // the scripts tick, and route its signals.
+                ui.Build(session.Objects(),{static_cast<float>(width),static_cast<float>(height)},uiContext,static_cast<float>(elapsed));
+                bool uiTookPointer=false, uiTookKeyboard=false;
                 if(automated)session.Tick(1.0f/60.0f,{});
                 else {
                     const bool focused=GetForegroundWindow()==window;
@@ -146,14 +151,30 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                         mouse.buttons[static_cast<std::size_t>(i)]={down,down&&!mousePrev[i],!down&&mousePrev[i]};
                         mousePrev[i]=down;
                     }
-                    accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,zengine::input::PollWindows(focused),mouse);accumulated-=1.0/60.0;}
+                    const float px=static_cast<float>((mouse.x+1.0)*0.5*width),py=static_cast<float>((1.0-mouse.y)*0.5*height);
+                    const float wheel=state.wheel;state.wheel=0;
+                    const bool shift=focused && (GetKeyState(VK_SHIFT)&0x8000)!=0;
+                    const auto uiClicks=ui.Interact(zengine::Vec2{px,py},mouse.buttons[0].pressed,state.typed,wheel,shift);
+                    state.typed.clear();
+                    uiTookPointer=ui.TookPointer(); uiTookKeyboard=ui.TookKeyboard();
+                    for(const auto id:ui.Presses())session.UiPressed(id);
+                    for(const auto id:ui.Releases())session.UiReleased(id);
+                    for(const auto id:ui.Entered())session.UiMouseEntered(id);
+                    for(const auto id:ui.Exited())session.UiMouseExited(id);
+                    for(const auto id:ui.Submissions())session.UiSubmitted(id);
+                    if(ui.FocusEntered())session.UiFocusEntered(ui.FocusEntered());
+                    if(ui.FocusExited())session.UiFocusExited(ui.FocusExited());
+                    for(const auto clickedId:uiClicks)session.UiClicked(clickedId);
+                    // The game does not see input the UI consumed this frame.
+                    auto gameMouse=mouse; if(uiTookPointer) for(auto& b:gameMouse.buttons) b={};
+                    const auto hardware=uiTookKeyboard?zengine::input::Hardware{}:zengine::input::PollWindows(focused);
+                    accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,hardware,gameMouse);accumulated-=1.0/60.0;}
                 }
                 if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();}
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
                 for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id())||object.Is2D())continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));const auto* mr=object.GetBehavior<zengine::MeshRenderer>();frame.meshes.push_back({meshes.at(object.Id()),t3d,parent,mr?resolveMeshMaterial(mr->Material()):MaterialHandle{}});}
-                ui.Build(session.Objects(),{static_cast<float>(width),static_cast<float>(height)},uiContext,static_cast<float>(elapsed));
-                if(!automated){const float px=static_cast<float>((mouse.x+1.0)*0.5*width),py=static_cast<float>((1.0-mouse.y)*0.5*height);const float wheel=state.wheel;state.wheel=0;const auto uiClicks=ui.Interact(zengine::Vec2{px,py},mouse.buttons[0].pressed,{},wheel);for(const auto id:ui.Presses())session.UiPressed(id);for(const auto id:ui.Releases())session.UiReleased(id);for(const auto clickedId:uiClicks)session.UiClicked(clickedId);}
+                ui.Build(session.Objects(),{static_cast<float>(width),static_cast<float>(height)},uiContext);
                 ui.Emit(frame.sprites,frame.texts);
                 renderer.Render(frame);++rendered;
             }

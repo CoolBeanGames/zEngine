@@ -153,6 +153,8 @@ public:
     void SetTypeLookup(std::function<ObjectRef(std::string_view)> lookup);
     // get_tags()/has_tag(): host returns the tags of the given scene proxy.
     void SetTagLookup(std::function<std::vector<std::string>(ObjectRef)> lookup);
+    // get_children(): host returns the direct child scene proxies of the given proxy.
+    void SetChildrenLookup(std::function<std::vector<ObjectRef>(ObjectRef)> lookup);
     using PhysicsBodyCall = std::function<Value(ObjectRef, std::string_view, const std::vector<Value>&)>;
     using PhysicsCastCall = std::function<std::vector<ObjectRef>(Vector3, Vector3, std::uint32_t)>;
     using PrefabSpawnCall = std::function<ObjectRef(std::string_view)>;

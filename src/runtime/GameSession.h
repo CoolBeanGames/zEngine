@@ -18,6 +18,12 @@ public:
     // ZE-66: button down / up signals (also used by other controls that opt in).
     void UiPressed(GameObjectId id) { scene_.scripts.EmitSignal(id, "pressed"); }
     void UiReleased(GameObjectId id) { scene_.scripts.EmitSignal(id, "released"); }
+    // ZE-96: hover / focus / text-submit signals.
+    void UiMouseEntered(GameObjectId id) { scene_.scripts.EmitSignal(id, "mouse_entered"); }
+    void UiMouseExited(GameObjectId id) { scene_.scripts.EmitSignal(id, "mouse_exited"); }
+    void UiFocusEntered(GameObjectId id) { scene_.scripts.EmitSignal(id, "focus_entered"); }
+    void UiFocusExited(GameObjectId id) { scene_.scripts.EmitSignal(id, "focus_exited"); }
+    void UiSubmitted(GameObjectId id) { scene_.scripts.EmitSignal(id, "submitted"); }
     const ObjectStore& Objects() const {return scene_.objects;}
     ObjectStore& Objects() {return scene_.objects;}
     const std::map<GameObjectId,std::filesystem::path>& Models() const {return models_;}

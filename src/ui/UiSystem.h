@@ -37,21 +37,42 @@ namespace zengine::ui
 
         // One frame of pointer + keyboard interaction. `pixel` is the cursor in screen
         // pixels; `pressed` is the primary button state. `typed` are code points entered
-        // this frame. `wheelDelta` is mouse-wheel notches this frame (positive = scroll
-        // up / towards the top of the content). Returns the controls that completed a
-        // click (press then release over the same control) this frame, in hit order.
+        // this frame - printable text goes to the focused TextEntry; Tab(9) / Enter(13) /
+        // Esc(27) / Space(32) drive the focus model. `wheelDelta` is mouse-wheel notches
+        // (positive = scroll up); `shiftHeld` makes Tab move focus backwards. Returns the
+        // controls that completed a click (press then release over the same control), in
+        // hit order (a keyboard-activated focused Button is included).
         std::vector<GameObjectId> Interact(Vec2 pixel, bool pressed,
-                                           const std::vector<char32_t>& typed = {}, float wheelDelta = 0);
+                                           const std::vector<char32_t>& typed = {}, float wheelDelta = 0,
+                                           bool shiftHeld = false);
 
         // Controls whose primary button went down / came up over them this frame.
         const std::vector<GameObjectId>& Presses() const noexcept { return presses_; }
         const std::vector<GameObjectId>& Releases() const noexcept { return releases_; }
+        // ZE-96 signals: the pointer moved onto / off a control; a focused TextEntry
+        // got Enter; the keyboard focus moved to / away from a control (0 = none).
+        const std::vector<GameObjectId>& Entered() const noexcept { return entered_; }
+        const std::vector<GameObjectId>& Exited() const noexcept { return exited_; }
+        const std::vector<GameObjectId>& Submissions() const noexcept { return submissions_; }
+        GameObjectId FocusEntered() const noexcept { return focusEntered_; }
+        GameObjectId FocusExited() const noexcept { return focusExited_; }
+        GameObjectId Focused() const noexcept { return focused_; }
+        // Whether the UI consumed the pointer / keyboard this frame - the game input
+        // layer should ignore clicks / keys when true.
+        bool TookPointer() const noexcept { return tookPointer_; }
+        bool TookKeyboard() const noexcept { return tookKeyboard_; }
+        // Programmatic focus (0 = clear). Fires focus_entered / focus_exited via the
+        // accessors above on the next Interact only if changed here between frames -
+        // callers that need the signals should route through Tab instead.
+        void SetFocus(GameObjectId id);
 
     private:
         void Layout(std::size_t index, const Rect& area, const Rect* clip);
         void SortChildren(std::vector<std::size_t>& children) const;
 
         std::vector<std::size_t> PaintOrder() const;
+        std::vector<GameObjectId> FocusableOrder() const;
+        void ChangeFocus(GameObjectId next); // updates focused_, TextEntry flags, focus signals
 
         std::vector<Node> nodes_;
         std::vector<std::size_t> roots_;
@@ -60,7 +81,15 @@ namespace zengine::ui
         GameObjectId pressedOn_ = 0;
         bool pressActive_ = false;     // a primary-button press is in progress
         GameObjectId focused_ = 0;
+        GameObjectId hovered_ = 0;
         std::vector<GameObjectId> presses_;
         std::vector<GameObjectId> releases_;
+        std::vector<GameObjectId> entered_;
+        std::vector<GameObjectId> exited_;
+        std::vector<GameObjectId> submissions_;
+        GameObjectId focusEntered_ = 0;
+        GameObjectId focusExited_ = 0;
+        bool tookPointer_ = false;
+        bool tookKeyboard_ = false;
     };
 }

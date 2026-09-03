@@ -1,4 +1,5 @@
 #include "ScriptHost.h"
+#include "ui/UiControl.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -264,6 +265,55 @@ int main()
             Check(Value(uiHost,script,"hits")=="2","EmitSignal did not reach the clicked handler");
             uiHost.EmitSignal(999,"clicked"); // unknown owner: no-op, no throw
             uiHost.Stop(uiStore);
+        }
+
+        // ZE-96: a script inheriting a ui control reads AND writes the live engine
+        // control's fields (and its Transform2D) each tick.
+        {
+            ObjectStore s; ScriptHost h; h.SetObjectStore(&s);
+            auto& obj=s.Create2D("Bar");
+            auto& bar=obj.AddBehavior<zengine::ui::ProgressBar>();
+            bar.SetValue(0.1f); bar.SetVertical(false);
+            obj.GetTransform().SetPosition({10,20});
+            auto& script=obj.AddBehavior<ScriptBehavior>("Bar.zsh");
+            Check(h.Prepare(script,R"(class Bar : uiProgressBar {
+                export bool saw_live = false;
+                func start() { value = 0.75; vertical = true; anchor = "center"; visible = false; transform.position.x = 99; }
+                func update(float dt) { if (value > 0.3 and value < 0.4) { saw_live = true; } }
+            })","Bar"),"ZE-96 ui sync fixture compile");
+            Check(h.Play(s) && !script.Faulted(),"ZE-96 ui sync fixture Play");
+            h.Tick(s,1.0f/60);
+            Check(std::abs(bar.Value()-0.75f)<0.001f,"script float write did not reach the engine ui control");
+            Check(bar.Vertical(),"script bool write did not reach the engine ui control");
+            Check(!bar.Visible(),"script base-field write (visible) did not reach the engine ui control");
+            Check(bar.GetAnchor()==zengine::ui::Anchor::Center,"script anchor write did not reach the engine ui control");
+            Check(zengine::As2D(obj).GetTransform().Position().x==99,"script Transform2D write did not reach the 2D object");
+            bar.SetValue(0.33f); // engine -> script on the next tick
+            h.Tick(s,1.0f/60);
+            Check(Value(h,script,"saw_live")=="true","script did not read the live engine ui value");
+            h.Stop(s);
+        }
+
+        // ZE-96: get_children() reaches a UI parent's children from a child's script.
+        {
+            ObjectStore s; ScriptHost h; h.SetObjectStore(&s);
+            auto& panel=s.Create2D("Panel"); panel.AddBehavior<zengine::ui::PanelContainer>();
+            auto& panel2=s.Create2D("Panel2"); panel2.AddBehavior<zengine::ui::PanelContainer>();
+            auto& a=s.Create2D("A"); a.SetParent(panel.Id()); a.AddBehavior<zengine::ui::ColorRect>();
+            auto& b=s.Create2D("B"); b.SetParent(panel.Id()); b.AddBehavior<zengine::ui::ColorRect>();
+            auto& script=a.AddBehavior<ScriptBehavior>("Item.zsh");
+            Check(h.Prepare(script,R"(class Item : uiColorRect {
+                export int siblings = 0;
+                export bool moved = false;
+                func start() { array kids = parent.get_children(); siblings = kids.size(); }
+                func update(float dt) { if (not moved) { parent = find("Panel2"); moved = true; } }
+            })","Item"),"ZE-96 get_children fixture compile");
+            Check(h.Play(s) && !script.Faulted(),"ZE-96 get_children Play");
+            h.Tick(s,1.0f/60);
+            Check(Value(h,script,"siblings")=="2","get_children did not return the parent's two children");
+            h.Tick(s,1.0f/60);
+            Check(a.Parent()==panel2.Id(),"script reparent of a ui control did not reach the scene tree");
+            h.Stop(s);
         }
         std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;

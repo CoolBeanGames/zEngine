@@ -414,6 +414,70 @@ void HtmlInterpreter()
     Check(ui.HitTest({10, 10}) == obj.Id(), "html control is clickable");
 }
 
+void FocusHoverAndCapture()
+{
+    const auto ctx = MakeContext();
+    ObjectStore store;
+
+    auto& panelObj = store.Create2D("Panel");
+    auto& panel = panelObj.AddBehavior<PanelContainer>();
+    panel.SetAnchor(Anchor::Fill);
+
+    auto& btnObj = store.Create2D("Btn");
+    btnObj.SetParent(panelObj.Id());
+    auto& button = btnObj.AddBehavior<Button>();
+    button.SetAnchor(Anchor::TopLeft); button.SetSize({80, 30});
+    btnObj.GetTransform().SetPosition({10, 10});
+
+    auto& fieldObj = store.Create2D("Field");
+    fieldObj.SetParent(panelObj.Id());
+    auto& entry = fieldObj.AddBehavior<TextEntry>();
+    entry.SetAnchor(Anchor::TopLeft); entry.SetSize({160, 24});
+    fieldObj.GetTransform().SetPosition({10, 60});
+
+    UiSystem ui;
+    ui.Build(store, {400, 300}, ctx);
+
+    // Hover enter / exit as the pointer moves between controls.
+    ui.Interact({20, 20}, false);
+    Check(ui.Entered().size() == 1 && ui.Entered()[0] == btnObj.Id(), "mouse_entered on the button");
+    Check(ui.TookPointer(), "pointer over a control is consumed");
+    ui.Interact({20, 70}, false);
+    Check(ui.Exited().size() == 1 && ui.Exited()[0] == btnObj.Id() && ui.Entered()[0] == fieldObj.Id(),
+          "mouse_exited the button and entered the field");
+    ui.Interact({300, 200}, false);
+    Check(ui.Exited()[0] == fieldObj.Id() && ui.Entered().empty() && !ui.TookPointer(),
+          "pointer over empty space is not consumed");
+
+    // Tab moves focus front-to-back through the clickable controls.
+    ui.Interact({300, 200}, false, {U'\t'});
+    Check(ui.Focused() == fieldObj.Id() || ui.Focused() == btnObj.Id(), "Tab focused a control");
+    const auto first = ui.Focused();
+    ui.Interact({300, 200}, false, {U'\t'});
+    Check(ui.Focused() != first && ui.Focused() != 0, "Tab advanced focus");
+    ui.Interact({300, 200}, false, {U'\t'}, 0, true); // Shift-Tab back
+    Check(ui.Focused() == first, "Shift-Tab moved focus backwards");
+
+    // Focus the field, type, then Enter -> a submission (not typed).
+    ui.SetFocus(fieldObj.Id());
+    Check(entry.Focused() && ui.TookKeyboard(), "programmatic focus + keyboard capture");
+    ui.Interact({300, 200}, false, {U'h', U'i'});
+    Check(entry.Value() == "hi", "typing reaches the focused field");
+    auto clicks = ui.Interact({300, 200}, false, {13});
+    Check(entry.Value() == "hi" && ui.Submissions().size() == 1 && ui.Submissions()[0] == fieldObj.Id(),
+          "Enter submits the field without inserting a character");
+
+    // Esc blurs.
+    ui.Interact({300, 200}, false, {27});
+    Check(ui.Focused() == 0 && !entry.Focused() && ui.FocusExited() == fieldObj.Id(), "Esc blurs the field");
+
+    // A focused Button activates on Enter / Space.
+    ui.SetFocus(btnObj.Id());
+    clicks = ui.Interact({300, 200}, false, {U' '});
+    Check(clicks.size() == 1 && clicks[0] == btnObj.Id(), "Space activates the focused button");
+    Check(button.CurrentVisual() == Button::Visual::Hover, "focused button shows the hover visual");
+}
+
 int main()
 {
     try
@@ -428,8 +492,9 @@ int main()
         ButtonStatesAndSignals();
         VideoPlayback();
         HtmlInterpreter();
+        FocusHoverAndCapture();
         std::cout << "PASS: anchors, containers, hit-testing, clicks, text entry, batched emit, "
-                     "scroll, button, video, html\n";
+                     "scroll, button, video, html, focus/hover/capture\n";
         return 0;
     }
     catch (const std::exception& error)

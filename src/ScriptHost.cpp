@@ -1,5 +1,7 @@
 #include "ScriptHost.h"
 #include "core/Camera.h"
+#include "ui/UiControl.h"
+#include "ui/UiSerialize.h"
 #include "zscript/Text.h"
 #include "zscript/NativeTypes.h"
 #include <algorithm>
@@ -17,6 +19,112 @@ namespace
 {
     using namespace script;
     Vector3 ToScript(Vec3 v) { return {v.x,v.y,v.z}; }
+    Vector2 ToScript(Vec2 v) { return {v.x,v.y}; }
+    Vec2 ToNative2(Vector2 v)
+    {
+        const auto valid = [](double n) { return std::isfinite(n) && std::abs(n) <= std::numeric_limits<float>::max(); };
+        if (!valid(v.x) || !valid(v.y)) throw std::runtime_error("Script transform exceeds native float range.");
+        return {static_cast<float>(v.x), static_cast<float>(v.y)};
+    }
+
+    // ZE-96: mirror one ui:: control's serialized fields between the engine control
+    // and its script proxy. `toScript` = engine -> proxy (before a callback);
+    // otherwise proxy -> engine (after). Field names match the uiControl.. script
+    // class fields (Script.cpp) and the engine keys (UiSerialize.cpp), with the
+    // colour Vector3 <-> RGBA conversions and the split margin_* floats handled here.
+    void SyncUiControl(Runtime& runtime, ObjectRef proxy, ui::UiControl& control, bool toScript)
+    {
+        const auto pull = [&](const char* field) { return runtime.Get(proxy, field); };
+        const auto push = [&](const char* field, Value v) { runtime.Set(proxy, field, std::move(v), false); };
+        const auto num  = [](float v) { return Value{static_cast<double>(v)}; };
+        const auto getNum = [&](const char* f) { const auto v = pull(f); return std::holds_alternative<double>(v) ? static_cast<float>(std::get<double>(v)) : std::holds_alternative<std::int64_t>(v) ? static_cast<float>(std::get<std::int64_t>(v)) : 0.0f; };
+        const auto getVec2 = [&](const char* f) { const auto v = pull(f); return std::holds_alternative<Vector2>(v) ? ToNative2(std::get<Vector2>(v)) : Vec2{}; };
+        const auto getBool = [&](const char* f) { const auto v = pull(f); return std::holds_alternative<bool>(v) && std::get<bool>(v); };
+        const auto getStr  = [&](const char* f) { const auto v = pull(f); return std::holds_alternative<std::string>(v) ? std::get<std::string>(v) : std::string{}; };
+        const auto getRgb  = [&](const char* f, Float4 keep) { const auto v = pull(f); if (!std::holds_alternative<Vector3>(v)) return keep; const auto c = std::get<Vector3>(v); return Float4{static_cast<float>(c.x), static_cast<float>(c.y), static_cast<float>(c.z), keep.w}; };
+        const auto rgb = [](Float4 c) { return Value{Vector3{c.x, c.y, c.z}}; };
+
+        if (toScript)
+        {
+            push("anchor", Value{std::string(ui::AnchorName(control.GetAnchor()))});
+            push("size", Value{ToScript(control.Size())});
+            push("min_size", Value{ToScript(control.MinSize())});
+            push("order", Value{static_cast<std::int64_t>(control.Order())});
+            push("visible", Value{control.Visible()});
+            push("clickable", Value{control.Clickable()});
+        }
+        else
+        {
+            if (ui::Anchor anchor; ui::ParseAnchor(getStr("anchor"), anchor)) control.SetAnchor(anchor);
+            control.SetSize(getVec2("size"));
+            control.SetMinSize(getVec2("min_size"));
+            if (const auto v = pull("order"); std::holds_alternative<std::int64_t>(v)) control.SetOrder(static_cast<int>(std::get<std::int64_t>(v)));
+            control.SetVisible(getBool("visible"));
+            control.SetClickable(getBool("clickable"));
+        }
+
+        if (auto* c = dynamic_cast<ui::Container*>(&control))
+        {
+            if (toScript) { push("padding", num(c->Padding())); push("spacing", num(c->Spacing())); }
+            else { c->SetPadding(getNum("padding")); c->SetSpacing(getNum("spacing")); }
+        }
+        if (auto* c = dynamic_cast<ui::HTileBoxContainer*>(&control))
+        { if (toScript) push("fill_cross", Value{c->FillCross()}); else c->SetFillCross(getBool("fill_cross")); }
+        if (auto* c = dynamic_cast<ui::VTileBoxContainer*>(&control))
+        { if (toScript) push("fill_cross", Value{c->FillCross()}); else c->SetFillCross(getBool("fill_cross")); }
+        if (auto* c = dynamic_cast<ui::ScrollContainer*>(&control))
+        {
+            if (toScript) { push("scroll_x", num(c->ScrollX())); push("scroll_y", num(c->ScrollY())); push("horizontal", Value{c->Horizontal()}); push("fill_cross", Value{c->FillCross()}); }
+            else { c->SetScrollX(getNum("scroll_x")); c->SetScrollY(getNum("scroll_y")); c->SetHorizontal(getBool("horizontal")); c->SetFillCross(getBool("fill_cross")); }
+        }
+        if (auto* c = dynamic_cast<ui::MarginContainer*>(&control))
+        {
+            if (toScript) { push("margin_left", num(c->Left())); push("margin_top", num(c->Top())); push("margin_right", num(c->Right())); push("margin_bottom", num(c->Bottom())); }
+            else c->SetMargins(getNum("margin_left"), getNum("margin_top"), getNum("margin_right"), getNum("margin_bottom"));
+        }
+        if (auto* c = dynamic_cast<ui::PanelContainer*>(&control))
+        {
+            if (toScript) { push("texture", Value{c->Texture()}); push("tint", rgb(c->Tint())); }
+            else { c->SetTexture(getStr("texture")); c->SetTint(getRgb("tint", c->Tint())); }
+        }
+        if (auto* c = dynamic_cast<ui::TextEntry*>(&control))
+        {
+            if (toScript) { push("text", Value{c->Value()}); push("placeholder", Value{c->Placeholder()}); push("pixel_height", num(c->PixelHeight())); }
+            else { c->SetValue(getStr("text")); c->SetPlaceholder(getStr("placeholder")); c->SetPixelHeight(getNum("pixel_height")); }
+        }
+        else if (auto* c = dynamic_cast<ui::Text*>(&control)) // Text / LongText
+        {
+            if (toScript) { push("text", Value{c->Value()}); push("pixel_height", num(c->PixelHeight())); push("color", rgb(c->Color())); }
+            else { c->SetValue(getStr("text")); c->SetPixelHeight(getNum("pixel_height")); c->SetColor(getRgb("color", c->Color())); }
+        }
+        if (auto* c = dynamic_cast<ui::TextureRect*>(&control))
+        {
+            if (toScript) { push("texture", Value{c->Texture()}); push("tint", rgb(c->Tint())); }
+            else { c->SetTexture(getStr("texture")); c->SetTint(getRgb("tint", c->Tint())); }
+        }
+        if (auto* c = dynamic_cast<ui::ColorRect*>(&control))
+        { if (toScript) push("color", rgb(c->Color())); else c->SetColor(getRgb("color", c->Color())); }
+        if (auto* c = dynamic_cast<ui::ProgressBar*>(&control))
+        {
+            if (toScript) { push("value", num(c->Value())); push("vertical", Value{c->Vertical()}); push("fill_color", rgb(c->Fill())); push("background_color", rgb(c->Background())); }
+            else { c->SetValue(getNum("value")); c->SetVertical(getBool("vertical")); c->SetFill(getRgb("fill_color", c->Fill())); c->SetBackground(getRgb("background_color", c->Background())); }
+        }
+        if (auto* c = dynamic_cast<ui::Button*>(&control))
+        {
+            if (toScript) { push("text", Value{c->Text()}); push("pixel_height", num(c->PixelHeight())); push("disabled", Value{c->Disabled()}); }
+            else { c->SetText(getStr("text")); c->SetPixelHeight(getNum("pixel_height")); c->SetDisabled(getBool("disabled")); }
+        }
+        if (auto* c = dynamic_cast<ui::VideoTexture*>(&control))
+        {
+            if (toScript) { push("video", Value{c->Video()}); push("playing", Value{c->Playing()}); push("loop", Value{c->Loop()}); push("speed", num(c->Speed())); push("tint", rgb(c->Tint())); }
+            else { c->SetVideo(getStr("video")); c->SetPlaying(getBool("playing")); c->SetLoop(getBool("loop")); c->SetSpeed(getNum("speed")); c->SetTint(getRgb("tint", c->Tint())); }
+        }
+        if (auto* c = dynamic_cast<ui::UiHtml*>(&control))
+        {
+            if (toScript) { push("html", Value{c->Html()}); push("background", rgb(c->Background())); }
+            else { c->SetHtml(getStr("html")); c->SetBackground(getRgb("background", c->Background())); }
+        }
+    }
     Vec3 ToNative(Vector3 v)
     {
         const auto valid = [](double n) { return std::isfinite(n) && std::abs(n) <= std::numeric_limits<float>::max(); };
@@ -151,6 +259,11 @@ namespace
                 const auto id=NativeId(ref);const auto* native=scene.Find(id);
                 return native?native->Tags():std::vector<std::string>{};
             });
+            runtime.SetChildrenLookup([this](ObjectRef ref)->std::vector<ObjectRef>{
+                const auto id=NativeId(ref); std::vector<ObjectRef> out;
+                if(id) for(std::size_t i=0;i<scene.Size();++i) if(scene.At(i).Parent()==id) out.push_back(Proxy(scene.At(i).Id()));
+                return out;
+            });
             if(physicsWorld)runtime.SetPhysicsCallbacks(
                 [this,physicsWorld](ObjectRef ownerRef,std::string_view method,const std::vector<Value>& arguments)->Value{
                     const auto id=NativeId(ownerRef);if(!physicsWorld->Contains(id))throw std::runtime_error("GameObject has no active physics body.");
@@ -213,8 +326,10 @@ namespace
         ObjectRef Proxy(GameObjectId id) {
             if(!id)return {};
             if(auto it=proxies.find(id);it!=proxies.end())return it->second;
-            if(!scene.Find(id))throw std::runtime_error("Scene object no longer exists.");
-            const auto ref=runtime.Create("gameObject");proxies.emplace(id,ref);BindNative(id,ref);Synchronize(id,ref);return ref;
+            auto* native=scene.Find(id);if(!native)throw std::runtime_error("Scene object no longer exists.");
+            // 2D objects (ui controls) get a gameObject2D proxy so their Transform2D
+            // and their `parent` chain (also gameObject2D) coerce correctly.
+            const auto ref=runtime.Create(As2D(native)?"gameObject2D":"gameObject");proxies.emplace(id,ref);BindNative(id,ref);Synchronize(id,ref);return ref;
         }
         ObjectRef Reference(GameObjectId id, std::string_view type) {
             const auto* native=scene.Find(id); if(!native) throw std::runtime_error("Scene object no longer exists.");
@@ -246,11 +361,29 @@ namespace
             throw std::runtime_error("A parent must be a scene object: use parent or find(name), not gameObject().");
         }
         void Synchronize(GameObjectId id,ObjectRef proxy) {
-            const auto* native=scene.Find(id);if(!native)throw std::runtime_error("Scene object no longer exists.");
-            runtime.Set(proxy,"parent",Proxy(native->Parent()),false);
-            const auto* g=As3D(native); if(!g)return; // 2D script proxies are handled by the UI layer
-            const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));const auto& transform=g->GetTransform();
-            runtime.Set(ref,"position",ToScript(transform.Position()),false);runtime.Set(ref,"rotation",ToScript(transform.Rotation()),false);runtime.Set(ref,"scale",ToScript(transform.Scale()),false);
+            auto* native=scene.Find(id);if(!native)throw std::runtime_error("Scene object no longer exists.");
+            // A 2D owner parented to another 2D object: its `parent` field is typed
+            // gameObject2D but referenced objects get a plain gameObject proxy. Cross-
+            // object 2D reparenting from script is descoped for 1.0, so a coercion
+            // failure here is expected - don't let it fault the script.
+            try { runtime.Set(proxy,"parent",Proxy(native->Parent()),false); } catch(const std::exception&) {}
+            if(auto* g=As3D(native)) {
+                const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));const auto& transform=g->GetTransform();
+                runtime.Set(ref,"position",ToScript(transform.Position()),false);runtime.Set(ref,"rotation",ToScript(transform.Rotation()),false);runtime.Set(ref,"scale",ToScript(transform.Scale()),false);
+                return;
+            }
+            // ZE-96: a 2D object's proxy - Transform2D + its ui:: control fields. Only
+            // meaningful when the proxy is a gameObject2D (the script's own owner);
+            // a referenced 2D object gets a plain gameObject proxy, so this is skipped.
+            if(auto* g2=As2D(native)) {
+                try {
+                    const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));const auto& t=g2->GetTransform();
+                    runtime.Set(ref,"position",Value{ToScript(t.Position())},false);
+                    runtime.Set(ref,"rotation",Value{static_cast<double>(t.Rotation())},false);
+                    runtime.Set(ref,"scale",Value{ToScript(t.Scale())},false);
+                    if(auto* control=native->GetBehavior<ui::UiControl>()) SyncUiControl(runtime,proxy,*control,true);
+                } catch(const std::exception&) {} // 3D-transform proxy or control/class mismatch: skip
+            }
         }
         template<class F> void Invoke(ObjectCore& owner, F callback)
         {
@@ -267,17 +400,43 @@ namespace
                 if(scale!=ToScript(previous.Scale()))runtime.Emit({ref,"was_scaled"},{scale});
             }
             callback();
-            std::map<GameObjectId,GameObjectId> parents;std::map<GameObjectId,Transform> transforms;
+            std::map<GameObjectId,GameObjectId> parents;std::map<GameObjectId,Transform> transforms;std::map<GameObjectId,Transform2D> transforms2D;
             for(const auto& [id,proxy]:proxies) {
-                const auto* g=As3D(scene.Find(id)); if(!g)continue;
+                auto* obj=scene.Find(id); if(!obj)continue;
                 const auto parent=NativeId(std::get<ObjectRef>(runtime.Get(proxy,"parent")));
-                if(parent!=g->Parent())parents[id]=parent;
-                const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));Transform next;
-                next.SetPosition(ToNative(std::get<Vector3>(runtime.Get(ref,"position"))));next.SetRotation(ToNative(std::get<Vector3>(runtime.Get(ref,"rotation"))));next.SetScale(ToNative(std::get<Vector3>(runtime.Get(ref,"scale"))));transforms[id]=next;
+                if(parent!=obj->Parent())parents[id]=parent;
+                if(As3D(obj)) {
+                    const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));Transform next;
+                    next.SetPosition(ToNative(std::get<Vector3>(runtime.Get(ref,"position"))));next.SetRotation(ToNative(std::get<Vector3>(runtime.Get(ref,"rotation"))));next.SetScale(ToNative(std::get<Vector3>(runtime.Get(ref,"scale"))));transforms[id]=next;
+                }
+                else if(auto* g2=As2D(obj)) {
+                    try {
+                        const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));
+                        if(std::holds_alternative<Vector2>(runtime.Get(ref,"position"))) {
+                            Transform2D next;
+                            next.SetPosition(ToNative2(std::get<Vector2>(runtime.Get(ref,"position"))));
+                            if(const auto r=runtime.Get(ref,"rotation");std::holds_alternative<double>(r))next.SetRotation(static_cast<float>(std::get<double>(r)));
+                            next.SetScale(ToNative2(std::get<Vector2>(runtime.Get(ref,"scale"))));
+                            transforms2D[id]=next;
+                        }
+                        if(auto* control=g2->GetBehavior<ui::UiControl>()) SyncUiControl(runtime,proxy,*control,false);
+                    } catch(const std::exception&) {}
+                }
             }
             scene.SetParents(parents); // Validate complete graph before committing any transform.
             for(const auto& [id,transform]:transforms)As3D(*scene.Find(id)).GetTransform()=transform;
+            for(const auto& [id,transform]:transforms2D) {
+                auto& live=As2D(*scene.Find(id)).GetTransform();
+                const auto proxy=proxies.at(id);const auto ref=std::get<ObjectRef>(runtime.Get(proxy,"transform"));
+                if(const auto it=previousTransforms2D.find(id);it!=previousTransforms2D.end()) {
+                    if(transform.Position()!=it->second.Position())runtime.Emit({ref,"was_moved"},{Value{ToScript(transform.Position())}});
+                    if(transform.Rotation()!=it->second.Rotation())runtime.Emit({ref,"was_rotated"},{Value{static_cast<double>(transform.Rotation())}});
+                    if(transform.Scale()!=it->second.Scale())runtime.Emit({ref,"was_scaled"},{Value{ToScript(transform.Scale())}});
+                }
+                live=transform;
+            }
             previousTransforms=std::move(transforms);
+            previousTransforms2D=std::move(transforms2D);
         }
         bool draw,physicsUpdate;
         const InputFrame& input;
@@ -286,6 +445,7 @@ namespace
         GameObjectId ownerId;
         std::map<GameObjectId,ObjectRef> proxies;
         std::map<GameObjectId,Transform> previousTransforms;
+        std::map<GameObjectId,Transform2D> previousTransforms2D;
     };
 }
 

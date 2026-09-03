@@ -351,9 +351,36 @@ void EditorShell::Render()
         uiContext.textureSize=[](std::string_view){return zengine::Vec2{};};
         uiContext.resolveTexture=[&](std::string_view){return renderer_->WhiteTexture();};
         uiViewport_.Build(objects_,renderer_->ViewportSize(),uiContext);
+        if (Playing()) // ZE-96: route accumulated viewport input into the live UI
+        {
+            const zengine::Vec2 cursor{
+                static_cast<float>(uiInput_.cursor.x - viewportContent_.left),
+                static_cast<float>(uiInput_.cursor.y - viewportContent_.top)};
+            const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            const auto clicks = uiViewport_.Interact(cursor, uiInput_.primary, uiInput_.typed, uiInput_.wheel, shift);
+            uiInput_.typed.clear(); uiInput_.wheel = 0;
+            const auto emit = [&](const auto& ids, const char* signal) { for (auto id : ids) scriptHost_.EmitSignal(id, signal); };
+            emit(uiViewport_.Presses(), "pressed");
+            emit(uiViewport_.Releases(), "released");
+            emit(uiViewport_.Entered(), "mouse_entered");
+            emit(uiViewport_.Exited(), "mouse_exited");
+            emit(uiViewport_.Submissions(), "submitted");
+            if (uiViewport_.FocusEntered()) scriptHost_.EmitSignal(uiViewport_.FocusEntered(), "focus_entered");
+            if (uiViewport_.FocusExited()) scriptHost_.EmitSignal(uiViewport_.FocusExited(), "focus_exited");
+            emit(clicks, "clicked");
+        }
         uiViewport_.Emit(frame.sprites,frame.texts);
     }
     renderer_->Render(frame);
+}
+bool EditorShell::RouteUiViewportPress(POINT clientPoint)
+{
+    if (!Playing() || !renderer_ || !PtInRect(&viewportContent_, clientPoint)) return false;
+    const zengine::Vec2 vp{static_cast<float>(clientPoint.x - viewportContent_.left),
+                           static_cast<float>(clientPoint.y - viewportContent_.top)};
+    if (uiViewport_.HitTest(vp) == 0) return false;
+    uiInput_.primary = true; // the release + click are applied in Render()
+    return true;
 }
 
 bool EditorShell::PrepareScripts()
@@ -1829,12 +1856,14 @@ LRESULT EditorShell::HandleMessage(
             }
             return 0;
         }
+        if (RouteUiViewportPress(point)) return 0; // ZE-96: a UI control under the cursor takes the press
         BeginDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         if (dragTarget_ == DragTarget::None) BeginAssetDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         return 0;
     }
     case WM_MOUSEMOVE:
     {
+        uiInput_.cursor = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}; // ZE-96
         const int hovered=ChromeHit({GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)});
         if(hovered!=hoveredChrome_){hoveredChrome_=hovered;InvalidateRect(window_,nullptr,FALSE);}
         if(const int tab=ViewTabHit({GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)}); tab!=hoveredTab_){hoveredTab_=tab;InvalidateRect(window_,&viewportPanel_,FALSE);}
@@ -1870,6 +1899,7 @@ LRESULT EditorShell::HandleMessage(
         hoveredChrome_=pressedChrome_=-1;InvalidateRect(window_,nullptr,FALSE);break;
     case WM_LBUTTONUP:
         pressedChrome_=-1;InvalidateRect(window_,nullptr,FALSE);
+        uiInput_.primary=false; // ZE-96: release reaches the viewport UI in Render()
         if (draggedObject_)
         {
             const auto object=draggedObject_; const bool moved=objectDragMoved_; draggedObject_=0; ReleaseCapture();
@@ -1906,9 +1936,15 @@ LRESULT EditorShell::HandleMessage(
             const int columns=AssetColumns(),visibleRows=std::max(1,static_cast<int>(list.bottom-list.top)/84);
             firstAsset_=std::clamp(firstAsset_-GET_WHEEL_DELTA_WPARAM(wParam)/WHEEL_DELTA*columns,0,std::max(0,((static_cast<int>(assets_.size())-visibleRows*columns+columns-1)/columns)*columns));
             InvalidateRect(window_, &mediaLibrary_, FALSE);
+            return 0;
         }
+        if (Playing() && PtInRect(&viewportContent_, point)) // ZE-96: scroll the live UI
+        { uiInput_.wheel += GET_WHEEL_DELTA_WPARAM(wParam) / static_cast<float>(WHEEL_DELTA); return 0; }
         return 0;
     }
+    case WM_CHAR:
+        if (Playing() && uiInput_.typed.size() < 256) { uiInput_.typed.push_back(static_cast<char32_t>(wParam)); return 0; } // ZE-96
+        break;
     case WM_CAPTURECHANGED:
         pressedChrome_=-1;InvalidateRect(window_,nullptr,FALSE);
         draggedObject_=0; objectDragMoved_=false;

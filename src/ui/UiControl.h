@@ -393,15 +393,17 @@ namespace zengine::ui
         NineSlice Slice() const noexcept { return slice_; }
         void SetSlice(NineSlice v) noexcept { slice_ = v; }
 
-        // Pointer state, refreshed every frame by UiSystem.
+        // Pointer / focus state, refreshed every frame by UiSystem.
         void SetInteraction(bool hovered, bool held) noexcept { hovered_ = hovered; held_ = held; }
+        void SetFocused(bool value) noexcept { focused_ = value; }
         bool Hovered() const noexcept { return hovered_; }
+        bool Focused() const noexcept { return focused_; }
         bool Held() const noexcept { return held_ && hovered_; }
         Visual CurrentVisual() const noexcept
         {
             if (disabled_) return Visual::Disabled;
             if (held_ && hovered_) return Visual::Pressed;
-            if (hovered_) return Visual::Hover;
+            if (hovered_ || focused_) return Visual::Hover;
             return Visual::Normal;
         }
 
@@ -411,7 +413,7 @@ namespace zengine::ui
         std::string text_;
         float pixelHeight_ = 16;
         bool disabled_ = false;
-        bool hovered_ = false, held_ = false;
+        bool hovered_ = false, held_ = false, focused_ = false;
         Float4 normal_{0.20f, 0.22f, 0.28f, 1};
         Float4 hover_{0.26f, 0.29f, 0.36f, 1};
         Float4 pressed_{0.14f, 0.40f, 0.66f, 1};

@@ -746,6 +746,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Function print;print.params={"string"};print.result="void";gameObject.methods.emplace("print",std::move(print));
     Function getTags;getTags.result="array";gameObject.methods.emplace("get_tags",std::move(getTags));
     Function hasTag;hasTag.params={"string"};hasTag.result="bool";gameObject.methods.emplace("has_tag",std::move(hasTag));
+    Function getChildren;getChildren.result="array";gameObject.methods.emplace("get_children",std::move(getChildren));
     program.classes.emplace("gameObject", std::move(gameObject));
     // gameObject2D: identical to gameObject but with a 2D (screen-space) transform.
     Class transform2d; transform2d.name = "Transform2D";
@@ -762,6 +763,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     gameObject2D.methods.emplace("print", [] { Function f; f.params={"string"}; f.result="void"; return f; }());
     gameObject2D.methods.emplace("get_tags", [] { Function f; f.result="array"; return f; }());
     gameObject2D.methods.emplace("has_tag", [] { Function f; f.params={"string"}; f.result="bool"; return f; }());
+    gameObject2D.methods.emplace("get_children", [] { Function f; f.result="array"; return f; }());
     program.classes.emplace("gameObject2D", std::move(gameObject2D));
     // UI controls (ZE-61): a native class chain rooted at gameObject2D. A user's
     // "class Menu : PanelContainer" inherits the transform, the layout fields and
@@ -773,7 +775,9 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
             Class c; c.name = name; c.base = base;
             c.fields = program.classes.at(base).fields;
             c.signals = program.classes.at(base).signals;
-            c.signals.insert("clicked");
+            // ZE-61 clicked + ZE-96 hover / keyboard-focus signals, on every ui control.
+            for (const char* s : {"clicked", "mouse_entered", "mouse_exited", "focus_entered", "focus_exited"})
+                c.signals.insert(s);
             for (auto& f : extra) c.fields.push_back(std::move(f));
             program.classes.emplace(name, std::move(c));
         };
@@ -789,6 +793,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         uiClass("uiText", "uiControl", {uiField("text", "string"), uiField("pixel_height", "float"), uiField("color", "Vector3")});
         uiClass("uiLongText", "uiText", {});
         uiClass("uiTextEntry", "uiControl", {uiField("text", "string"), uiField("placeholder", "string"), uiField("pixel_height", "float")});
+        program.classes.at("uiTextEntry").signals.insert("submitted"); // ZE-96: Enter while focused
         uiClass("uiTextureRect", "uiControl", {uiField("texture", "string"), uiField("tint", "Vector3")});
         uiClass("uiColorRect", "uiControl", {uiField("color", "Vector3")});
         uiClass("uiProgressBar", "uiControl", {uiField("value", "float"), uiField("vertical", "bool"),
@@ -945,6 +950,7 @@ struct Runtime::Impl {
     std::function<ObjectRef(std::string_view)> objectLookup;
     std::function<ObjectRef(std::string_view)> typeLookup;              // find_by_type
     std::function<std::vector<std::string>(ObjectRef)> tagLookup;       // get_tags / has_tag
+    std::function<std::vector<ObjectRef>(ObjectRef)> childrenLookup;    // get_children
     Runtime::PhysicsBodyCall physicsBodyCall;
     Runtime::PhysicsCastCall physicsCastCall;
     Runtime::PrefabSpawnCall prefabSpawnCall;
@@ -1351,7 +1357,15 @@ struct Runtime::Impl {
         if(name=="find" && BuiltinObjectMethod(object.type->name,"find")) {
             Tick(t);if(args.size()!=1)Error(t,"find takes one scene object name");
             const auto requested=std::get<std::string>(Coerce(args[0],"string",t));
-            return Coerce(objectLookup?Value{objectLookup(requested)}:Value{ObjectRef{}},"gameObject",t);
+            return Coerce(objectLookup?Value{objectLookup(requested)}:Value{ObjectRef{}},
+                          program->Assignable("gameObject2D",object.type->name)?"gameObject2D":"gameObject",t);
+        }
+        if(name=="get_children" && BuiltinObjectMethod(object.type->name,"get_children")) {
+            Tick(t);
+            if(!args.empty())Error(t,"get_children takes no arguments");
+            std::vector<Value> values;
+            for(auto child:childrenLookup?childrenLookup(ref):std::vector<ObjectRef>{})values.push_back(child);
+            return MakeArray(std::move(values),t);
         }
         if((name=="get_tags"||name=="has_tag") && BuiltinObjectMethod(object.type->name,name)) {
             Tick(t);
@@ -1650,6 +1664,7 @@ void Runtime::RemoveArrayElement(ArrayRef array, std::size_t index) {
 void Runtime::SetObjectLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->objectLookup=std::move(lookup);}
 void Runtime::SetTypeLookup(std::function<ObjectRef(std::string_view)> lookup){impl_->typeLookup=std::move(lookup);}
 void Runtime::SetTagLookup(std::function<std::vector<std::string>(ObjectRef)> lookup){impl_->tagLookup=std::move(lookup);}
+void Runtime::SetChildrenLookup(std::function<std::vector<ObjectRef>(ObjectRef)> lookup){impl_->childrenLookup=std::move(lookup);}
 void Runtime::SetPhysicsCallbacks(PhysicsBodyCall bodyCall,PhysicsCastCall castCall){impl_->physicsBodyCall=std::move(bodyCall);impl_->physicsCastCall=std::move(castCall);}
 void Runtime::BindNativeBehavior(ObjectRef owner,std::string_view behaviorType){impl_->Reset();impl_->BindNativeBehavior(owner,std::string(behaviorType));}
 void Runtime::SetPrefabSpawnCallback(PrefabSpawnCall callback){impl_->prefabSpawnCall=std::move(callback);}

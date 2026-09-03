@@ -617,6 +617,22 @@ void UiControlClasses() {
         func start() { text = "OK"; pressed.connect(on_down); released.connect(on_up); }
         func on_down() { downs += 1; }
         func on_up() { ups += 1; }
+    }
+    class Hoverable : uiColorRect {
+        int enters = 0; bool focused_now = false;
+        func start() {
+            mouse_entered.connect(on_enter); mouse_exited.connect(on_exit);
+            focus_entered.connect(on_focus); focus_exited.connect(on_blur);
+        }
+        func on_enter() { enters += 1; }
+        func on_exit() { enters -= 1; }
+        func on_focus() { focused_now = true; }
+        func on_blur() { focused_now = false; }
+    }
+    class Entry2 : uiTextEntry {
+        int submits = 0;
+        func start() { submitted.connect(on_submit); }
+        func on_submit() { submits += 1; }
     })");
     Check(static_cast<bool>(p), "UI control subclasses did not compile");
     Check(p->IsGameObject("Menu") && p->IsGameObject("Row") && p->IsGameObject("Bar"), "UI controls are gameObject2D-like");
@@ -635,6 +651,18 @@ void UiControlClasses() {
     Check(std::get<Vector2>(r.Get(std::get<ObjectRef>(r.Get(m, "transform")), "position")) == Vector2{0, 0}, "UI control carries a Transform2D");
     r.Emit({m, "clicked"}, {});
     Check(std::get<std::int64_t>(r.Get(m, "clicks")) == 1, "the clicked signal reaches a connected handler");
+    {
+        auto h = r.Create("Hoverable"); r.Start(h);
+        r.Emit({h, "mouse_entered"}, {}); r.Emit({h, "focus_entered"}, {});
+        Check(std::get<std::int64_t>(r.Get(h, "enters")) == 1 && std::get<bool>(r.Get(h, "focused_now")),
+              "ZE-96 hover / focus signals reach handlers");
+        r.Emit({h, "mouse_exited"}, {}); r.Emit({h, "focus_exited"}, {});
+        Check(std::get<std::int64_t>(r.Get(h, "enters")) == 0 && !std::get<bool>(r.Get(h, "focused_now")),
+              "ZE-96 hover / focus exit signals reach handlers");
+        auto e = r.Create("Entry2"); r.Start(e);
+        r.Emit({e, "submitted"}, {});
+        Check(std::get<std::int64_t>(r.Get(e, "submits")) == 1, "ZE-96 TextEntry submitted signal reaches a handler");
+    }
 
     Error([&] { Compile("class X { func f(){ int uiColorRect; } }"); }, "type keywords");
     Error([&] { Compile("class Bad : uiContainer { func f(){ transform.position = Vector3(1,2,3); } }"); }, "Cannot assign 'Vector3'");
