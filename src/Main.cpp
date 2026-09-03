@@ -1,4 +1,5 @@
 #include "EditorShell.h"
+#include "CrashHandler.h"
 
 #include <windows.h>
 #include <objbase.h>
@@ -27,13 +28,18 @@ namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
+    zengine::crash::Install("zEngine", __DATE__ " " __TIME__);
+    if (const auto previous = zengine::crash::TakePreviousCrashReport(); !previous.empty())
+        ShowFatalError("zEngine did not shut down cleanly last time.\nA crash report from that run is at:\n" + previous);
     try
     {
+        zengine::crash::Breadcrumb("editor starting up");
         ComApartment apartment;
         EditorShell editor(instance);
         const HWND window = editor.Create(showCommand);
         editor.InitializeRenderer();
         editor.InitializeStartup();
+        zengine::crash::Breadcrumb("editor entering the main loop");
 
         MSG message{};
         while (message.message != WM_QUIT)
@@ -55,7 +61,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     }
     catch (const std::exception& error)
     {
-        ShowFatalError(error.what());
+        const auto report = zengine::crash::ReportHandledFatal(std::string("std::exception escaped wWinMain: ") + error.what());
+        ShowFatalError(std::string(error.what()) + "\n\nCrash report:\n" + report);
         return EXIT_FAILURE;
     }
 }

@@ -1,6 +1,9 @@
 #include "core/GameObject.h"
 #include "core/MeshRenderer.h"
+#include "CrashHandler.h"
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -115,7 +118,26 @@ int main()
             Check(zengine::As3D(mixed.Find(solid.Id())) == &solid && zengine::As2D(mixed.Find(solid.Id())) == nullptr, "As3D/As2D discrimination failed");
         }
         Check(flatDestroyed, "GameObject2D must own the behavior lifetime");
-        std::cout << "PASS: platform-independent GameObject defaults, stable IDs, tags, transforms, behavior ownership\n";
+
+        // ZE-127: the crash handler writes a discoverable report and surfaces it once.
+        {
+            namespace crash = zengine::crash;
+            crash::Install("zEngineCoreTests", "test-build");
+            crash::Breadcrumb("core tests: exercising the crash reporter");
+            const auto report = crash::ReportHandledFatal("simulated fatal: std::bad_alloc");
+            Check(!report.empty() && std::filesystem::is_regular_file(report), "Crash report file was not written");
+            std::ifstream in(report);
+            const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+            Check(text.find("simulated fatal") != std::string::npos &&
+                  text.find("exercising the crash reporter") != std::string::npos &&
+                  text.find("build:    test-build") != std::string::npos,
+                  "Crash report is missing the detail / breadcrumbs / build id");
+            const auto first = crash::TakePreviousCrashReport();
+            Check(first == report, "Previous-crash marker did not point at the report");
+            Check(crash::TakePreviousCrashReport().empty(), "Previous-crash marker was not cleared after reading");
+            std::error_code ec; std::filesystem::remove(report, ec);
+        }
+        std::cout << "PASS: platform-independent GameObject defaults, stable IDs, tags, transforms, behavior ownership, crash reporter\n";
         return 0;
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -14,6 +14,7 @@
 #include "core/Environment.h"
 #include "core/Decal.h"
 #include "SceneLights.h"
+#include "CrashHandler.h"
 #include "LightmapAssets.h"
 #include "CubeModel.h"
 #include "input/InputAssets.h"
@@ -43,6 +44,7 @@ std::string Read(const std::filesystem::path& file){if(std::filesystem::file_siz
 std::string Utf8(const std::wstring& s){const auto n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),nullptr,0,nullptr,nullptr);if(!n && !s.empty())throw std::runtime_error("Invalid Unicode argument.");std::string result(n,' ');WideCharToMultiByte(CP_UTF8,0,s.data(),static_cast<int>(s.size()),result.data(),n,nullptr,nullptr);return result;}
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
+    zengine::crash::Install("zPlayer", __DATE__ " " __TIME__);
     bool automated=false;HWND window=nullptr;bool apartment=false;
     try {
         unsigned frames=0;std::filesystem::path report;std::string scene;
@@ -215,5 +217,5 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             DestroyWindow(window);window=nullptr;
         }
         CoUninitialize();return 0;
-    }catch(const std::exception& error){if(window)DestroyWindow(window);if(apartment)CoUninitialize();OutputDebugStringA(error.what());std::cerr<<error.what()<<'\n';if(!automated)MessageBoxA(nullptr,error.what(),"Game could not start",MB_OK|MB_ICONERROR);return 1;}
+    }catch(const std::exception& error){if(window)DestroyWindow(window);if(apartment)CoUninitialize();OutputDebugStringA(error.what());std::cerr<<error.what()<<'\n';const auto report=zengine::crash::ReportHandledFatal(std::string("std::exception escaped wWinMain: ")+error.what());if(!automated)MessageBoxA(nullptr,(std::string(error.what())+"\n\nCrash report:\n"+report).c_str(),"Game could not start",MB_OK|MB_ICONERROR);return 1;}
 }

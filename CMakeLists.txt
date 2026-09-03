@@ -102,9 +102,16 @@ target_compile_definitions(zEngineGameRuntime PRIVATE UNICODE _UNICODE NOMINMAX 
 add_library(zEngineRenderer STATIC src/Renderer.cpp src/Render2D.cpp src/FontAtlas.cpp)
 target_link_libraries(zEngineRenderer PUBLIC zEngineAssets zEngineCore zEngineGizmos d3d11 dxgi d3dcompiler windowscodecs ole32 gdi32 user32)
 target_compile_definitions(zEngineRenderer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+# ZE-127: last-resort crash diagnostics, linked into both the editor and the player.
+add_library(zEngineCrash STATIC src/CrashHandler.cpp)
+target_compile_features(zEngineCrash PUBLIC cxx_std_20)
+target_include_directories(zEngineCrash PUBLIC src)
+target_compile_definitions(zEngineCrash PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(zEngineCrash PUBLIC dbghelp shell32 ole32)
+
 add_executable(zPlayer WIN32 src/runtime/PlayerMain.cpp)
 target_compile_definitions(zPlayer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(zPlayer PRIVATE zEngineGameRuntime zEngineRenderer)
+target_link_libraries(zPlayer PRIVATE zEngineGameRuntime zEngineRenderer zEngineCrash)
 add_custom_command(TARGET zPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:zPlayer>/shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorCube.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/ColorCube.hlsl"
@@ -154,6 +161,7 @@ target_link_libraries(zEngine PRIVATE
     windowscodecs
     ole32
     shell32
+    zEngineCrash
     zEngineAssets
     zEngineCore
     zEngineGizmos
@@ -229,7 +237,7 @@ if(BUILD_TESTING)
     add_test(NAME ScriptAssetsAndEditor COMMAND zEngineScriptEditorTests)
     set_tests_properties(ScriptAssetsAndEditor PROPERTIES TIMEOUT 60)
     add_executable(zEngineCoreTests tests/CoreTests.cpp)
-    target_link_libraries(zEngineCoreTests PRIVATE zEngineCore)
+    target_link_libraries(zEngineCoreTests PRIVATE zEngineCore zEngineCrash)
     add_test(NAME GameObjectCore COMMAND zEngineCoreTests)
 
     add_executable(zEngineRender2DTests tests/Render2DTests.cpp src/Render2D.cpp src/FontAtlas.cpp)
