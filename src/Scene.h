@@ -10,11 +10,17 @@ namespace zengine::scenes
     constexpr std::size_t MaxSceneBytes=8*1024*1024;
     struct BehaviorData
     {
-        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area, Camera, Ui };
+        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area, Camera, Ui, Audio };
         Kind kind=Kind::Mesh;
         std::string uiType; // when kind==Ui: ui::UiControl::TypeName()
         std::vector<std::pair<std::string,std::string>> uiProps; // ordered key/value
         std::string meshMaterial; // when kind==Mesh: project-relative ".material" (ZE-65), empty = default
+        // ZE-67: when kind==Audio
+        std::string audioClip; // project-relative audio file
+        bool audioSpatial=true, audioAutoplay=true, audioLoop=false;
+        float audioVolume=1, audioPitch=1;
+        int audioAttenuation=1; // audio::Attenuation
+        float audioMinDistance=1, audioMaxDistance=25;
         bool enabled=true;
         float priority=0;
         std::string asset;

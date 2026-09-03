@@ -1,7 +1,9 @@
 #include "SceneAssets.h"
 #include "core/MeshRenderer.h"
 #include "ui/UiControl.h"
+#include "audio/AudioSource.h"
 #include <windows.h>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -55,7 +57,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 11\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 12\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});
@@ -166,6 +168,24 @@ int main()
             Check(rb && rb->Value()==0.4f && rb->Order()==2 && rb->Size().x==240,"ProgressBar props lost on restore");
             auto* rt=uiCopy.objects.Find(uiCopy.objects.At(2).Id())->GetBehavior<ui::Text>();
             Check(rt && rt->Value()=="Score: \"9000\"" && rt->Clickable(),"Text value with quotes lost on restore");
+        }
+        // ZE-67: an AudioSource round-trips through scene v11.
+        {
+            ObjectStore s; ScriptHost h;
+            auto& obj=s.Create("Speaker");
+            auto& src=obj.AddBehavior<audio::AudioSource>();
+            src.SetClip("sfx/hum.ogg"); src.SetSpatial(true); src.SetAutoplay(false); src.SetLoop(true);
+            src.SetVolume(0.6f); src.SetPitch(1.5f); src.SetAttenuationModel(audio::Attenuation::Inverse);
+            src.SetMinDistance(2); src.SetMaxDistance(40);
+            const auto enc=scenes::Encode(scenes::Capture(s,h));
+            Check(enc.find("audio \"sfx/hum.ogg\"")!=std::string::npos,"AudioSource was not serialized");
+            auto copy=scenes::Instantiate(scenes::Decode(enc));
+            Check(scenes::Encode(scenes::Capture(copy.objects,copy.scripts))==enc,"Audio scene round trip changed authored data");
+            auto* rs=copy.objects.Find(copy.objects.At(0).Id())->GetBehavior<audio::AudioSource>();
+            Check(rs && rs->Clip()=="sfx/hum.ogg" && rs->Loop() && !rs->Autoplay() && rs->Spatial()
+                  && std::abs(rs->Volume()-0.6f)<0.001f && std::abs(rs->Pitch()-1.5f)<0.001f
+                  && rs->AttenuationModel()==audio::Attenuation::Inverse && rs->MaxDistance()==40.0f,
+                  "AudioSource props lost on restore");
         }
         // ZE-66: the new scroll / button / video / html controls round-trip too.
         {
