@@ -4,6 +4,7 @@
 #include "core/Camera.h"
 #include "physics/PhysicsBehavior.h"
 #include "ui/UiSerialize.h"
+#include "audio/AudioSource.h"
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -63,6 +64,11 @@ zengine::GameObject& EditorShell::CreateGameObject(ObjectPreset preset,zengine::
         object.AddBehavior<zengine::Camera>();
         object.SetTags({zengine::Camera::MainTag}); // a new camera takes over as the main camera
         SyncMainCamera(object.Id());
+        inspectorPanel_->RefreshBehaviors(); OnObjectChanged();
+    }
+    else if(preset==ObjectPreset::AudioPlayer){
+        rename("Audio Player");
+        object.AddBehavior<zengine::audio::AudioSource>();
         inspectorPanel_->RefreshBehaviors(); OnObjectChanged();
     }
     else if(preset!=ObjectPreset::Empty){rename(preset==ObjectPreset::RigidBody?"RigidBody":preset==ObjectPreset::KinematicBody?"KinematicBody":preset==ObjectPreset::StaticBody?"StaticBody":"Area");object.AddBehavior<zengine::physics::Collider>();if(preset==ObjectPreset::RigidBody)object.AddBehavior<zengine::physics::RigidBody>();else if(preset==ObjectPreset::KinematicBody)object.AddBehavior<zengine::physics::KinematicBody>();else if(preset==ObjectPreset::StaticBody)object.AddBehavior<zengine::physics::StaticBody>();else object.AddBehavior<zengine::physics::Area>();inspectorPanel_->RefreshBehaviors();OnObjectChanged();}

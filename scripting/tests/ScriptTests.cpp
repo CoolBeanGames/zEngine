@@ -477,6 +477,39 @@ void Timers() {
     Error([&]{Compile("class Bad : gameObject { Timer t=Timer(); }");},"supplied by the host");
     auto invalid=Compile("class Invalid : gameObject {func start(){make_timer(-1);}}");Runtime bad(invalid);auto object=bad.Create("Invalid");Error([&]{bad.Start(object);},"nonnegative");
 }
+void AudioPlayerClass() {
+    // ZE-67: a script inherits audioPlayer -> play()/stop() route to the host and
+    // the started / looped / finished signals connect like any other.
+    int played = 0, stopped = 0;
+    auto program = Compile(R"(class Music : audioPlayer {
+        int starts; int loops; int ends;
+        func start(){ started.connect(on_start); looped.connect(on_loop); finished.connect(on_end); play(); }
+        func replay(){ play(); }
+        func silence(){ stop(); }
+        func on_start(){ starts += 1; }
+        func on_loop(){ loops += 1; }
+        func on_end(){ ends += 1; }
+        func counts():int { return starts * 100 + loops * 10 + ends; }
+    })");
+    Runtime runtime(program);
+    runtime.SetAudioCallback([&](ObjectRef, std::string_view method) {
+        if (method == "play") played += 1; else if (method == "stop") stopped += 1;
+    });
+    const auto music = runtime.Create("Music");
+    runtime.Start(music);
+    Check(played == 1 && stopped == 0, "start() did not call play() through the host");
+    runtime.Call(music, "silence");
+    Check(stopped == 1, "stop() did not reach the host");
+    runtime.Call(music, "replay");
+    Check(played == 2, "a second play() did not reach the host");
+
+    // The host raises started / looped / finished on the object's own proxy.
+    runtime.Emit({music, "started"}, {});
+    runtime.Emit({music, "looped"}, {});
+    runtime.Emit({music, "looped"}, {});
+    runtime.Emit({music, "finished"}, {});
+    Check(Int(runtime.Call(music, "counts")) == 121, "audioPlayer signals did not reach their handlers");
+}
 void GetBehavior() {
     auto p=Compile(R"(class Player : rigidbody {
         func check():bool {
@@ -719,7 +752,7 @@ void MouseInput() {
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"UI control classes", UiControlClasses}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
-        {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"Scene service",SceneService},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
+        {"native type aliases",NativeTypeAliases},{"timers",Timers},{"audioPlayer class",AudioPlayerClass},{"Mathf functions",MathfFunctions},{"Scene service",SceneService},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},

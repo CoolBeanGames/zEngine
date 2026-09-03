@@ -3,6 +3,7 @@
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include "core/Camera.h"
+#include "audio/AudioSource.h"
 #include "physics/PhysicsBehavior.h"
 #include <windowsx.h>
 #include <algorithm>
@@ -223,7 +224,7 @@ void InspectorPanel::RefreshBehaviors()
         auto* uiCtl=dynamic_cast<zengine::ui::UiControl*>(&behavior);
         const auto name=script ? std::filesystem::path(Wide(script->Asset())).stem().wstring() :
             uiCtl ? L"UI — "+Wide(uiCtl->TypeName()) :
-            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
+            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::audio::AudioSource*>(&behavior)?L"Audio Player":dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
         add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
         if(auto* meshRenderer=dynamic_cast<zengine::MeshRenderer*>(&behavior))
@@ -252,6 +253,13 @@ void InspectorPanel::RefreshBehaviors()
         }
         if(dynamic_cast<zengine::Camera*>(&behavior))
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"fov",L"Field of view (degrees)"},{"near",L"Near plane"},{"far",L"Far plane"}})add(&behavior,key,label,false,true,true);
+        if(dynamic_cast<zengine::audio::AudioSource*>(&behavior))
+            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{
+                {"clip",L"Clip (.wav/.mp3/.ogg/.flac)"},{"spatial",L"3D positional (0 or 1)"},{"autoplay",L"Autoplay (0 or 1)"},
+                {"loop",L"Loop (0 or 1)"},{"volume",L"Volume (0 - 1)"},{"pitch",L"Pitch (0.05 - 4)"},
+                {"attenuation",L"Attenuation (none / linear / inverse)"},{"min_distance",L"Min distance (full volume)"},
+                {"max_distance",L"Max distance (silent)"}})
+                add(&behavior,key,label,false,true,true);
         if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior)){
             addShape(collider);
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"offset",L"Offset"},{"size",L"Size"}})
@@ -412,6 +420,19 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
         if(entry.name=="fov")out<<camera->FieldOfView(); else if(entry.name=="near")out<<camera->NearPlane(); else if(entry.name=="far")out<<camera->FarPlane();
         return out.str();
     }
+    if (auto* src=dynamic_cast<zengine::audio::AudioSource*>(entry.behavior)) {
+        if(entry.name=="clip")return Wide(src->Clip());
+        if(entry.name=="attenuation")return Wide(zengine::audio::AttenuationName(src->AttenuationModel()));
+        std::wostringstream out; out<<std::setprecision(9);
+        if(entry.name=="spatial")out<<(src->Spatial()?1:0);
+        else if(entry.name=="autoplay")out<<(src->Autoplay()?1:0);
+        else if(entry.name=="loop")out<<(src->Loop()?1:0);
+        else if(entry.name=="volume")out<<src->Volume();
+        else if(entry.name=="pitch")out<<src->Pitch();
+        else if(entry.name=="min_distance")out<<src->MinDistance();
+        else if(entry.name=="max_distance")out<<src->MaxDistance();
+        return out.str();
+    }
     if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
         for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name
             && field.array==entry.arrayHeader && (entry.arrayIndex<0 ? field.arrayIndex<0 : field.arrayIndex==entry.arrayIndex)) {
@@ -550,6 +571,21 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
         else if(auto* camera=dynamic_cast<zengine::Camera*>(entry.behavior)) {
             float value;if(!ParseNumber(text,value))throw std::invalid_argument("Invalid camera value");
             if(entry.name=="fov")camera->SetFieldOfView(value);else if(entry.name=="near")camera->SetNearPlane(value);else camera->SetFarPlane(value);
+        }
+        else if(auto* src=dynamic_cast<zengine::audio::AudioSource*>(entry.behavior)) {
+            const auto raw=Utf8(text);
+            if(entry.name=="clip")src->SetClip(raw);
+            else if(entry.name=="attenuation"){zengine::audio::Attenuation a;if(!zengine::audio::ParseAttenuation(raw,a))throw std::invalid_argument("Attenuation must be none, linear or inverse");src->SetAttenuationModel(a);}
+            else {
+                float value;if(!ParseNumber(text,value))throw std::invalid_argument("Invalid audio number");
+                if(entry.name=="spatial")src->SetSpatial(value!=0);
+                else if(entry.name=="autoplay")src->SetAutoplay(value!=0);
+                else if(entry.name=="loop")src->SetLoop(value!=0);
+                else if(entry.name=="volume")src->SetVolume(value);
+                else if(entry.name=="pitch")src->SetPitch(value);
+                else if(entry.name=="min_distance")src->SetMinDistance(value);
+                else if(entry.name=="max_distance")src->SetMaxDistance(value);
+            }
         }
         else if(auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior)) {
             if(entry.name=="layer"||entry.name=="mask"){wchar_t* end=nullptr;errno=0;const auto value=std::wcstoull(text.c_str(),&end,0);while(end&&*end&&std::iswspace(*end))++end;if(!end||end==text.c_str()||*end||errno==ERANGE||value>0xffffffffull)throw std::invalid_argument("Invalid collision bits");if(entry.name=="layer")body->SetLayer(static_cast<std::uint32_t>(value));else body->SetMask(static_cast<std::uint32_t>(value));}

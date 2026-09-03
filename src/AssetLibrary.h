@@ -6,7 +6,7 @@
 #include <windows.h>
 
 namespace assetLibrary {
-enum class Kind { Folder, Script, Prefab, Scene, Input, Image, Model, Shader, Material, File };
+enum class Kind { Folder, Script, Prefab, Scene, Input, Image, Model, Shader, Material, Audio, File };
 inline std::filesystem::path Resolve(const std::filesystem::path& root,const std::filesystem::path& path) {
     const auto base=std::filesystem::weakly_canonical(root),target=std::filesystem::weakly_canonical(path.is_absolute()?path:base/path);
     auto b=base.begin(),p=target.begin();for(;b!=base.end();++b,++p)
@@ -22,6 +22,7 @@ inline Kind Type(const std::filesystem::path& p) {
     if(ext==L".material")return Kind::Material;
     if(ext==L".fbx")return Kind::Model;
     if(ext==L".png"||ext==L".jpg"||ext==L".jpeg"||ext==L".bmp"||ext==L".tga"||ext==L".gif"||ext==L".dds"||ext==L".tif")return Kind::Image;
+    if(ext==L".wav"||ext==L".mp3"||ext==L".ogg"||ext==L".flac")return Kind::Audio;
     return Kind::File;
 }
 inline std::filesystem::path Storage(const std::filesystem::path& asset){return Type(asset)==Kind::Model&&Package(asset.parent_path())?asset.parent_path():asset;}
@@ -56,6 +57,7 @@ inline void Icon(HDC dc,Kind kind,int x,int y) {
         else if(kind==Kind::Scene){MoveToEx(dc,x+5,y+5,nullptr);LineTo(dc,x+5,y+16);MoveToEx(dc,x+5,y+9,nullptr);LineTo(dc,x+13,y+9);MoveToEx(dc,x+5,y+15,nullptr);LineTo(dc,x+13,y+15);}
         else if(kind==Kind::Shader){Ellipse(dc,x+4,y+4,x+14,y+14);MoveToEx(dc,x+4,y+9,nullptr);LineTo(dc,x+14,y+9);MoveToEx(dc,x+5,y+16,nullptr);LineTo(dc,x+13,y+16);}
         else if(kind==Kind::Material){Ellipse(dc,x+3,y+3,x+15,y+15);Ellipse(dc,x+6,y+5,x+10,y+9);MoveToEx(dc,x+4,y+17,nullptr);LineTo(dc,x+14,y+17);}
+        else if(kind==Kind::Audio){POINT p[]={{x+3,y+8},{x+7,y+8},{x+11,y+4},{x+11,y+16},{x+7,y+12},{x+3,y+12},{x+3,y+8}};Polyline(dc,p,7);MoveToEx(dc,x+14,y+7,nullptr);LineTo(dc,x+16,y+10);LineTo(dc,x+14,y+13);}
         else {for(int row=0;row<3;++row){MoveToEx(dc,x+4,y+6+row*4,nullptr);LineTo(dc,x+14-row*2,y+6+row*4);}}
     }
     SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);

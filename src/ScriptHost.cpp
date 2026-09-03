@@ -2,6 +2,7 @@
 #include "core/Camera.h"
 #include "ui/UiControl.h"
 #include "ui/UiSerialize.h"
+#include "audio/AudioSource.h"
 #include "zscript/Text.h"
 #include "zscript/NativeTypes.h"
 #include <algorithm>
@@ -273,6 +274,12 @@ namespace
                 },
                 [this,physicsWorld](Vector3 from,Vector3 to,std::uint32_t mask){std::vector<ObjectRef> result;for(const auto& hit:physicsWorld->Cast(ToNative(from),ToNative(to),mask))result.push_back(Proxy(hit.object));return result;});
             if(prefabSpawner)runtime.SetPrefabSpawnCallback([this,prefabSpawner](std::string_view asset){return Proxy(prefabSpawner(asset));});
+            runtime.SetAudioCallback([this](ObjectRef ref,std::string_view method){
+                const auto id=NativeId(ref); auto* native=id?scene.Find(id):nullptr;
+                auto* source=native?native->GetBehavior<audio::AudioSource>():nullptr;
+                if(!source)return;
+                if(method=="play")source->Play(); else if(method=="stop")source->Stop();
+            });
             runtime.SetSceneCallbacks(
                 sceneLoader ? std::function<void(std::string_view)>([sceneLoader](std::string_view scene){sceneLoader(scene);}) : std::function<void(std::string_view)>{},
                 [scene=std::move(sceneName)]{return scene;});

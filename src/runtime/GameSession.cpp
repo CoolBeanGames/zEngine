@@ -5,6 +5,9 @@
 #include "AssetLibrary.h"
 #include "input/InputAssets.h"
 #include "core/MeshRenderer.h"
+#include "core/Camera.h"
+#include "audio/AudioClip.h"
+#include "audio/AudioSource.h"
 
 #include <iostream>
 
@@ -55,21 +58,40 @@ void Session::ApplyPendingSceneChange() {
     pendingScene_.clear();
     if(scene_.scripts.Playing())scene_.scripts.Stop(scene_.objects);
     physics_.reset();
+    if(audio_)audio_->StopAll();
     LoadScene(target);
     ++generation_;
     Start();
 }
-Session::~Session(){if(scene_.scripts.Playing())scene_.scripts.Stop(scene_.objects);physics_.reset();}
+Session::~Session(){if(scene_.scripts.Playing())scene_.scripts.Stop(scene_.objects);physics_.reset();if(audio_)audio_->StopAll();}
 void Session::CheckErrors() const {
     for(std::size_t i=0;i<scene_.objects.Size();++i)for(std::size_t j=0;j<scene_.objects.At(i).BehaviorCount();++j) {
         const auto& behavior=scene_.objects.At(i).BehaviorAt(j);
         if(behavior.Faulted())throw std::runtime_error(scene_.objects.At(i).Name()+": "+behavior.Error());
     }
 }
-void Session::Start(){physics_=std::make_unique<physics::World>();physics_->Build(scene_.objects);if(!scene_.scripts.Play(scene_.objects,physics_.get()))throw std::runtime_error("Could not start scene scripts.");CheckErrors();}
+void Session::Start(){
+    physics_=std::make_unique<physics::World>();physics_->Build(scene_.objects);
+    if(!audio_){audio_=std::make_unique<audio::AudioSystem>();audio_->SetClipLoader([this](const std::string& path){return audio::LoadFile(assetLibrary::Resolve(assets_,std::filesystem::u8path(path)));});}
+    else audio_->StopAll();
+    if(!scene_.scripts.Play(scene_.objects,physics_.get()))throw std::runtime_error("Could not start scene scripts.");CheckErrors();
+}
+void Session::TickAudio(float delta){
+    if(!audio_)return;
+    Vec3 listener{};
+    for(std::size_t i=0;i<scene_.objects.Size();++i){
+        auto& object=scene_.objects.At(i);
+        if(object.GetBehavior<Camera>()){ if(auto* g=As3D(&object)) listener=g->GetTransform().Position(); break; }
+    }
+    audio_->SetListener(listener);
+    audio_->Update(scene_.objects,delta);
+    for(const auto id:audio_->Started())scene_.scripts.EmitSignal(id,"started");
+    for(const auto id:audio_->Looped())scene_.scripts.EmitSignal(id,"looped");
+    for(const auto id:audio_->Finished())scene_.scripts.EmitSignal(id,"finished");
+}
 void Session::Tick(float delta,const input::Hardware& hardware,const script::MouseFrame& mouse) {
     script::InputFrame frame;for(const auto& [name,s]:input_.Tick(hardware))frame.emplace(name,script::InputState{s.x,s.y,s.pressed,s.justPressed,s.justReleased});
-    scene_.scripts.SetInput(std::move(frame));scene_.scripts.SetMouse(mouse);scene_.scripts.Tick(scene_.objects,delta);scene_.scripts.PhysicsTick(scene_.objects,delta);physics_->Step(scene_.objects,delta);scene_.scripts.DispatchPhysicsEvents(physics_->DrainEvents());CheckErrors();
+    scene_.scripts.SetInput(std::move(frame));scene_.scripts.SetMouse(mouse);scene_.scripts.Tick(scene_.objects,delta);scene_.scripts.PhysicsTick(scene_.objects,delta);physics_->Step(scene_.objects,delta);scene_.scripts.DispatchPhysicsEvents(physics_->DrainEvents());TickAudio(delta);CheckErrors();
     ApplyPendingSceneChange(); // a Scene.load() during this tick swaps scenes now, before the next tick
 }
 void Session::Draw(const std::function<bool(GameObjectId)>& visible){scene_.scripts.Draw(scene_.objects,visible);CheckErrors();}

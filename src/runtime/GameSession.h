@@ -2,7 +2,9 @@
 #include "Scene.h"
 #include "Project.h"
 #include "input/InputMap.h"
+#include "audio/AudioSystem.h"
 #include <filesystem>
+#include <memory>
 
 namespace zengine::game {
 // Reusable simulation host. No editor, window, renderer, or UI ownership.
@@ -51,5 +53,7 @@ private:
     std::string pendingScene_;
     unsigned generation_ = 0;
     std::unique_ptr<physics::World> physics_;
+    std::unique_ptr<audio::AudioSystem> audio_;
+    void TickAudio(float delta);
 };
 }

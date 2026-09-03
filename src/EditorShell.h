@@ -18,6 +18,7 @@
 #include "core/GameObject.h"
 #include "ScriptHost.h"
 #include "Scene.h"
+#include "audio/AudioSystem.h"
 #include "Project.h"
 #include "MaterialAssets.h"
 #include "Prefab.h"
@@ -89,14 +90,14 @@ public:
     const std::filesystem::path& ScenePath() const noexcept { return scenePath_; }
     bool SceneDirty() const noexcept { return sceneDirty_; }
     zengine::GameObject& CreateEmptyGameObject();
-    enum class ObjectPreset { Empty, Cube, Camera, RigidBody, KinematicBody, StaticBody, Area };
+    enum class ObjectPreset { Empty, Cube, Camera, RigidBody, KinematicBody, StaticBody, Area, AudioPlayer };
     zengine::GameObject& CreateGameObject(ObjectPreset,zengine::GameObjectId parent=0);
     // Creates a GameObject2D carrying the named ui:: control (ui::UiControlTypes()).
     zengine::GameObject2D& CreateUiControl(std::string_view type,zengine::GameObjectId parent=0);
     void CopyGameObject(zengine::GameObjectId);
     zengine::GameObjectId PasteGameObject(zengine::GameObjectId parent=0);
     void DeleteGameObject(zengine::GameObjectId);
-    static constexpr int AddEmptyCommand=3700,AddCubeCommand=3701,AddCameraCommand=3702,AddRigidCommand=3703,AddKinematicCommand=3704,AddStaticCommand=3705,AddAreaObjectCommand=3706,CopyObjectCommand=3710,PasteObjectCommand=3711,DeleteObjectCommand=3712;
+    static constexpr int AddEmptyCommand=3700,AddCubeCommand=3701,AddCameraCommand=3702,AddRigidCommand=3703,AddKinematicCommand=3704,AddStaticCommand=3705,AddAreaObjectCommand=3706,AddAudioPlayerCommand=3707,CopyObjectCommand=3710,PasteObjectCommand=3711,DeleteObjectCommand=3712;
     static constexpr int AddUiControlBase=3740,AddUiControlLast=3759; // one per ui::UiControlTypes()
     std::filesystem::path CreateScriptAsset();
     void OpenScript(const std::filesystem::path& path);
@@ -105,6 +106,8 @@ public:
     void OpenShader(const std::filesystem::path& path);
     // ZE-102: standalone editor for a .material asset (shader ref + pinned values).
     void OpenMaterial(const std::filesystem::path& path);
+    // ZE-67 test seam: create an Audio Player object (Add > Audio Player).
+    zengine::GameObject& CreateAudioPlayerObject() { return CreateGameObject(ObjectPreset::AudioPlayer); }
     // Test seam: open the material editor and return its window (nullptr on failure).
     HWND OpenMaterialEditor(const std::filesystem::path& path);
     // ZE-103: assign a .material (project-relative path) to an object's Mesh
@@ -307,6 +310,8 @@ private:
     zengine::ObjectStore objects_;
     zengine::ScriptHost scriptHost_;
     std::unique_ptr<zengine::physics::World> physicsWorld_;
+    std::unique_ptr<zengine::audio::AudioSystem> audioPreview_; // ZE-67: Play-preview audio
+    void TickPreviewAudio(float delta);
     bool paused_ = false, stepDraw_ = false;
     double tickAccumulator_ = 0;
     std::chrono::steady_clock::time_point lastTick_ = std::chrono::steady_clock::now();

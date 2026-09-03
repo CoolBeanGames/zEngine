@@ -7,6 +7,7 @@
 #include "ui/UiControl.h"
 #include "InspectorPanel.h"
 #include "MaterialEditor.h"
+#include "audio/AudioSource.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
 #include "ScriptAssets.h"
@@ -387,6 +388,23 @@ namespace
             pump([&]() { return editor.GameObjects().Size()==5; },"Viewport model instantiation timed out");
             Require(editor.GameObjects().Find(cubeId)->GetBehavior<zengine::MeshRenderer>()->Asset()==zengine::MeshRenderer::CubeAsset,"FBX scene placement replaced default cube");
             Require(editor.BuildSceneFrame().meshes.size()==4,"Multiple instantiated models missing from scene");
+
+            // ZE-67: Add > Audio Player creates an AudioSource; the editor serializes it into the scene.
+            auto& ap = editor.CreateAudioPlayerObject();
+            if (HWND rn = GetDlgItem(window, 3900)) SendMessageW(rn, WM_KEYDOWN, VK_RETURN, 0); // finish inline rename
+            auto* src = ap.GetBehavior<zengine::audio::AudioSource>();
+            Require(src != nullptr, "Audio Player object has no AudioSource behavior");
+            src->SetClip("sfx/step.wav"); src->SetLoop(true); src->SetSpatial(true);
+            src->SetVolume(0.4f); src->SetMaxDistance(30);
+            const auto audioScenePath = editor.AssetsDirectory() / L"AudioScene.zscene";
+            Require(editor.SaveScene(audioScenePath), "could not save the audio scene");
+            const auto audioDoc = zengine::scenes::Decode(zengine::scenes::Load(audioScenePath));
+            bool foundAudio = false;
+            for (const auto& o : audioDoc.objects) for (const auto& b : o.behaviors)
+                if (b.kind == zengine::scenes::BehaviorData::Kind::Audio && b.audioClip == "sfx/step.wav"
+                    && b.audioLoop && b.audioSpatial && std::abs(b.audioVolume - 0.4f) < 0.001f && b.audioMaxDistance == 30.0f)
+                    foundAudio = true;
+            Require(foundAudio, "the editor did not serialize the AudioSource into the scene");
         }
         CoUninitialize();
         std::cout << "PASS: Mesh Renderer component, Inspector add/enable/clear, independent transforms, shared GPU meshes, captured async targets, scene instantiation, material instances\n";

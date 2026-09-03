@@ -59,6 +59,7 @@ namespace
         case assetLibrary::Kind::Model: return L"Model";
         case assetLibrary::Kind::Shader: return L"Material Shader";
         case assetLibrary::Kind::Material: return L"Material";
+        case assetLibrary::Kind::Audio: return L"Audio";
         case assetLibrary::Kind::Folder: return L"Folder";
         default: return L"File";
         }
@@ -342,7 +343,7 @@ void EditorShell::Render()
         if (!paused_)
         {
             tickAccumulator_+=elapsed;
-            while (tickAccumulator_>=1.0/60.0) { TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f);scriptHost_.PhysicsTick(objects_,1.0f/60.0f);physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents());tickAccumulator_-=1.0/60.0; }
+            while (tickAccumulator_>=1.0/60.0) { TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f);scriptHost_.PhysicsTick(objects_,1.0f/60.0f);physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents());TickPreviewAudio(1.0f/60.0f);tickAccumulator_-=1.0/60.0; }
         }
         if (!paused_ || stepDraw_)
             scriptHost_.Draw(objects_,[&](zengine::GameObjectId id) {
@@ -438,6 +439,8 @@ bool EditorShell::Play()
     auto authored=zengine::scenes::Capture(objects_,scriptHost_);playObjects_.clear();for(std::size_t i=0;i<objects_.Size();++i)playObjects_.insert(objects_.At(i).Id());
     physicsWorld_=std::make_unique<zengine::physics::World>();try{physicsWorld_->Build(objects_);}catch(const std::exception& e){physicsWorld_.reset();status_=L"Physics: "+WideText(e.what());InvalidateRect(window_,nullptr,FALSE);return false;}
     scriptHost_.SetPrefabSpawner([this](std::string_view asset){return SpawnPrefab(asset);});
+    audioPreview_=std::make_unique<zengine::audio::AudioSystem>();
+    audioPreview_->SetClipLoader([this](const std::string& p){return zengine::audio::LoadFile(assetLibrary::Resolve(assetsDirectory_,std::filesystem::u8path(p)));});
     // Scene.load in the editor's Play preview reports rather than switching - the
     // live scene document is what is being previewed. It applies in a built game.
     scriptHost_.SetSceneName(sceneOpen_ ? Utf8Text(SceneName()) : std::string{});
@@ -457,11 +460,24 @@ bool EditorShell::Play()
     InvalidateRect(window_,nullptr,FALSE);
     return true;
 }
+void EditorShell::TickPreviewAudio(float delta)
+{
+    if (!audioPreview_) return;
+    zengine::Vec3 listener{};
+    for (std::size_t i = 0; i < objects_.Size(); ++i)
+        if (objects_.At(i).GetBehavior<zengine::Camera>())
+        { if (auto* g = zengine::As3D(&objects_.At(i))) listener = g->GetTransform().Position(); break; }
+    audioPreview_->SetListener(listener);
+    audioPreview_->Update(objects_, delta);
+    for (const auto id : audioPreview_->Started())  scriptHost_.EmitSignal(id, "started");
+    for (const auto id : audioPreview_->Looped())   scriptHost_.EmitSignal(id, "looped");
+    for (const auto id : audioPreview_->Finished()) scriptHost_.EmitSignal(id, "finished");
+}
 void EditorShell::Stop()
 {
     SetFocus(window_);
     if(consoleWindow_){DestroyWindow(consoleWindow_);consoleWindow_=nullptr;}
-    scriptHost_.Stop(objects_);physicsWorld_.reset(); paused_=false; stepDraw_=false; tickAccumulator_=0;
+    scriptHost_.Stop(objects_);physicsWorld_.reset();if(audioPreview_){audioPreview_->StopAll();audioPreview_.reset();} paused_=false; stepDraw_=false; tickAccumulator_=0;
     std::set<zengine::GameObjectId> spawned;for(std::size_t i=0;i<objects_.Size();++i)if(!playObjects_.contains(objects_.At(i).Id()))spawned.insert(objects_.At(i).Id());
     for(const auto id:spawned)if(auto* object=objects_.Find(id))for(std::size_t i=0;i<object->BehaviorCount();++i)if(auto* script=dynamic_cast<zengine::ScriptBehavior*>(&object->BehaviorAt(i)))scriptHost_.Forget(*script);
     if(!spawned.empty()){objects_.Remove(spawned);for(const auto id:spawned){meshBindings_.erase(id);meshRevisions_.erase(id);}if(spawned.contains(selectedObject_)){selectedObject_=0;inspectorPanel_->Bind(nullptr);}}
@@ -1020,7 +1036,7 @@ void EditorShell::PollAssetWork()
             else if(assetLibrary::Type(job.path)==assetLibrary::Kind::Model)result.path = FbxImporter::Import(job.path, directory, result.warnings);
             else {
                 const auto kind=assetLibrary::Type(job.path);
-                if(kind!=assetLibrary::Kind::Image && kind!=assetLibrary::Kind::Script)throw std::runtime_error("Import FBX models, images, or .zsh scripts. Create folders in the library.");
+                if(kind!=assetLibrary::Kind::Image && kind!=assetLibrary::Kind::Script && kind!=assetLibrary::Kind::Audio)throw std::runtime_error("Import FBX models, images, audio (.wav/.mp3/.ogg/.flac), or .zsh scripts. Create folders in the library.");
                 if(kind==assetLibrary::Kind::Script)zengine::scripts::Load(job.path);
                 result.path=directory/job.path.filename();
                 if(!std::filesystem::copy_file(job.path,result.path,std::filesystem::copy_options::none))throw std::runtime_error("Asset already exists; original preserved.");
@@ -1808,6 +1824,7 @@ LRESULT EditorShell::HandleMessage(
         break;
     case WM_COMMAND:
         if(LOWORD(wParam)>=AddEmptyCommand&&LOWORD(wParam)<=AddAreaObjectCommand){CreateGameObject(static_cast<ObjectPreset>(LOWORD(wParam)-AddEmptyCommand),selectedObject_);return 0;}
+        if(LOWORD(wParam)==AddAudioPlayerCommand){CreateGameObject(ObjectPreset::AudioPlayer,selectedObject_);return 0;}
         if(HIWORD(wParam)==0&&LOWORD(wParam)>=AddUiControlBase&&LOWORD(wParam)<=AddUiControlLast){const auto& types=zengine::ui::UiControlTypes();const std::size_t index=LOWORD(wParam)-AddUiControlBase;if(index<types.size())CreateUiControl(types[index],selectedObject_);return 0;}
         if(LOWORD(wParam)==CopyObjectCommand){if(selectedObject_)CopyGameObject(selectedObject_);return 0;}
         if(LOWORD(wParam)==PasteObjectCommand){PasteGameObject(selectedObject_);return 0;}
@@ -1848,7 +1865,7 @@ LRESULT EditorShell::HandleMessage(
         if(PtInRect(&sceneBrowser_,point)) {
             const auto target=ScriptDropTarget(point);if(target)SelectGameObject(target);else {selectedObject_=0;inspectorPanel_->Bind(nullptr);InvalidateRect(window_,&sceneBrowser_,FALSE);}
             HMENU menu=CreatePopupMenu(),add=CreatePopupMenu(),physics=CreatePopupMenu(),ui=CreatePopupMenu();const UINT addFlags=MF_STRING|((Playing()||!sceneOpen_||(target&&!CanEdit(target)))?MF_GRAYED:0);
-            AppendMenuW(add,addFlags,AddEmptyCommand,L"Empty GameObject");AppendMenuW(add,addFlags,AddCubeCommand,L"Cube");AppendMenuW(add,addFlags,AddCameraCommand,L"Camera");
+            AppendMenuW(add,addFlags,AddEmptyCommand,L"Empty GameObject");AppendMenuW(add,addFlags,AddCubeCommand,L"Cube");AppendMenuW(add,addFlags,AddCameraCommand,L"Camera");AppendMenuW(add,addFlags,AddAudioPlayerCommand,L"Audio Player");
             AppendMenuW(physics,addFlags,AddRigidCommand,L"Rigid Body + Collider");AppendMenuW(physics,addFlags,AddKinematicCommand,L"Kinematic Body + Collider");AppendMenuW(physics,addFlags,AddStaticCommand,L"Static Body + Collider");AppendMenuW(physics,addFlags,AddAreaObjectCommand,L"Area + Collider");
             {int uid=AddUiControlBase;for(const auto& uiType:zengine::ui::UiControlTypes()){const std::wstring label(uiType.begin(),uiType.end());AppendMenuW(ui,addFlags,static_cast<UINT>(uid++),label.c_str());}}
             AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(physics),L"Physics");AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(ui),L"UI");AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(add),target?L"Add Child":L"Add");AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
