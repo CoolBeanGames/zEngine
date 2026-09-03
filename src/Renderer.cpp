@@ -7,6 +7,7 @@
 #include <wincodec.h>
 
 #include <array>
+#include <cfloat>
 #include <cstddef>
 #include <fstream>
 #include <random>
@@ -29,6 +30,7 @@ struct RenderMesh
     std::vector<MeshPart> parts;
     DXGI_FORMAT indexFormat = DXGI_FORMAT_R32_UINT;
     ID3D11Device* device = nullptr; // Buffers keep their creating device alive.
+    Float3 boundsMin{-1, -1, -1}, boundsMax{1, 1, 1}; // ZE-77: local-space AABB for frustum culling
 };
 
 struct RenderTexture
@@ -49,6 +51,53 @@ struct RenderMaterial
 
 namespace
 {
+    // ZE-77: CPU view-frustum culling. Planes are extracted from a row-vector
+    // view*projection (DirectXMath convention) via Gribb-Hartmann; a world-space
+    // AABB is kept if it is on the inside (>= 0) half-space of every plane.
+    struct Frustum
+    {
+        DirectX::XMFLOAT4 planes[6];
+        bool Intersects(const DirectX::XMMATRIX& world, Float3 lo, Float3 hi) const
+        {
+            using namespace DirectX;
+            XMFLOAT3 wlo{ FLT_MAX, FLT_MAX, FLT_MAX }, whi{ -FLT_MAX, -FLT_MAX, -FLT_MAX };
+            for (int i = 0; i < 8; ++i)
+            {
+                XMFLOAT3 p;
+                XMStoreFloat3(&p, XMVector3TransformCoord(
+                    XMVectorSet((i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, (i & 4) ? hi.z : lo.z, 1.0f), world));
+                wlo = { std::min(wlo.x, p.x), std::min(wlo.y, p.y), std::min(wlo.z, p.z) };
+                whi = { std::max(whi.x, p.x), std::max(whi.y, p.y), std::max(whi.z, p.z) };
+            }
+            for (const auto& pl : planes)
+            {
+                const float px = pl.x >= 0 ? whi.x : wlo.x;
+                const float py = pl.y >= 0 ? whi.y : wlo.y;
+                const float pz = pl.z >= 0 ? whi.z : wlo.z;
+                if (pl.x * px + pl.y * py + pl.z * pz + pl.w < 0.0f) return false; // fully outside this plane
+            }
+            return true;
+        }
+    };
+    Frustum MakeFrustum(const DirectX::XMMATRIX& viewProjection)
+    {
+        DirectX::XMFLOAT4X4 m;
+        DirectX::XMStoreFloat4x4(&m, viewProjection);
+        const auto col = [&](int c, int r) { return m.m[r][c]; };
+        const auto plane = [&](int a, int b, float s) {
+            return DirectX::XMFLOAT4{ col(a,0) + s * col(b,0), col(a,1) + s * col(b,1),
+                                      col(a,2) + s * col(b,2), col(a,3) + s * col(b,3) };
+        };
+        Frustum f;
+        f.planes[0] = plane(3, 0, +1.0f); // left   (w + x)
+        f.planes[1] = plane(3, 0, -1.0f); // right  (w - x)
+        f.planes[2] = plane(3, 1, +1.0f); // bottom (w + y)
+        f.planes[3] = plane(3, 1, -1.0f); // top    (w - y)
+        f.planes[4] = plane(2, 2, 0.0f);  // near   (z)      LH / D3D
+        f.planes[5] = plane(3, 2, -1.0f); // far    (w - z)
+        return f;
+    }
+
     void ThrowIfFailed(const HRESULT result, const char* operation)
     {
         if (FAILED(result))
@@ -211,11 +260,13 @@ void Renderer::RenderDecals(const ViewportFrame& frame, const XMMATRIX& viewProj
     context_->OMSetBlendState(decalBlend_.Get(), blendFactor, 0xffffffff);
     context_->OMSetDepthStencilState(decalDepth_.Get(), 0);
 
+    const Frustum decalFrustum = MakeFrustum(viewProjection); // ZE-77
     for (const auto& decal : frame.decals)
     {
         const XMMATRIX decalWorld = TransformMatrix(decal.transform) *
             (decal.parentMatrix ? XMLoadFloat4x4(&*decal.parentMatrix) : XMMatrixIdentity());
         if (std::abs(XMVectorGetX(XMMatrixDeterminant(decalWorld))) < 1e-12f) continue;
+        if (!decalFrustum.Intersects(decalWorld, {-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f})) continue; // ZE-77: projector box off-screen
         const XMMATRIX decalInvWorld = XMMatrixInverse(nullptr, decalWorld);
         XMFLOAT3 projectDir;
         XMStoreFloat3(&projectDir, XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0, 0, -1, 0), decalWorld)));
@@ -227,6 +278,7 @@ void Renderer::RenderDecals(const ViewportFrame& frame, const XMMATRIX& viewProj
             if (!draw.mesh) continue;
             const XMMATRIX meshWorld = TransformMatrix(draw.transform) *
                 (draw.parentMatrix ? XMLoadFloat4x4(&*draw.parentMatrix) : XMMatrixIdentity());
+            if (!decalFrustum.Intersects(meshWorld, draw.mesh->boundsMin, draw.mesh->boundsMax)) continue; // ZE-77
             DecalConstants dc{};
             XMStoreFloat4x4(&dc.worldViewProjection, XMMatrixTranspose(meshWorld * viewProjection));
             XMStoreFloat4x4(&dc.world, XMMatrixTranspose(meshWorld));
@@ -899,12 +951,15 @@ MeshHandle Renderer::UploadModel(const ModelData& model, std::vector<std::string
     mesh->indices = std::move(indices);
     mesh->parts = model.parts;
     mesh->textures = std::move(textures);
+    mesh->boundsMin = minimum; // ZE-77: local-space AABB for frustum culling
+    mesh->boundsMax = maximum;
     return mesh;
 }
 
 void Renderer::Render(const ViewportFrame& frame)
 {
     lastMeshCount_ = 0;
+    lastCulledCount_ = 0;
     lastSpriteCount_ = 0;
     if (!renderTargetView_ || width_ == 0 || height_ == 0)
     {
@@ -995,11 +1050,13 @@ void Renderer::Render(const ViewportFrame& frame)
         context_->PSSetShader(nullptr, nullptr, 0);
         context_->OMSetDepthStencilState(nullptr, 0);
         constexpr UINT stride0 = static_cast<UINT>(sizeof(Vertex)), offset0 = 0;
+        const Frustum shadowFrustum = MakeFrustum(shadowMatrix); // ZE-77: only casters inside the light's ortho box
         for (const auto& d : frame.meshes)
         {
             if (!d.mesh) continue;
-            SceneConstants sc{};
             const XMMATRIX w = TransformMatrix(d.transform) * (d.parentMatrix ? XMLoadFloat4x4(&*d.parentMatrix) : XMMatrixIdentity());
+            if (!shadowFrustum.Intersects(w, d.mesh->boundsMin, d.mesh->boundsMax)) continue;
+            SceneConstants sc{};
             XMStoreFloat4x4(&sc.worldViewProjection, XMMatrixTranspose(w * shadowMatrix));
             D3D11_MAPPED_SUBRESOURCE m{};
             ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m), "Map shadow constants");
@@ -1067,16 +1124,20 @@ void Renderer::Render(const ViewportFrame& frame)
     };
     if (frame.showEditorGuides) drawLines(gridBuffer_.Get(), gridVertexCount_, XMMatrixIdentity());
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    const Frustum viewFrustum = MakeFrustum(view * projection); // ZE-77
     for (const auto& draw : frame.meshes)
     {
         if (!draw.mesh) continue;
         const auto& mesh = *draw.mesh;
         if (mesh.device != device_.Get()) throw std::runtime_error("Mesh belongs to another render device.");
+        ++lastMeshCount_; // counts every mesh submitted this frame
+        const XMMATRIX meshWorld = TransformMatrix(draw.transform) * (draw.parentMatrix ? XMLoadFloat4x4(&*draw.parentMatrix) : XMMatrixIdentity());
+        if (!viewFrustum.Intersects(meshWorld, mesh.boundsMin, mesh.boundsMax)) { ++lastCulledCount_; continue; } // ZE-77
         const RenderMaterial* material = draw.material.get();
         const Float4 tint = material ? material->tint : Float4{1, 1, 1, 1};
         const bool meshLit = draw.lit && (!material || material->lit);
         const Float2 spec = material ? Float2{material->roughness, material->specular} : Float2{0.5f, 0.0f};
-        setConstants(TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity()), meshLit, tint, spec);
+        setConstants(meshWorld, meshLit, tint, spec);
         context_->IASetVertexBuffers(0, 1, mesh.vertices.GetAddressOf(), &stride, &offset);
         context_->IASetIndexBuffer(mesh.indices.Get(), mesh.indexFormat, 0);
         for (const auto& part : mesh.parts)
@@ -1088,7 +1149,6 @@ void Renderer::Render(const ViewportFrame& frame)
             context_->PSSetShaderResources(0, 1, &texture);
             context_->DrawIndexed(part.indexCount, part.firstIndex, 0);
         }
-        ++lastMeshCount_;
     }
     RenderDecals(frame, view * projection); // ZE-76: projected decals over the lit meshes
     if(frame.showEditorGuides && (!frame.colliders.empty() || !frame.cameraGizmos.empty() || !frame.audioRanges.empty() || !frame.lightGizmos.empty())) {

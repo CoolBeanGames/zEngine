@@ -31,6 +31,8 @@ public:
     MeshHandle UploadModel(const ModelData& model, std::vector<std::string>& warnings);
     MeshHandle Cube() const noexcept { return cube_; }
     std::size_t LastMeshCount() const noexcept { return lastMeshCount_; }
+    // ZE-77: meshes skipped by view-frustum culling in the last Render().
+    std::size_t LastCulledMeshCount() const noexcept { return lastCulledCount_; }
 
     // Self-contained 2D texture path (ZE-60): RGBA8, row-major, `width * height * 4`
     // bytes. Independent of the future material / material-instance systems.
@@ -99,6 +101,7 @@ private:
     UINT axesVertexCount_ = 0;
     MeshHandle cube_;
     std::size_t lastMeshCount_ = 0;
+    std::size_t lastCulledCount_ = 0;
 
     // 2D sprite / UI pass.
     Microsoft::WRL::ComPtr<ID3D11VertexShader> spriteVertexShader_;

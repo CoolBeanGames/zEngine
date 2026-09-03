@@ -151,6 +151,16 @@ namespace
             frame.meshes[1].transform.SetPosition({1.5f,0,0});
             renderer.Render(frame);
             Require(renderer.LastMeshCount() == 2, "Different meshes must render in the same frame");
+            Require(renderer.LastCulledMeshCount() == 0, "On-screen meshes must not be frustum-culled");
+            // ZE-77: a mesh far outside the view frustum is culled, the on-screen one still draws.
+            const auto here = frame.meshes[1].transform;
+            frame.meshes[1].transform.SetPosition({4000, 0, 0});
+            renderer.Render(frame);
+            Require(renderer.LastMeshCount() == 2 && renderer.LastCulledMeshCount() == 1,
+                    "An off-frustum mesh must be frustum-culled");
+            frame.meshes[1].transform = here;
+            renderer.Render(frame);
+            Require(renderer.LastCulledMeshCount() == 0, "Returning a mesh to view must un-cull it");
             renderer.Resize(180, 400);
             renderer.Render(frame);
             model.materials[2].image = {1, 2, 3, 4};
