@@ -243,6 +243,28 @@ int main()
         Check(Value(tagHost,seekScript,"is_player")=="true" && Value(tagHost,seekScript,"is_enemy")=="false","has_tag membership wrong");
         Check(Value(tagHost,seekScript,"tag_count")=="2","get_tags count wrong");
         tagHost.Stop(tagStore);
+
+        // ZE-61: EmitSignal delivers the UI "clicked" signal to a running script
+        // that inherits a ui control.
+        {
+            ObjectStore uiStore; ScriptHost uiHost; uiHost.SetObjectStore(&uiStore);
+            auto& button=uiStore.Create2D("Button");
+            const auto buttonId=button.Id();
+            auto& script=button.AddBehavior<ScriptBehavior>("Button.zsh");
+            Check(uiHost.Prepare(script,R"(class Button : uiColorRect {
+                export int hits = 0;
+                func start() { clicked.connect(on_click); color = Vector3(0.2, 0.5, 1); }
+                func on_click() { hits += 1; }
+            })","Button"),"UI button fixture compile");
+            uiHost.EmitSignal(buttonId,"clicked"); // ignored before Play
+            Check(uiHost.Play(uiStore) && !script.Faulted(),"UI button fixture Play");
+            Check(Value(uiHost,script,"hits")=="0","clicked fired before any click");
+            uiHost.EmitSignal(buttonId,"clicked");
+            uiHost.EmitSignal(buttonId,"clicked");
+            Check(Value(uiHost,script,"hits")=="2","EmitSignal did not reach the clicked handler");
+            uiHost.EmitSignal(999,"clicked"); // unknown owner: no-op, no throw
+            uiHost.Stop(uiStore);
+        }
         std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;
     }

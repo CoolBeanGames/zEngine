@@ -57,6 +57,9 @@ namespace zengine
         void SetPrefabSpawner(PrefabSpawner spawner) { if(playing_)throw std::logic_error("Stop before changing the prefab spawner.");prefabSpawner_=std::move(spawner); }
         void SetPrintHandler(std::function<void(std::string_view)> handler) { if(playing_)throw std::logic_error("Stop before changing the print handler.");printHandler_=std::move(handler); }
         void DispatchPhysicsEvents(const std::vector<physics::ContactEvent>&);
+        // Emits a bare signal (e.g. "clicked" from the UI system) on the running
+        // script that owns `owner`, if any. No-op outside Play.
+        void EmitSignal(GameObjectId owner, std::string_view signal);
         void Stop(ObjectStore&);
         void Tick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.Tick(objects, delta); }
         void PhysicsTick(ObjectStore& objects, float delta) { if (playing_) lifecycle_.PhysicsTick(objects, delta); }

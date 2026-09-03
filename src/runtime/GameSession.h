@@ -13,7 +13,10 @@ public:
     void Start();
     void Tick(float delta,const input::Hardware&,const script::MouseFrame& mouse={});
     void Draw(const std::function<bool(GameObjectId)>& visible);
+    // Delivers a UI "clicked" signal to the running script that owns `id`, if any.
+    void UiClicked(GameObjectId id) { scene_.scripts.EmitSignal(id, "clicked"); }
     const ObjectStore& Objects() const {return scene_.objects;}
+    ObjectStore& Objects() {return scene_.objects;}
     const std::map<GameObjectId,std::filesystem::path>& Models() const {return models_;}
     const std::string& Scene() const {return reference_;}
 private:

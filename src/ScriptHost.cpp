@@ -134,7 +134,7 @@ namespace
     public:
         BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const std::map<std::string,std::vector<ScriptArrayElement>>& arrays, const InputFrame& inputFrame,const MouseFrame& mouseFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
-              draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),mouse(mouseFrame),scene(objects)
+              draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),mouse(mouseFrame),scene(objects),ownerId(owner)
         {
             runtime.SetInput(input,false);runtime.SetMouse(mouse,false);BindNative(owner,object);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
             printHandler=output;runtime.SetPrintCallback([this](std::string_view text){if(printHandler)printHandler(text);});
@@ -195,6 +195,10 @@ namespace
         void Update(ObjectCore& owner,float delta) override { Invoke(owner,[&] { runtime.SetInput(input); runtime.SetMouse(mouse); runtime.Update(object,delta); }); }
         void Draw(ObjectCore& owner) override { Invoke(owner,[&] { runtime.Draw(object); }); }
         void PhysicsUpdate(ObjectCore& owner,float delta) override { Invoke(owner,[&] { runtime.PhysicsUpdate(object,delta); }); }
+        void EmitOwnSignal(std::string_view name) {
+            auto* owner=scene.Find(ownerId); if(!owner) return;
+            Invoke(*owner,[&]{ runtime.Emit({object,std::string(name)},{}); });
+        }
         void PhysicsEvent(ObjectCore& owner,const physics::ContactEvent& event) {
             Invoke(owner,[&]{const auto body=std::get<ObjectRef>(runtime.Get(object,"physics"));const char* phase=event.phase==physics::ContactPhase::Entered?"entered":event.phase==physics::ContactPhase::Stayed?"stayed":"exited";runtime.Emit({body,std::string(event.area?"area_":"collision_")+phase},{Proxy(event.other)});});
         }
@@ -276,6 +280,7 @@ namespace
         const InputFrame& input;
         const MouseFrame& mouse;
         ObjectStore& scene;
+        GameObjectId ownerId;
         std::map<GameObjectId,ObjectRef> proxies;
         std::map<GameObjectId,Transform> previousTransforms;
     };
@@ -681,6 +686,14 @@ void ScriptHost::DispatchPhysicsEvents(const std::vector<physics::ContactEvent>&
     if(!playing_)return;
     for(const auto& event:events)for(const auto& [behavior,_]:records_)if(behavior->Owner().Id()==event.receiver)
         if(auto* live=dynamic_cast<BoundScript*>(const_cast<ScriptBehavior*>(behavior)->Instance()))live->PhysicsEvent(const_cast<ObjectCore&>(behavior->Owner()),event);
+}
+void ScriptHost::EmitSignal(GameObjectId owner, std::string_view signal)
+{
+    if(!playing_) return;
+    for(const auto& [behavior,_]:records_)
+        if(behavior->Owner().Id()==owner)
+            if(auto* live=dynamic_cast<BoundScript*>(const_cast<ScriptBehavior*>(behavior)->Instance()))
+                live->EmitOwnSignal(signal);
 }
 void ScriptHost::Stop(ObjectStore& objects)
 {

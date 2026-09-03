@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <optional>
 #include <memory>
+#include <string_view>
 #include <vector>
 #include "ModelData.h"
 #include "core/GameObject.h"
@@ -35,6 +36,8 @@ public:
     TextureHandle UploadTexture(std::uint32_t width, std::uint32_t height, const std::uint8_t* rgba);
     TextureHandle WhiteTexture();
     std::size_t LastSpriteCount() const noexcept { return lastSpriteCount_; }
+    // Text extent in screen pixels, using the shared UI font atlas (built on first use).
+    zengine::Vec2 MeasureText(std::string_view text, float pixelHeight);
 
 private:
     using Vertex = MeshVertex;

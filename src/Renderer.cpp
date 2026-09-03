@@ -434,6 +434,18 @@ TextureHandle Renderer::WhiteTexture()
     return whiteHandle_;
 }
 
+zengine::Vec2 Renderer::MeasureText(std::string_view text, float pixelHeight)
+{
+    if (!fontAtlas_.Valid())
+    {
+        fontAtlas_ = FontAtlas::Build(32);
+        fontTexture_ = UploadTexture(static_cast<std::uint32_t>(fontAtlas_.Width()),
+                                     static_cast<std::uint32_t>(fontAtlas_.Height()),
+                                     fontAtlas_.Pixels().data());
+    }
+    return {fontAtlas_.Measure(text, pixelHeight), pixelHeight};
+}
+
 void Renderer::RenderSprites(const ViewportFrame& frame)
 {
     if (frame.sprites.empty() && frame.texts.empty() && !frame.fps) return;
