@@ -76,6 +76,12 @@ void AppendSprite(std::vector<SpriteVertex>& out, const SpriteDraw& draw,
         return Float2{px + dx * cosA - dy * sinA, py + dx * sinA + dy * cosA};
     };
 
+    // Axis-aligned clip: only applied when the sprite is not rotated.
+    const bool doClip = draw.clip.width > 0 && draw.clip.height > 0 &&
+                        std::abs(sinA) < 1e-4f && cosA > 0;
+    const float clipX0 = draw.clip.x, clipY0 = draw.clip.y;
+    const float clipX1 = draw.clip.x + draw.clip.width, clipY1 = draw.clip.y + draw.clip.height;
+
     for (int r = 0; r < rows; ++r)
     {
         const int ri = sliced ? rowIndex[r] : 0;
@@ -84,15 +90,32 @@ void AppendSprite(std::vector<SpriteVertex>& out, const SpriteDraw& draw,
         {
             const int ci = sliced ? colIndex[cc] : 0;
             const int ciNext = sliced ? ci + 1 : 3;
-            const Float2 tl = place(xs[ci], ys[ri]);
-            const Float2 tr = place(xs[ciNext], ys[ri]);
-            const Float2 br = place(xs[ciNext], ys[riNext]);
-            const Float2 bl = place(xs[ci], ys[riNext]);
+
+            float cx0 = xs[ci], cx1 = xs[ciNext], cy0 = ys[ri], cy1 = ys[riNext];
+            float cu0 = us[ci], cu1 = us[ciNext], cv0 = vs[ri], cv1 = vs[riNext];
+            if (doClip)
+            {
+                const float nx0 = std::max(cx0, clipX0), nx1 = std::min(cx1, clipX1);
+                const float ny0 = std::max(cy0, clipY0), ny1 = std::min(cy1, clipY1);
+                if (nx1 <= nx0 || ny1 <= ny0) continue; // fully clipped
+                const float sx = (cx1 - cx0) != 0 ? 1.0f / (cx1 - cx0) : 0.0f;
+                const float sy = (cy1 - cy0) != 0 ? 1.0f / (cy1 - cy0) : 0.0f;
+                const float u0 = cu0 + (cu1 - cu0) * (nx0 - cx0) * sx;
+                const float u1 = cu0 + (cu1 - cu0) * (nx1 - cx0) * sx;
+                const float v0 = cv0 + (cv1 - cv0) * (ny0 - cy0) * sy;
+                const float v1 = cv0 + (cv1 - cv0) * (ny1 - cy0) * sy;
+                cx0 = nx0; cx1 = nx1; cy0 = ny0; cy1 = ny1;
+                cu0 = u0; cu1 = u1; cv0 = v0; cv1 = v1;
+            }
+            const Float2 tl = place(cx0, cy0);
+            const Float2 tr = place(cx1, cy0);
+            const Float2 br = place(cx1, cy1);
+            const Float2 bl = place(cx0, cy1);
             const std::array<Corner, 4> corners{
-                Corner{tl.x, tl.y, us[ci], vs[ri]},
-                Corner{tr.x, tr.y, us[ciNext], vs[ri]},
-                Corner{br.x, br.y, us[ciNext], vs[riNext]},
-                Corner{bl.x, bl.y, us[ci], vs[riNext]}};
+                Corner{tl.x, tl.y, cu0, cv0},
+                Corner{tr.x, tr.y, cu1, cv0},
+                Corner{br.x, br.y, cu1, cv1},
+                Corner{bl.x, bl.y, cu0, cv1}};
             EmitCell(out, corners, draw.tint);
         }
     }

@@ -1,6 +1,7 @@
 #include "ui/UiControl.h"
 
 #include <array>
+#include <cctype>
 #include <cstring>
 
 namespace zengine::ui
@@ -298,5 +299,418 @@ namespace zengine::ui
         }
         front.tint = fill_;
         if (front.dest.width > 0 && front.dest.height > 0) sprites.push_back(front);
+    }
+
+    // ----- ScrollContainer (ZE-66) -------------------------------------
+
+    void ScrollContainer::Arrange(const Rect& self, const std::vector<UiControl*>& children)
+    {
+        const Rect inner = Inner(self);
+
+        float total = 0;
+        for (const auto* child : children)
+        {
+            const Vec2 d = child->DesiredSize();
+            total += (horizontal_ ? d.x : d.y) + spacing_;
+        }
+        if (!children.empty()) total = std::max(0.0f, total - spacing_);
+        content_ = horizontal_ ? Vec2{total, inner.height} : Vec2{inner.width, total};
+
+        const float viewport = horizontal_ ? inner.width : inner.height;
+        const float maxScroll = std::max(0.0f, total - viewport);
+        float& scroll = horizontal_ ? scrollX_ : scrollY_;
+        scroll = std::clamp(scroll, 0.0f, maxScroll);
+
+        float cursor = (horizontal_ ? inner.x : inner.y) - scroll;
+        for (auto* child : children)
+        {
+            const Vec2 d = child->DesiredSize();
+            if (horizontal_)
+            {
+                const float h = fillCross_ ? inner.height : std::min(d.y, inner.height);
+                const float y = fillCross_ ? inner.y : inner.y + (inner.height - h) * 0.5f;
+                child->SetLayoutRect({cursor, y, d.x, h});
+                cursor += d.x + spacing_;
+            }
+            else
+            {
+                const float w = fillCross_ ? inner.width : std::min(d.x, inner.width);
+                const float x = fillCross_ ? inner.x : inner.x + (inner.width - w) * 0.5f;
+                child->SetLayoutRect({x, cursor, w, d.y});
+                cursor += d.y + spacing_;
+            }
+        }
+    }
+
+    // ----- Button (ZE-66) --------------------------------------------
+
+    Vec2 Button::DesiredSize() const
+    {
+        float width = std::max(size_.x, minSize_.x);
+        if (HasContext() && Context().measureText && !text_.empty())
+            width = std::max(width, Context().measureText(text_, pixelHeight_).x + 20.0f);
+        return {width, std::max({size_.y, minSize_.y, pixelHeight_ + 12.0f})};
+    }
+
+    void Button::Emit(std::vector<SpriteDraw>& sprites, std::vector<TextDraw>& texts) const
+    {
+        const Visual visual = CurrentVisual();
+        Float4 colour = normal_;
+        const std::string* tex = &normalTex_;
+        switch (visual)
+        {
+        case Visual::Hover:    colour = hover_;         tex = hoverTex_.empty() ? &normalTex_ : &hoverTex_; break;
+        case Visual::Pressed:  colour = pressed_;       tex = pressedTex_.empty() ? &normalTex_ : &pressedTex_; break;
+        case Visual::Disabled: colour = disabledColor_; tex = &normalTex_; break;
+        case Visual::Normal:   break;
+        }
+
+        SpriteDraw bg;
+        bg.dest = {rect_.x, rect_.y, rect_.width, rect_.height};
+        bg.tint = colour;
+        bg.slice = slice_;
+        if (!tex->empty() && HasContext() && Context().resolveTexture)
+            bg.texture = Context().resolveTexture(*tex);
+        sprites.push_back(bg);
+
+        if (!text_.empty())
+        {
+            Vec2 measured{static_cast<float>(text_.size()) * pixelHeight_ * 0.5f, pixelHeight_};
+            if (HasContext() && Context().measureText) measured = Context().measureText(text_, pixelHeight_);
+            const Float4 tc = visual == Visual::Disabled ? Float4{textColor_.x, textColor_.y, textColor_.z, textColor_.w * 0.5f} : textColor_;
+            texts.push_back({text_, rect_.x + (rect_.width - measured.x) * 0.5f,
+                             rect_.y + (rect_.height - pixelHeight_) * 0.5f, pixelHeight_, tc});
+        }
+    }
+
+    // ----- VideoTexture (ZE-66) ------------------------------------
+
+    void VideoTexture::Emit(std::vector<SpriteDraw>& sprites, std::vector<TextDraw>&) const
+    {
+        SpriteDraw sprite;
+        sprite.dest = {rect_.x, rect_.y, rect_.width, rect_.height};
+        sprite.tint = tint_;
+        if (!video_.empty() && HasContext() && Context().resolveVideoFrame)
+            sprite.texture = Context().resolveVideoFrame(video_, time_, loop_);
+        sprites.push_back(sprite);
+    }
+
+    // ----- UiHtml (ZE-66) ----------------------------------------
+
+    namespace
+    {
+        Float4 ParseCssColor(std::string_view text, Float4 fallback)
+        {
+            auto trim = [](std::string_view s) {
+                while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
+                while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
+                return s;
+            };
+            text = trim(text);
+            if (text.empty()) return fallback;
+            if (text.front() == '#')
+            {
+                const std::string_view hex = text.substr(1);
+                auto nib = [](char c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+                    return -1;
+                };
+                auto valid = [&](std::size_t n) { for (std::size_t i = 0; i < n; ++i) if (nib(hex[i]) < 0) return false; return true; };
+                if (hex.size() == 3 && valid(3))
+                    return {nib(hex[0]) / 15.0f, nib(hex[1]) / 15.0f, nib(hex[2]) / 15.0f, 1};
+                if (hex.size() == 6 && valid(6))
+                    return {(nib(hex[0]) * 16 + nib(hex[1])) / 255.0f,
+                            (nib(hex[2]) * 16 + nib(hex[3])) / 255.0f,
+                            (nib(hex[4]) * 16 + nib(hex[5])) / 255.0f, 1};
+                return fallback;
+            }
+            struct Named { const char* name; Float4 value; };
+            static const Named names[] = {
+                {"white", {1, 1, 1, 1}}, {"black", {0, 0, 0, 1}}, {"red", {0.85f, 0.2f, 0.2f, 1}},
+                {"green", {0.2f, 0.7f, 0.3f, 1}}, {"blue", {0.25f, 0.5f, 0.95f, 1}},
+                {"gray", {0.5f, 0.5f, 0.5f, 1}}, {"grey", {0.5f, 0.5f, 0.5f, 1}},
+                {"yellow", {0.95f, 0.85f, 0.2f, 1}}, {"orange", {0.95f, 0.6f, 0.2f, 1}},
+                {"transparent", {0, 0, 0, 0}},
+            };
+            for (const auto& n : names) if (text == n.name) return n.value;
+            return fallback;
+        }
+
+        std::string DecodeEntities(std::string in)
+        {
+            struct E { const char* name; const char* value; };
+            static const E table[] = {{"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"},
+                                      {"&quot;", "\""}, {"&#39;", "'"}, {"&apos;", "'"}, {"&nbsp;", " "}};
+            for (const auto& e : table)
+            {
+                std::string::size_type pos = 0;
+                while ((pos = in.find(e.name, pos)) != std::string::npos)
+                { in.replace(pos, std::strlen(e.name), e.value); pos += std::strlen(e.value); }
+            }
+            return in;
+        }
+
+        std::string Attribute(const std::string& tag, const std::string& name)
+        {
+            const auto key = name + "=";
+            auto pos = tag.find(key);
+            if (pos == std::string::npos) return {};
+            pos += key.size();
+            if (pos >= tag.size()) return {};
+            char quote = tag[pos];
+            if (quote == '"' || quote == '\'')
+            {
+                const auto end = tag.find(quote, pos + 1);
+                if (end == std::string::npos) return {};
+                return tag.substr(pos + 1, end - pos - 1);
+            }
+            const auto end = tag.find_first_of(" \t>", pos);
+            return tag.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        }
+    }
+
+    void UiHtml::SetHtml(std::string value)
+    {
+        if (value.size() > 16384) value.resize(16384);
+        html_ = std::move(value);
+        Parse();
+    }
+
+    void UiHtml::Parse()
+    {
+        blocks_.clear();
+
+        struct Style { Float4 color{0.95f, 0.96f, 0.98f, 1}; Float4 background{0, 0, 0, 0}; float fontSize = 16; bool bold = false; };
+        auto applyStyle = [](Style& style, const std::string& css) {
+            std::string::size_type start = 0;
+            while (start < css.size())
+            {
+                auto semi = css.find(';', start);
+                const std::string decl = css.substr(start, semi == std::string::npos ? std::string::npos : semi - start);
+                start = semi == std::string::npos ? css.size() : semi + 1;
+                const auto colon = decl.find(':');
+                if (colon == std::string::npos) continue;
+                auto trim = [](std::string s) {
+                    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+                    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+                    return s;
+                };
+                const std::string prop = trim(decl.substr(0, colon));
+                const std::string val = trim(decl.substr(colon + 1));
+                if (prop == "color") style.color = ParseCssColor(val, style.color);
+                else if (prop == "background" || prop == "background-color") style.background = ParseCssColor(val, style.background);
+                else if (prop == "font-size")
+                {
+                    try { style.fontSize = std::clamp(std::stof(val), 6.0f, 96.0f); } catch (...) {}
+                }
+                else if (prop == "font-weight") style.bold = (val == "bold" || val == "700");
+            }
+        };
+
+        Block current;
+        bool haveText = false;
+        bool boldSpan = false;
+        std::string linkTarget;
+        bool inLink = false;
+
+        auto flush = [&]() {
+            if (!haveText) return;
+            // Collapse runs of whitespace.
+            std::string collapsed;
+            bool space = false;
+            for (char c : current.text)
+            {
+                if (std::isspace(static_cast<unsigned char>(c))) { space = true; continue; }
+                if (space && !collapsed.empty()) collapsed.push_back(' ');
+                space = false;
+                collapsed.push_back(c);
+            }
+            current.text = collapsed;
+            if (!current.text.empty() && blocks_.size() < 512)
+            {
+                if (inLink) { current.kind = Block::Kind::Button; current.link = true; current.src = linkTarget; }
+                blocks_.push_back(current);
+            }
+            current = Block{};
+            haveText = false;
+        };
+
+        std::size_t i = 0;
+        Style style;
+        while (i < html_.size())
+        {
+            if (html_[i] == '<')
+            {
+                const auto close = html_.find('>', i);
+                if (close == std::string::npos) break;
+                std::string tag = html_.substr(i + 1, close - i - 1);
+                i = close + 1;
+                if (tag.empty()) continue;
+                const bool closing = tag.front() == '/';
+                if (closing) tag.erase(tag.begin());
+                // tag name = leading run of letters/digits
+                std::string name;
+                for (char c : tag) { if (std::isalnum(static_cast<unsigned char>(c))) name.push_back(static_cast<char>(std::tolower(c))); else break; }
+
+                if (name == "br") { flush(); if (blocks_.size() < 512) { Block b; b.kind = Block::Kind::Text; b.text = " "; blocks_.push_back(b); } continue; }
+                if (name == "hr") { flush(); if (blocks_.size() < 512) { Block b; b.kind = Block::Kind::Rule; b.color = {0.4f, 0.42f, 0.48f, 1}; blocks_.push_back(b); } continue; }
+                if (name == "img" && !closing)
+                {
+                    flush();
+                    if (blocks_.size() < 512) { Block b; b.kind = Block::Kind::Image; b.src = DecodeEntities(Attribute(tag, "src")); blocks_.push_back(b); }
+                    continue;
+                }
+                if (name == "b" || name == "strong") { boldSpan = !closing; continue; }
+                if (name == "i" || name == "em" || name == "span" || name == "u") continue;
+                if (name == "a")
+                {
+                    flush();
+                    if (!closing) { inLink = true; linkTarget = DecodeEntities(Attribute(tag, "href")); }
+                    else { inLink = false; linkTarget.clear(); }
+                    continue;
+                }
+                if (name == "button")
+                {
+                    flush();
+                    if (!closing) { inLink = true; linkTarget = DecodeEntities(Attribute(tag, "id")); }
+                    else { inLink = false; linkTarget.clear(); }
+                    continue;
+                }
+                // Block-level: div p h1 h2 h3 li ul ol - start a fresh line.
+                flush();
+                if (!closing)
+                {
+                    style = Style{};
+                    if (name == "h1") { style.fontSize = 30; style.bold = true; }
+                    else if (name == "h2") { style.fontSize = 24; style.bold = true; }
+                    else if (name == "h3") { style.fontSize = 19; style.bold = true; }
+                    const std::string css = Attribute(tag, "style");
+                    if (!css.empty()) applyStyle(style, css);
+                }
+                continue;
+            }
+
+            // Text content up to the next '<'.
+            const auto next = html_.find('<', i);
+            std::string chunk = html_.substr(i, next == std::string::npos ? std::string::npos : next - i);
+            i = next == std::string::npos ? html_.size() : next;
+            chunk = DecodeEntities(chunk);
+            bool hasNonSpace = false;
+            for (char c : chunk) if (!std::isspace(static_cast<unsigned char>(c))) { hasNonSpace = true; break; }
+            if (!hasNonSpace && !haveText) continue;
+            if (!haveText)
+            {
+                current = Block{};
+                current.color = style.color;
+                current.background = style.background;
+                current.fontSize = style.fontSize;
+                current.bold = style.bold || boldSpan;
+            }
+            current.text += chunk;
+            haveText = true;
+        }
+        flush();
+    }
+
+    float UiHtml::BlockHeight(const Block& block) const
+    {
+        switch (block.kind)
+        {
+        case Block::Kind::Rule:   return 3.0f;
+        case Block::Kind::Image:  return 120.0f;
+        case Block::Kind::Button: return std::max(26.0f, block.fontSize + 12.0f);
+        case Block::Kind::Text:   break;
+        }
+        int lines = 1;
+        for (char c : block.text) if (c == '\n') ++lines;
+        return static_cast<float>(lines) * block.fontSize * 1.35f;
+    }
+
+    Vec2 UiHtml::DesiredSize() const
+    {
+        float height = 8;
+        for (const auto& block : blocks_) height += BlockHeight(block) + 4;
+        return {std::max({size_.x, minSize_.x, 120.0f}),
+                std::max({size_.y, minSize_.y, height})};
+    }
+
+    void UiHtml::Arrange(const Rect& self, const std::vector<UiControl*>& children)
+    {
+        (void)children; // HTML content is self-contained; any GameObject children are left unlaid.
+        float y = self.y + 6;
+        const float x = self.x + 6;
+        const float width = std::max(0.0f, self.width - 12);
+        for (auto& block : blocks_)
+        {
+            const float h = BlockHeight(block);
+            block.rect = {x, y, width, h};
+            y += h + 4;
+        }
+    }
+
+    bool UiHtml::PointHitsLink(Vec2 point) const
+    {
+        for (const auto& block : blocks_)
+            if ((block.kind == Block::Kind::Button || block.link) && block.rect.Contains(point))
+                return true;
+        return false;
+    }
+
+    void UiHtml::Emit(std::vector<SpriteDraw>& sprites, std::vector<TextDraw>& texts) const
+    {
+        if (background_.w > 0)
+        {
+            SpriteDraw bg;
+            bg.dest = {rect_.x, rect_.y, rect_.width, rect_.height};
+            bg.tint = background_;
+            sprites.push_back(bg);
+        }
+        for (const auto& block : blocks_)
+        {
+            if (block.background.w > 0)
+            {
+                SpriteDraw bd;
+                bd.dest = {block.rect.x, block.rect.y, block.rect.width, block.rect.height};
+                bd.tint = block.background;
+                sprites.push_back(bd);
+            }
+            switch (block.kind)
+            {
+            case Block::Kind::Rule:
+            {
+                SpriteDraw rule;
+                rule.dest = {block.rect.x, block.rect.y + block.rect.height * 0.5f - 1, block.rect.width, 2};
+                rule.tint = block.color;
+                sprites.push_back(rule);
+                break;
+            }
+            case Block::Kind::Image:
+            {
+                SpriteDraw img;
+                img.dest = {block.rect.x, block.rect.y, block.rect.width, block.rect.height};
+                if (!block.src.empty() && HasContext() && Context().resolveTexture)
+                    img.texture = Context().resolveTexture(block.src);
+                sprites.push_back(img);
+                break;
+            }
+            case Block::Kind::Button:
+            {
+                SpriteDraw box;
+                box.dest = {block.rect.x, block.rect.y, block.rect.width, block.rect.height};
+                box.tint = {0.20f, 0.34f, 0.52f, 1};
+                sprites.push_back(box);
+                if (!block.text.empty())
+                    texts.push_back({block.text, block.rect.x + 8, block.rect.y + (block.rect.height - block.fontSize) * 0.5f,
+                                     block.fontSize, {0.97f, 0.98f, 1.0f, 1}});
+                break;
+            }
+            case Block::Kind::Text:
+                if (!block.text.empty())
+                    texts.push_back({block.text, block.rect.x, block.rect.y, block.fontSize, block.color});
+                break;
+            }
+        }
     }
 }

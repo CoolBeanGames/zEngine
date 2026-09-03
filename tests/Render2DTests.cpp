@@ -110,6 +110,35 @@ void OversizedSliceClamps()
     Check(Near(b.minX, 0) && Near(b.maxX, 10) && Near(b.minY, 0) && Near(b.maxY, 10), "Oversized nine-slice must clamp to the dest rect");
 }
 
+void ClipRect()
+{
+    // A plain quad clipped to a smaller window: geometry and UVs both trimmed.
+    SpriteDraw draw;
+    draw.dest = {0, 0, 100, 100};
+    draw.clip = {25, 40, 50, 50}; // -> x 25..75, y 40..90
+    std::vector<SpriteVertex> verts;
+    AppendSprite(verts, draw, 1, 1);
+    const auto b = Measure(verts);
+    Check(Near(b.minX, 25) && Near(b.maxX, 75) && Near(b.minY, 40) && Near(b.maxY, 90), "Clip did not trim the quad");
+    Check(Near(b.minU, 0.25f) && Near(b.maxU, 0.75f) && Near(b.minV, 0.40f) && Near(b.maxV, 0.90f), "Clip did not remap the UVs");
+
+    // Fully outside the clip -> nothing emitted.
+    verts.clear();
+    SpriteDraw off = draw;
+    off.clip = {500, 500, 10, 10};
+    AppendSprite(verts, off, 1, 1);
+    Check(verts.empty(), "A fully clipped sprite emits no geometry");
+
+    // A rotated sprite ignores the clip (documented limitation).
+    verts.clear();
+    SpriteDraw rot;
+    rot.dest = {0, 0, 100, 100};
+    rot.clip = {0, 0, 10, 10};
+    rot.rotationDegrees = 45;
+    AppendSprite(verts, rot, 1, 1);
+    Check(!verts.empty(), "Rotated sprite is not clipped");
+}
+
 void FontAtlasBasics()
 {
     const FontAtlas atlas = FontAtlas::Build(24);
@@ -155,9 +184,10 @@ int main()
         RotationAboutPivot();
         NineSlice();
         OversizedSliceClamps();
+        ClipRect();
         FontAtlasBasics();
         TextLayout();
-        std::cout << "PASS: 2D sprite tessellation, regions, rotation, nine-slice, font atlas, text layout\n";
+        std::cout << "PASS: 2D sprite tessellation, regions, rotation, nine-slice, clip, font atlas, text layout\n";
         return 0;
     }
     catch (const std::exception& error)

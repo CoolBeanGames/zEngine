@@ -1,5 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="81">
+<tasks project="zEngine" nextIndex="96">
+  <task id="ZE-95">
+    <name>UI click detection breaks for the control with GameObject id 1</name>
+    <prompt>UiSystem::Interact uses the literal GameObjectId{1} as a sentinel meaning "the primary button press began over empty space". When the top-most / first clickable UI control actually has id 1 (e.g. a Button created as the only object in a fresh ObjectStore), a press+release over it is discarded as an empty-space press, so no click / clicked signal is produced. Reproduce: create one GameObject2D with a Button behavior, Build, Interact(press) then Interact(release) over it - expect one click, get none.</prompt>
+    <requirements>Interact reports a click for a press+release over a control regardless of its GameObjectId; the empty-space case still produces no click.</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>true</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>bug,ui</tags>
+    <notes>UiSystem::Interact tracked an in-progress primary press with pressedOn_ and overloaded the literal GameObjectId{1} as a "began over empty space" sentinel, so a control whose real id was 1 could never register a click. Replaced the magic value with an explicit bool pressActive_; pressedOn_ now holds 0 for the empty-space case. Found while building ZE-66 (a Button that is the only object in a store gets id 1). Covered by the new UiTests ButtonStatesAndSignals case. Full ctest 35/35.</notes>
+    <filesChanged>src/ui/UiSystem.h; src/ui/UiSystem.cpp; tests/UiTests.cpp; tasks.xml</filesChanged>
+    <image></image>
+  </task>
   <task id="ZE-59">
     <name>ZE 49 is happening again</name>
     <prompt>this was the original prompt:
@@ -893,102 +916,57 @@ a Breakpoint has been reached
     <filesChanged>scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/ScriptAssets.cpp; src/ScriptCompletion.cpp; tests/ScriptEditorTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
-  <task id="ZE-73">
-    <name>new ganeObject2D</name>
-    <prompt>exactly like gameObject 3D but uses a Vector2 instead of Vector3</prompt>
+  <task id="ZE-66">
+    <name>UI 2</name>
+    <prompt>add more types to the UI, and additional options for it</prompt>
     <requirements></requirements>
+    <inProgress>true</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey>k7m2x9qp</lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>scripting, UI</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="true">scrolling container (allows scrolling through the contents, they still support clicking, and other subcontainers. use the parent/child relationship)</subtask>
+      <subtask done="true">video texture (play a video as a standard texture)</subtask>
+      <subtask done="true">button (reusable button with, clicked, down, up states and visuals)</subtask>
+      <subtask done="true">Add a UI HTML interpreter</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-81">
+    <name>implement UI inspector editng</name>
+    <prompt>right now there is no way to setup the UI in the inspector, all elements need inspector elements added</prompt>
+    <requirements>all elements can now be set in the inspector</requirements>
     <inProgress>false</inProgress>
-    <done>true</done>
+    <done>false</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
     <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
-    <blockedBy>ZE-72</blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
-    <tags></tags>
-    <notes>Introduced ObjectCore, a non-final base carrying identity / hierarchy / tags / behaviors / lifecycle. GameObject (3D Transform) and the new GameObject2D (Transform2D: Vec2 position + Vec2 scale + a single float z-rotation in degrees, screen-space) both derive from it. Behavior::owner_ widened to ObjectCore&amp; with an Owner3D() convenience cast for the 3D-only behaviors (mesh, physics, camera). A single ObjectStore now holds unique_ptr&lt;ObjectCore&gt;; added Create2D()/Restore2D(); Find()/At() return ObjectCore. Free helpers As3D()/As2D() do the checked downcasts; physics, renderer, gizmos, prefab overrides and the 3D scene/report paths guard with As3D() and skip Is2D() objects. Scene format bumped to v8: a 2D object serializes a "transform2d" line instead of "transform". Scripting VM gained native gameObject2D + Transform2D classes (phone-book rows in NativeTypes.h, prelude, and lifecycle/field wiring switched to IsGameObjectLike) so "class X : gameObject2D" compiles with a Vector2 transform and rejects Vector3 assignment. Tests added: CoreTests mixed 2D/3D store + Transform2D defaults/mutation/atomic-reject, SceneTests v8 2D round-trip, ScriptTests "gameObject2D scripts". Full test build green, 32/32 ctest. 2D proxy sync in BoundScript is deferred to ZE-61; actual 2D rendering is ZE-60.</notes>
-    <filesChanged>src/core/GameObject.h; src/core/GameObject.cpp; src/core/ScriptBehavior.h; src/core/Camera.h; src/core/MeshRenderer.h; src/physics/PhysicsBehavior.h; src/physics/PhysicsWorld.cpp; src/RenderTransform.h; src/Scene.h; src/Scene.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/EditorShell.h; src/EditorShell.cpp; src/EditorGizmos.cpp; src/EditorPrefabs.cpp; src/runtime/GameSession.h; src/runtime/GameSession.cpp; src/runtime/PlayerMain.cpp; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; tests/CoreTests.cpp; tests/SceneTests.cpp; tests/AssetTests.cpp; tests/GizmoTests.cpp; tests/PrefabTests.cpp; tests/PhysicsTests.cpp; tests/LifecycleTests.cpp; tests/ScriptHostTests.cpp</filesChanged>
+    <tags>ui,inspector</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
     <image></image>
-  </task>
-  <task id="ZE-60">
-    <name>start work on 2D Rendering</name>
-    <prompt>we need a way to render 2D on top of everything else, right now this will mostly be used for the UI though eventually will be used for a dedicated 2D mode so make it flexible</prompt>
-    <requirements>UI rendering framework</requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy>ZE-73</blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>true</release>
-    <tags>2D,rendering,scripting</tags>
-    <notes>Added a screen-space 2D / UI rendering pass that runs after the 3D forward pass with depth testing off and straight-alpha blending, so it is untouched by any current or future lighting system. New submission layer src/Render2D.h (SpriteDraw with dest rect, normalised source region, nine-slice borders, straight-alpha tint, and z-rotation about a 0..1 pivot; TextDraw). AppendSprite() is a pure, unit-tested tessellator: 6 verts for a plain quad, 54 for a nine-slice, region mapped through, rotation applied, oversized borders clamped to the dest/source rect. shaders/Sprite.hlsl maps pixel positions (origin top-left) straight to clip space and samples one texture * tint. Renderer gains a self-contained texture path - UploadTexture(w,h,RGBA) + WhiteTexture() - independent of the future material/material-instance systems (the renderer is free to back these with materials internally later; callers never build a material for a UI image). Text: src/FontAtlas.cpp builds a glyph atlas once from "Segoe UI" via GDI into an RGBA coverage bitmap, uploaded as an ordinary texture; Layout()/Measure() expand a UTF-8 run into sprites, scale linearly with pixel height, and handle newlines. The renderer's FPS overlay was moved off its hand-rolled 5x7 line glyphs onto this text path (a real shipping use in both the editor and the player). ViewportFrame gained `sprites` and `texts` lists for ZE-61 to fill. Batches consecutive draws by texture. Scaling and cropping fall out of dest != source and a sub-region. Tests: new Render2D ctest (tessellation, regions, rotation, nine-slice, atlas, layout); GpuTests extended with texture upload/reject, sprites (plain, nine-slice, rotated, tinted), text and the FPS readout, plus a resize. Packaging (GamePackage.cpp) now ships Sprite.hlsl alongside ColorCube.hlsl. Full build green: 33/33 ctest, plus builds/debug (Debug) and builds/release (Release); the Release output is zipped for GitHub upload.</notes>
-    <filesChanged>shaders/Sprite.hlsl; src/Render2D.h; src/Render2D.cpp; src/FontAtlas.h; src/FontAtlas.cpp; src/ModelData.h; src/RenderScene.h; src/Renderer.h; src/Renderer.cpp; src/runtime/GamePackage.cpp; CMakeLists.txt; tests/Render2DTests.cpp; tests/AssetTests.cpp</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">tasks required for rendering 2D on the screen</subtask>
-      <subtask done="true">tasks required for rendering text on the screen</subtask>
-      <subtask done="true">everything uses screen coordinates</subtask>
-      <subtask done="true">prepared for the material and material instance systems we will build later, although it should have its own way to add textures. I want it to use materials/material instances on the back end but i dont want to have to make one for every ui texture</subtask>
-      <subtask done="true">should be ready to support, 9 slices, reggions, scaling, cropping, z axis rotation</subtask>
-      <subtask done="true">shoudl be unaffected by the later lighting systems</subtask>
-    </subtasks>
-  </task>
-  <task id="ZE-61">
-    <name>Start on a UI subsystem</name>
-    <prompt>use inheritance and the 2D rendering, we will need to make several types. parenting will be very important. later we will make other styles of UI and more controls.</prompt>
-    <requirements></requirements>
-    <inProgress>false</inProgress>
-    <done>true</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy>ZE-72</blockedBy>
-    <dateStarted>2026-09-02</dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>true</release>
-    <tags></tags>
-    <notes>A full UI subsystem built on ZE-60's 2D pass and the ZE-73 GameObject2D. New zEngineUi lib (src/ui/): UiControl is a Behavior on a GameObject2D - the GameObject2D parent hierarchy IS the UI tree. Anchors: 9 points + per-axis fills + half-anchors, auto-sizing (ResolveAnchor). Containers: Container (padding/spacing base), HTileBox / VTileBox (row/column, optional cross-fill), CenterContainer, MarginContainer, PanelContainer (nine-sliced sprite bg). Leaves: Text, LongText (newline-aware), TextEntry (Type() applies keystrokes, queryable Value()), TextureRect (region/tint), ColorRect, ProgressBar (h/v, value 0..1). UiSystem walks the tree, lays every control out top-down from the screen rect, emits the whole UI as ONE ordered batch into the sprite/text lists (renderer batches by texture), hit-tests the topmost clickable control and drives press/release click detection + TextEntry focus/typing; `order` field controls paint + hit order. Scripting VM: native class chain uiControl -&gt; uiContainer -&gt; uiHTileBox/uiVTileBox/uiCenterBox/uiMarginBox/uiPanel, uiControl -&gt; uiText -&gt; uiLongText, uiControl -&gt; uiTextEntry/uiTextureRect/uiColorRect/uiProgressBar - each carries the layout fields and a `clicked` signal, so `class Menu : uiPanel { func start(){ clicked.connect(h); } }` compiles and inherits everything (ui-prefixed names because text/container/control collided with common identifiers). Scene format bumped to v9: a UiControl serializes as `ui "&lt;type&gt;" &lt;n&gt;` + n `ui_prop "&lt;key&gt;" "&lt;value&gt;"` lines (src/ui/UiSerialize: TypeName / AddUiControl factory / SaveUiControl / LoadUiProperty, unknown keys ignored). Capture/Encode/Decode/Instantiate/Append all handle Kind::Ui; prefabs get it free. Editor: scene-tree right-click -&gt; Add -&gt; UI submenu (13 types) creates a GameObject2D + control via CreateUiControl(); the editor viewport previews the UI each frame (UiSystem emit in the render path). Game runtime: PlayerMain owns a ui::UiSystem, builds + emits the UI every frame and routes pointer clicks -&gt; Session::UiClicked -&gt; ScriptHost::EmitSignal(owner,"clicked") -&gt; the script's connected handler. Renderer::MeasureText exposes the font atlas for layout; textures currently resolve to the 1x1 white texture (real image loading belongs with the ZE-64/65 material work - subtask 4 explicitly asks for "its own way to add textures", which UploadTexture is). Tests: UiToolkit (anchors/containers/hit-test/clicks/entry/batch), ScriptTests "UI control classes", SceneTests v9 UI round-trip, ScriptHostTests clicked-signal, AssetTests --ui (scene-tree create + persistence + viewport emit). 35/35 ctest green; builds/debug + builds/release built, Release zipped for GitHub. Follow-ups: real UI image texture loading, keyboard text into TextEntry in the player loop, editor viewport click-through in Play.</notes>
-    <filesChanged>src/ui/UiControl.h; src/ui/UiControl.cpp; src/ui/UiSystem.h; src/ui/UiSystem.cpp; src/ui/UiSerialize.h; src/ui/UiSerialize.cpp; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/Scene.h; src/Scene.cpp; src/Renderer.h; src/Renderer.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/runtime/GameSession.h; src/runtime/PlayerMain.cpp; src/EditorShell.h; src/EditorShell.cpp; src/EditorHierarchy.cpp; tests/UiTests.cpp; tests/SceneTests.cpp; tests/ScriptHostTests.cpp; tests/AssetTests.cpp; CMakeLists.txt</filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="true">supports anchors (with auto anchor modes (ie top left, filll, bottom half, etc)</subtask>
-      <subtask done="true">container base (controls children position/size, has parameters for adjusting)</subtask>
-      <subtask done="true">hTileBoxContainer (positions children in a row horizontally, can fill vertically or not)</subtask>
-      <subtask done="true">vTileBoxContainer (positions children in a row vertically, can fill horizontally or not)</subtask>
-      <subtask done="true">centerContainer (keep chilcdren exactly centered)</subtask>
-      <subtask done="true">marginContainer (keeys a configurable margin around the edge)</subtask>
-      <subtask done="true">panelContainer (basic contailer that renders a sprite)</subtask>
-      <subtask done="true">text (simple single line text field)</subtask>
-      <subtask done="true">longText (multiline text field)</subtask>
-      <subtask done="true">textEntery (allows user to enter text, can be queried for value)</subtask>
-      <subtask done="true">textureRect (displays a texture)</subtask>
-      <subtask done="true">colorRect (like a texture rect but fills the entire rect with a solid color)</subtask>
-      <subtask done="true">progressBar (displays a configurable scrollable horizontal or vertical progress bar)</subtask>
-      <subtask done="true">signals on all of this for if it was clicked by the mouse</subtask>
-      <subtask done="true">ordering settings</subtask>
-      <subtask done="true">batch entire UI draw as a single object</subtask>
-      <subtask done="true">all of these support prefabs, and all are created through the scene tree</subtask>
-      <subtask done="true">they can also be spawned and the base control inherits from gameObject2D</subtask>
-    </subtasks>
   </task>
   <task id="ZE-63">
     <name>Add in Scene Managment</name>
@@ -1012,34 +990,6 @@ a Breakpoint has been reached
     <notes></notes>
     <filesChanged></filesChanged>
     <image></image>
-  </task>
-  <task id="ZE-64">
-    <name>Materials</name>
-    <prompt>the first half of the Material system, it is esentially a shader. Later though we will build a visual editor for now just support HLSL.</prompt>
-    <requirements>we can now create and compile HLSL code.</requirements>
-    <inProgress>false</inProgress>
-    <done>false</done>
-    <bug>false</bug>
-    <error>false</error>
-    <errorMessage></errorMessage>
-    <lockKey></lockKey>
-    <locked>false</locked>
-    <archived>false</archived>
-    <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
-    <dueDate></dueDate>
-    <commit>true</commit>
-    <build>true</build>
-    <release>false</release>
-    <tags>rendering</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
-    <image></image>
-    <subtasks>
-      <subtask done="false">use text editor for HLSL</subtask>
-      <subtask done="false">call the extension .shader</subtask>
-      <subtask done="false">only defines code and parameters, cannot be applied to objefcts</subtask>
-    </subtasks>
   </task>
   <task id="ZE-65">
     <name>Material Instances</name>
@@ -1070,10 +1020,10 @@ a Breakpoint has been reached
       <subtask done="false">connect to they can be set on Models (and optionally UI elements)</subtask>
     </subtasks>
   </task>
-  <task id="ZE-66">
-    <name>UI 2</name>
-    <prompt>add more types to the UI, and additional options for it</prompt>
-    <requirements></requirements>
+  <task id="ZE-64">
+    <name>Materials</name>
+    <prompt>the first half of the Material system, it is esentially a shader. Later though we will build a visual editor for now just support HLSL.</prompt>
+    <requirements>we can now create and compile HLSL code.</requirements>
     <inProgress>false</inProgress>
     <done>false</done>
     <bug>false</bug>
@@ -1082,21 +1032,20 @@ a Breakpoint has been reached
     <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
-    <blockedBy>ZE-61</blockedBy>
+    <blockedBy></blockedBy>
     <dateStarted></dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
-    <tags>scripting, UI</tags>
+    <tags>rendering</tags>
     <notes></notes>
     <filesChanged></filesChanged>
     <image></image>
     <subtasks>
-      <subtask done="false">scrolling container (allows scrolling through the contents, they still support clicking, and other subcontainers. use the parent/child relationship)</subtask>
-      <subtask done="false">video texture (play a video as a standard texture)</subtask>
-      <subtask done="false">button (reusable button with, clicked, down, up states and visuals)</subtask>
-      <subtask done="false">Add a UI HTML interpreter</subtask>
+      <subtask done="false">use text editor for HLSL</subtask>
+      <subtask done="false">call the extension .shader</subtask>
+      <subtask done="false">only defines code and parameters, cannot be applied to objefcts</subtask>
     </subtasks>
   </task>
   <task id="ZE-67">
@@ -1291,7 +1240,7 @@ this will be a large task so</prompt>
     <error>false</error>
     <errorMessage></errorMessage>
     <lockKey></lockKey>
-    <locked>true</locked>
+    <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
     <dateStarted></dateStarted>
@@ -1327,7 +1276,7 @@ and make the console backgrounds black with white text.</prompt>
     <error>false</error>
     <errorMessage></errorMessage>
     <lockKey></lockKey>
-    <locked>true</locked>
+    <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
     <dateStarted></dateStarted>
@@ -1339,6 +1288,461 @@ and make the console backgrounds black with white text.</prompt>
     <notes></notes>
     <filesChanged></filesChanged>
     <image></image>
+  </task>
+  <task id="ZE-82">
+    <name>currently no way to delete assets</name>
+    <prompt>when you right click an asset there is no delete option, and hitting delete doesnt work, you could do it through explorer but we need to add an in engine delete option</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>asset managment</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-83">
+    <name>local vs global transforms</name>
+    <prompt>local vs gloabl transforms dont work great. ill give an example
+i made a GameObject and gave it a camera as a child
+i wrote a script (see below)
+class first_person_view : gameObject
+{
+    export float look_speed = 1;
+    export float pitch = 0;
+    export float yaw = 0;
+    
+    label("references")
+    export transform body;
+    export transform head;
+    export camera c;
+    func start()
+    {
+        c=find_by_type(camera).getBehavior(camera);
+        Text t = find_by_type(text).getBehavior(text);
+    }
+
+    func update(float delta)
+    {
+        update_angles(delta);
+        body.rotation.y += yaw;
+        if(pitch &lt; -90)
+        {
+            pitch = -90;
+        }
+        if (pitch &gt; 90)
+        {
+            pitch = 90;
+        }
+        head.rotation.x = pitch;
+    }
+
+    func physicsUpdate(float delta)
+    {
+    }
+
+    func draw()
+    {
+    }
+    
+    func update_angles(float delta)
+    {
+        pitch = look_speed * Input.mouse.delta.y *  delta;
+        yaw = look_speed * Input.mouse.delta.x * delta;
+    }
+}
+however the camera keeps snapping back to its default rotation because the local transform is getting override.</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scripting, issues</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">can set global or local position/rotation/scale</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-84">
+    <name>mouse capture modes</name>
+    <prompt>add mouse capture modes for Input.Mouse, you can pass them in as a parameter to Input.set_mouse_mode</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>input,mouse</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">visible (standard)</subtask>
+      <subtask done="false">hidden (cursor does nothing and cant be seen)</subtask>
+      <subtask done="false">confined (cursor cant leave the screen)</subtask>
+      <subtask done="false">confined hidden (same as confined but also is hidden)</subtask>
+      <subtask done="false">captured (cursor is stuck in the center of the screen after adjusting delta, use for fps games)</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-86">
+    <name>using find object by type should return the type we searched for not the object</name>
+    <prompt>find object current returns a gameObject, it should instead return a reference to the behavior we were searching for on the object we found</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-87">
+    <name>cant get reference to UI elements in scripts</name>
+    <prompt>UI elements are not recognized as types so theres no way to get a reference to them presently</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>scripting,types,ui</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-88">
+    <name>Make ALL numerical fields dragable</name>
+    <prompt>the individual fields in transform can be dragged left and right to move it around, I want the same behaviorfor ALL number fields</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">int +/- 1</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-89">
+    <name>move line counts to left side</name>
+    <prompt>I want scripting line counts on the left side no the right.</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>scripting,script editor, ui</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-91">
+    <name>add data objects [1]</name>
+    <prompt>this is the first type a data object basically copying godots resources. its basically a behavior that can only be referenced by a behavior but not set like one.</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">data objects can be created, inherits from data</subtask>
+      <subtask done="false">can inherit from other data objects</subtask>
+      <subtask done="false">is not a "class" we will use struct instead</subtask>
+      <subtask done="false">can be passed as a referecnce (available as a 'type')</subtask>
+      <subtask done="false">is a base for other data object types</subtask>
+      <subtask done="false">CAN have functions, but public only.</subtask>
+      <subtask done="false">State resets when play ends (unless specifically written permanantly with the data_object.save command, if save is used the changes to the data are permanant</subtask>
+      <subtask done="false">double clicking opens in inspector for editing</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-92">
+    <name>add data objects [2]</name>
+    <prompt>this is a data_sheet, it is not defined in the inspect and instead opens a pop up window. the UI is a spread sheet, the each column is basically an instance of a data_object from part 1, each colum is 1 member, each row is an instance, both can use numerical ID's or string names.
+
+reference via data_sheet_name[row,column] this then returns the data</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>data,scripting</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-93">
+    <name>vertex snapping</name>
+    <prompt>look at how unity vertex snapping works, if i hold down V i want the same experience, I want whatever 2 vertices are the closest to snap together only on the axis we are currently moving on</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>3D,models</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-94">
+    <name>generic type</name>
+    <prompt>lets add a generic var type
+var assumes whatever type its set to, if its set to a different type then it changes
+var a = 1 (var is now an int)
+a += 0.1 (it changes to a float)
+a = {a} (now its a string}
+a = find(a) now its a gameObject
+
+it wont throw exceptions or errors if passed unless theres a type mismatch</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags>scripting,types</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-90">
+    <name>do not work on anything below this line until I personally close it out NO AGENTS</name>
+    <prompt>------------------------------------------------------------------------------
+Everything below this entry is for V2.0 do not close this task, only work on tasks above it. Do not edit it. I will close it once 1.0 is ready
+------------------------------------------------------------------------------</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-73">
+    <name>new ganeObject2D</name>
+    <prompt>exactly like gameObject 3D but uses a Vector2 instead of Vector3</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy>ZE-72</blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>false</commit>
+    <build>false</build>
+    <release>false</release>
+    <tags></tags>
+    <notes>Introduced ObjectCore, a non-final base carrying identity / hierarchy / tags / behaviors / lifecycle. GameObject (3D Transform) and the new GameObject2D (Transform2D: Vec2 position + Vec2 scale + a single float z-rotation in degrees, screen-space) both derive from it. Behavior::owner_ widened to ObjectCore&amp; with an Owner3D() convenience cast for the 3D-only behaviors (mesh, physics, camera). A single ObjectStore now holds unique_ptr&lt;ObjectCore&gt;; added Create2D()/Restore2D(); Find()/At() return ObjectCore. Free helpers As3D()/As2D() do the checked downcasts; physics, renderer, gizmos, prefab overrides and the 3D scene/report paths guard with As3D() and skip Is2D() objects. Scene format bumped to v8: a 2D object serializes a "transform2d" line instead of "transform". Scripting VM gained native gameObject2D + Transform2D classes (phone-book rows in NativeTypes.h, prelude, and lifecycle/field wiring switched to IsGameObjectLike) so "class X : gameObject2D" compiles with a Vector2 transform and rejects Vector3 assignment. Tests added: CoreTests mixed 2D/3D store + Transform2D defaults/mutation/atomic-reject, SceneTests v8 2D round-trip, ScriptTests "gameObject2D scripts". Full test build green, 32/32 ctest. 2D proxy sync in BoundScript is deferred to ZE-61; actual 2D rendering is ZE-60.</notes>
+    <filesChanged>src/core/GameObject.h; src/core/GameObject.cpp; src/core/ScriptBehavior.h; src/core/Camera.h; src/core/MeshRenderer.h; src/physics/PhysicsBehavior.h; src/physics/PhysicsWorld.cpp; src/RenderTransform.h; src/Scene.h; src/Scene.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/EditorShell.h; src/EditorShell.cpp; src/EditorGizmos.cpp; src/EditorPrefabs.cpp; src/runtime/GameSession.h; src/runtime/GameSession.cpp; src/runtime/PlayerMain.cpp; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; tests/CoreTests.cpp; tests/SceneTests.cpp; tests/AssetTests.cpp; tests/GizmoTests.cpp; tests/PrefabTests.cpp; tests/PhysicsTests.cpp; tests/LifecycleTests.cpp; tests/ScriptHostTests.cpp</filesChanged>
+    <image></image>
+  </task>
+  <task id="ZE-60">
+    <name>start work on 2D Rendering</name>
+    <prompt>we need a way to render 2D on top of everything else, right now this will mostly be used for the UI though eventually will be used for a dedicated 2D mode so make it flexible</prompt>
+    <requirements>UI rendering framework</requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy>ZE-73</blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>2D,rendering,scripting</tags>
+    <notes>Added a screen-space 2D / UI rendering pass that runs after the 3D forward pass with depth testing off and straight-alpha blending, so it is untouched by any current or future lighting system. New submission layer src/Render2D.h (SpriteDraw with dest rect, normalised source region, nine-slice borders, straight-alpha tint, and z-rotation about a 0..1 pivot; TextDraw). AppendSprite() is a pure, unit-tested tessellator: 6 verts for a plain quad, 54 for a nine-slice, region mapped through, rotation applied, oversized borders clamped to the dest/source rect. shaders/Sprite.hlsl maps pixel positions (origin top-left) straight to clip space and samples one texture * tint. Renderer gains a self-contained texture path - UploadTexture(w,h,RGBA) + WhiteTexture() - independent of the future material/material-instance systems (the renderer is free to back these with materials internally later; callers never build a material for a UI image). Text: src/FontAtlas.cpp builds a glyph atlas once from "Segoe UI" via GDI into an RGBA coverage bitmap, uploaded as an ordinary texture; Layout()/Measure() expand a UTF-8 run into sprites, scale linearly with pixel height, and handle newlines. The renderer's FPS overlay was moved off its hand-rolled 5x7 line glyphs onto this text path (a real shipping use in both the editor and the player). ViewportFrame gained `sprites` and `texts` lists for ZE-61 to fill. Batches consecutive draws by texture. Scaling and cropping fall out of dest != source and a sub-region. Tests: new Render2D ctest (tessellation, regions, rotation, nine-slice, atlas, layout); GpuTests extended with texture upload/reject, sprites (plain, nine-slice, rotated, tinted), text and the FPS readout, plus a resize. Packaging (GamePackage.cpp) now ships Sprite.hlsl alongside ColorCube.hlsl. Full build green: 33/33 ctest, plus builds/debug (Debug) and builds/release (Release); the Release output is zipped for GitHub upload.</notes>
+    <filesChanged>shaders/Sprite.hlsl; src/Render2D.h; src/Render2D.cpp; src/FontAtlas.h; src/FontAtlas.cpp; src/ModelData.h; src/RenderScene.h; src/Renderer.h; src/Renderer.cpp; src/runtime/GamePackage.cpp; CMakeLists.txt; tests/Render2DTests.cpp; tests/AssetTests.cpp</filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="true">tasks required for rendering 2D on the screen</subtask>
+      <subtask done="true">tasks required for rendering text on the screen</subtask>
+      <subtask done="true">everything uses screen coordinates</subtask>
+      <subtask done="true">prepared for the material and material instance systems we will build later, although it should have its own way to add textures. I want it to use materials/material instances on the back end but i dont want to have to make one for every ui texture</subtask>
+      <subtask done="true">should be ready to support, 9 slices, reggions, scaling, cropping, z axis rotation</subtask>
+      <subtask done="true">shoudl be unaffected by the later lighting systems</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-61">
+    <name>Start on a UI subsystem</name>
+    <prompt>use inheritance and the 2D rendering, we will need to make several types. parenting will be very important. later we will make other styles of UI and more controls.</prompt>
+    <requirements></requirements>
+    <inProgress>false</inProgress>
+    <done>true</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>true</archived>
+    <blockedBy>ZE-72</blockedBy>
+    <dateStarted>2026-09-02 00:00</dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags></tags>
+    <notes>A full UI subsystem built on ZE-60's 2D pass and the ZE-73 GameObject2D. New zEngineUi lib (src/ui/): UiControl is a Behavior on a GameObject2D - the GameObject2D parent hierarchy IS the UI tree. Anchors: 9 points + per-axis fills + half-anchors, auto-sizing (ResolveAnchor). Containers: Container (padding/spacing base), HTileBox / VTileBox (row/column, optional cross-fill), CenterContainer, MarginContainer, PanelContainer (nine-sliced sprite bg). Leaves: Text, LongText (newline-aware), TextEntry (Type() applies keystrokes, queryable Value()), TextureRect (region/tint), ColorRect, ProgressBar (h/v, value 0..1). UiSystem walks the tree, lays every control out top-down from the screen rect, emits the whole UI as ONE ordered batch into the sprite/text lists (renderer batches by texture), hit-tests the topmost clickable control and drives press/release click detection + TextEntry focus/typing; `order` field controls paint + hit order. Scripting VM: native class chain uiControl -&gt; uiContainer -&gt; uiHTileBox/uiVTileBox/uiCenterBox/uiMarginBox/uiPanel, uiControl -&gt; uiText -&gt; uiLongText, uiControl -&gt; uiTextEntry/uiTextureRect/uiColorRect/uiProgressBar - each carries the layout fields and a `clicked` signal, so `class Menu : uiPanel { func start(){ clicked.connect(h); } }` compiles and inherits everything (ui-prefixed names because text/container/control collided with common identifiers). Scene format bumped to v9: a UiControl serializes as `ui "&lt;type&gt;" &lt;n&gt;` + n `ui_prop "&lt;key&gt;" "&lt;value&gt;"` lines (src/ui/UiSerialize: TypeName / AddUiControl factory / SaveUiControl / LoadUiProperty, unknown keys ignored). Capture/Encode/Decode/Instantiate/Append all handle Kind::Ui; prefabs get it free. Editor: scene-tree right-click -&gt; Add -&gt; UI submenu (13 types) creates a GameObject2D + control via CreateUiControl(); the editor viewport previews the UI each frame (UiSystem emit in the render path). Game runtime: PlayerMain owns a ui::UiSystem, builds + emits the UI every frame and routes pointer clicks -&gt; Session::UiClicked -&gt; ScriptHost::EmitSignal(owner,"clicked") -&gt; the script's connected handler. Renderer::MeasureText exposes the font atlas for layout; textures currently resolve to the 1x1 white texture (real image loading belongs with the ZE-64/65 material work - subtask 4 explicitly asks for "its own way to add textures", which UploadTexture is). Tests: UiToolkit (anchors/containers/hit-test/clicks/entry/batch), ScriptTests "UI control classes", SceneTests v9 UI round-trip, ScriptHostTests clicked-signal, AssetTests --ui (scene-tree create + persistence + viewport emit). 35/35 ctest green; builds/debug + builds/release built, Release zipped for GitHub. Follow-ups: real UI image texture loading, keyboard text into TextEntry in the player loop, editor viewport click-through in Play.</notes>
+    <filesChanged>src/ui/UiControl.h; src/ui/UiControl.cpp; src/ui/UiSystem.h; src/ui/UiSystem.cpp; src/ui/UiSerialize.h; src/ui/UiSerialize.cpp; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/Scene.h; src/Scene.cpp; src/Renderer.h; src/Renderer.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/runtime/GameSession.h; src/runtime/PlayerMain.cpp; src/EditorShell.h; src/EditorShell.cpp; src/EditorHierarchy.cpp; tests/UiTests.cpp; tests/SceneTests.cpp; tests/ScriptHostTests.cpp; tests/AssetTests.cpp; CMakeLists.txt</filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="true">supports anchors (with auto anchor modes (ie top left, filll, bottom half, etc)</subtask>
+      <subtask done="true">container base (controls children position/size, has parameters for adjusting)</subtask>
+      <subtask done="true">hTileBoxContainer (positions children in a row horizontally, can fill vertically or not)</subtask>
+      <subtask done="true">vTileBoxContainer (positions children in a row vertically, can fill horizontally or not)</subtask>
+      <subtask done="true">centerContainer (keep chilcdren exactly centered)</subtask>
+      <subtask done="true">marginContainer (keeys a configurable margin around the edge)</subtask>
+      <subtask done="true">panelContainer (basic contailer that renders a sprite)</subtask>
+      <subtask done="true">text (simple single line text field)</subtask>
+      <subtask done="true">longText (multiline text field)</subtask>
+      <subtask done="true">textEntery (allows user to enter text, can be queried for value)</subtask>
+      <subtask done="true">textureRect (displays a texture)</subtask>
+      <subtask done="true">colorRect (like a texture rect but fills the entire rect with a solid color)</subtask>
+      <subtask done="true">progressBar (displays a configurable scrollable horizontal or vertical progress bar)</subtask>
+      <subtask done="true">signals on all of this for if it was clicked by the mouse</subtask>
+      <subtask done="true">ordering settings</subtask>
+      <subtask done="true">batch entire UI draw as a single object</subtask>
+      <subtask done="true">all of these support prefabs, and all are created through the scene tree</subtask>
+      <subtask done="true">they can also be spawned and the base control inherits from gameObject2D</subtask>
+    </subtasks>
   </task>
   <task id="ZE-71">
     <name>autocomplete update</name>

@@ -786,6 +786,15 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         uiClass("uiColorRect", "uiControl", {uiField("color", "Vector3")});
         uiClass("uiProgressBar", "uiControl", {uiField("value", "float"), uiField("vertical", "bool"),
                                               uiField("fill_color", "Vector3"), uiField("background_color", "Vector3")});
+        // ZE-66 additions.
+        uiClass("uiScroll", "uiContainer", {uiField("scroll_x", "float"), uiField("scroll_y", "float"),
+                                            uiField("horizontal", "bool"), uiField("fill_cross", "bool")});
+        uiClass("uiButton", "uiControl", {uiField("text", "string"), uiField("pixel_height", "float"), uiField("disabled", "bool")});
+        uiClass("uiVideo", "uiControl", {uiField("video", "string"), uiField("playing", "bool"),
+                                        uiField("loop", "bool"), uiField("speed", "float"), uiField("tint", "Vector3")});
+        uiClass("uiHtml", "uiControl", {uiField("html", "string"), uiField("background", "Vector3")});
+        program.classes.at("uiButton").signals.insert("pressed");
+        program.classes.at("uiButton").signals.insert("released");
     }
     Class timer;timer.name="Timer";timer.base="gameObject";timer.fields=program.classes.at("gameObject").fields;timer.signals={"finished"};program.classes.emplace(timer.name,std::move(timer));
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));

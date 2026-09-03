@@ -44,6 +44,10 @@ struct SpriteDraw
     Float4 tint{1, 1, 1, 1};         // straight-alpha multiply
     float rotationDegrees = 0;       // clockwise, about the pivot
     Float2 pivot{0.5f, 0.5f};        // 0..1 within dest; the rotation centre
+    // Optional screen-space clip rectangle (pixels). A zero / negative width or
+    // height means "no clip". Only honoured for unrotated sprites; the UI layer
+    // uses it for the contents of a scrolling container.
+    SpriteRect clip{0, 0, 0, 0};
 };
 
 // A run of text. The renderer lays this out against its font atlas (built lazily
@@ -54,6 +58,7 @@ struct TextDraw
     float x = 0, y = 0;              // top-left of the first glyph cell, pixels
     float pixelHeight = 16;          // requested cap-to-baseline-ish cell height
     Float4 color{1, 1, 1, 1};
+    SpriteRect clip{0, 0, 0, 0};     // optional screen-space clip (see SpriteDraw::clip)
 };
 
 struct SpriteVertex

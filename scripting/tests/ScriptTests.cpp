@@ -588,12 +588,29 @@ void UiControlClasses() {
     class Row : uiHTileBox { func start() { fill_cross = true; spacing = 4; } }
     class Caption : uiText { func start() { text = "hi"; pixel_height = 18; color = Vector3(1,1,1); } }
     class Bar : uiProgressBar { func start() { value = 0.5; vertical = false; } }
-    class Field : uiTextEntry { func start() { placeholder = "name"; } })");
+    class Field : uiTextEntry { func start() { placeholder = "name"; } }
+    class List : uiScroll { func start() { scroll_y = 10; horizontal = false; } }
+    class Player : uiVideo { func start() { video = "clip.zvid"; loop = true; speed = 1; } }
+    class Doc : uiHtml { func start() { html = "<p>hi</p>"; } }
+    class Ok : uiButton {
+        int downs = 0; int ups = 0;
+        func start() { text = "OK"; pressed.connect(on_down); released.connect(on_up); }
+        func on_down() { downs += 1; }
+        func on_up() { ups += 1; }
+    })");
     Check(static_cast<bool>(p), "UI control subclasses did not compile");
     Check(p->IsGameObject("Menu") && p->IsGameObject("Row") && p->IsGameObject("Bar"), "UI controls are gameObject2D-like");
+    Check(p->IsGameObject("List") && p->IsGameObject("Ok") && p->IsGameObject("Doc"), "ZE-66 UI controls are gameObject2D-like");
 
     Runtime r(p); auto m = r.Create("Menu"); r.Start(m);
     Check(std::get<std::string>(r.Call(m, "shown")) == "Play", "inherited + own fields work on a UI subclass");
+    {
+        auto ok = r.Create("Ok"); r.Start(ok);
+        r.Emit({ok, "pressed"}, {});
+        r.Emit({ok, "released"}, {});
+        Check(std::get<std::int64_t>(r.Get(ok, "downs")) == 1 && std::get<std::int64_t>(r.Get(ok, "ups")) == 1,
+              "uiButton pressed / released signals reach handlers");
+    }
     Check(std::get<Vector2>(r.Get(m, "size")) == Vector2{220, 140}, "layout field set from start()");
     Check(std::get<Vector2>(r.Get(std::get<ObjectRef>(r.Get(m, "transform")), "position")) == Vector2{0, 0}, "UI control carries a Transform2D");
     r.Emit({m, "clicked"}, {});

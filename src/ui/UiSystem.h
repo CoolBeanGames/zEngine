@@ -21,8 +21,9 @@ namespace zengine::ui
             bool visible = true;               // effective (self AND ancestors)
         };
 
-        // Rebuilds the layout tree. `context` must outlive the following Emit / Interact calls.
-        void Build(ObjectStore& objects, Vec2 screenSize, const UiContext& context);
+        // Rebuilds the layout tree. `context` must outlive the following Emit / Interact
+        // calls. `deltaSeconds` (> 0) advances animated controls (video playback).
+        void Build(ObjectStore& objects, Vec2 screenSize, const UiContext& context, float deltaSeconds = 0);
 
         // Appends the laid-out UI (respecting order and visibility) as one batch.
         void Emit(std::vector<SpriteDraw>& sprites, std::vector<TextDraw>& texts) const;
@@ -36,12 +37,18 @@ namespace zengine::ui
 
         // One frame of pointer + keyboard interaction. `pixel` is the cursor in screen
         // pixels; `pressed` is the primary button state. `typed` are code points entered
-        // this frame. Returns the controls that completed a click (press then release
-        // over the same control) this frame, in hit order.
-        std::vector<GameObjectId> Interact(Vec2 pixel, bool pressed, const std::vector<char32_t>& typed = {});
+        // this frame. `wheelDelta` is mouse-wheel notches this frame (positive = scroll
+        // up / towards the top of the content). Returns the controls that completed a
+        // click (press then release over the same control) this frame, in hit order.
+        std::vector<GameObjectId> Interact(Vec2 pixel, bool pressed,
+                                           const std::vector<char32_t>& typed = {}, float wheelDelta = 0);
+
+        // Controls whose primary button went down / came up over them this frame.
+        const std::vector<GameObjectId>& Presses() const noexcept { return presses_; }
+        const std::vector<GameObjectId>& Releases() const noexcept { return releases_; }
 
     private:
-        void Layout(std::size_t index, const Rect& area);
+        void Layout(std::size_t index, const Rect& area, const Rect* clip);
         void SortChildren(std::vector<std::size_t>& children) const;
 
         std::vector<std::size_t> PaintOrder() const;
@@ -51,6 +58,9 @@ namespace zengine::ui
         std::unordered_map<GameObjectId, std::size_t> index_;
         Vec2 screen_{};
         GameObjectId pressedOn_ = 0;
+        bool pressActive_ = false;     // a primary-button press is in progress
         GameObjectId focused_ = 0;
+        std::vector<GameObjectId> presses_;
+        std::vector<GameObjectId> releases_;
     };
 }

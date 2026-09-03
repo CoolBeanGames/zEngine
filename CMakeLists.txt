@@ -49,7 +49,7 @@ target_compile_features(zEngineAssets PUBLIC cxx_std_20)
 target_include_directories(zEngineAssets PUBLIC src)
 target_link_libraries(zEngineAssets PRIVATE ufbx)
 
-add_library(zEngineUi STATIC src/ui/UiControl.cpp src/ui/UiSystem.cpp src/ui/UiSerialize.cpp)
+add_library(zEngineUi STATIC src/ui/UiControl.cpp src/ui/UiSystem.cpp src/ui/UiSerialize.cpp src/ui/VideoClip.cpp)
 target_compile_features(zEngineUi PUBLIC cxx_std_20)
 target_include_directories(zEngineUi PUBLIC src)
 target_compile_definitions(zEngineUi PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

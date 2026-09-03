@@ -47,6 +47,8 @@ namespace zengine::ui
         std::function<Vec2(std::string_view, float)> measureText;   // (utf8, pixelHeight) -> px
         std::function<Vec2(std::string_view)> textureSize;          // asset name -> px (0,0 if unknown)
         std::function<TextureHandle(std::string_view)> resolveTexture;
+        // (video asset, playback time in seconds, loop) -> the frame to show now.
+        std::function<TextureHandle(std::string_view, double, bool)> resolveVideoFrame;
     };
 
     // A UI node. Attached as a behavior to a GameObject2D; the GameObject2D parent
@@ -72,6 +74,23 @@ namespace zengine::ui
         const Rect& LayoutRect() const noexcept { return rect_; }
         void SetLayoutRect(const Rect& value) noexcept { rect_ = value; }   // UiSystem only
         void SetContext(const UiContext* context) noexcept { context_ = context; } // UiSystem only
+
+        // Screen-space clip rect applied to this control's own emitted geometry.
+        // Set by UiSystem for every descendant of a scrolling container; null
+        // otherwise. Also narrows hit-testing (AcceptsPoint).
+        const Rect* ClipRect() const noexcept { return hasClip_ ? &clip_ : nullptr; }
+        void SetClip(const Rect* value) noexcept { hasClip_ = value != nullptr; if (value) clip_ = *value; } // UiSystem only
+
+        // True if `point` lands on this control for input purposes.
+        bool AcceptsPoint(Vec2 point) const noexcept
+        { return rect_.Contains(point) && (!hasClip_ || clip_.Contains(point)); }
+
+        // A control that clips its children fills `out` with the clip rect (in the
+        // same space as `self`) and returns true. The base clips nothing.
+        virtual bool ClipsChildren(Rect& out, const Rect& self) const { (void)out; (void)self; return false; }
+
+        // Per-frame animation step (video playback, etc). `delta` is seconds.
+        virtual void Tick(float delta) { (void)delta; }
 
         // The control's local offset, taken from its GameObject2D transform.
         Vec2 LocalOffset() const;
@@ -101,6 +120,8 @@ namespace zengine::ui
         bool clickable_ = false;
         Rect rect_{};
         const UiContext* context_ = nullptr;
+        Rect clip_{};
+        bool hasClip_ = false;
     };
 
     // ----- Containers --------------------------------------------------------
@@ -300,5 +321,181 @@ namespace zengine::ui
         bool vertical_ = false;
         Float4 background_{0.12f, 0.12f, 0.15f, 1};
         Float4 fill_{0.30f, 0.65f, 1.0f, 1};
+    };
+
+    // ----- ZE-66 additions ---------------------------------------------
+
+    // A container that stacks its children along one axis and lets the user
+    // scroll through them. Its own rect clips the children (and every deeper
+    // descendant); children stay clickable and may themselves be containers.
+    class ScrollContainer final : public Container
+    {
+    public:
+        explicit ScrollContainer(ObjectCore& owner) : Container(owner) {}
+        const char* TypeName() const noexcept override { return "scroll"; }
+
+        float ScrollX() const noexcept { return scrollX_; }
+        float ScrollY() const noexcept { return scrollY_; }
+        void SetScrollX(float value) noexcept { scrollX_ = std::max(0.0f, value); }
+        void SetScrollY(float value) noexcept { scrollY_ = std::max(0.0f, value); }
+        void ScrollBy(float dx, float dy) noexcept { SetScrollX(scrollX_ + dx); SetScrollY(scrollY_ + dy); }
+        bool Horizontal() const noexcept { return horizontal_; }
+        void SetHorizontal(bool value) noexcept { horizontal_ = value; }
+        bool FillCross() const noexcept { return fillCross_; }
+        void SetFillCross(bool value) noexcept { fillCross_ = value; }
+        Vec2 ContentSize() const noexcept { return content_; }
+
+        void Arrange(const Rect& self, const std::vector<UiControl*>& children) override;
+        bool ClipsChildren(Rect& out, const Rect& self) const override { out = Inner(self); return true; }
+        Vec2 DesiredSize() const override { return {std::max(size_.x, minSize_.x), std::max(size_.y, minSize_.y)}; }
+    private:
+        float scrollX_ = 0, scrollY_ = 0;
+        bool horizontal_ = false;
+        bool fillCross_ = true;
+        mutable Vec2 content_{};
+    };
+
+    // A reusable push button: a background (colour or texture) that changes with
+    // the pointer state, plus a centred label. The UiControl `clicked` signal
+    // fires on release; the script class also exposes `pressed` / `released`.
+    class Button final : public UiControl
+    {
+    public:
+        explicit Button(ObjectCore& owner) : UiControl(owner) { clickable_ = true; }
+        const char* TypeName() const noexcept override { return "button"; }
+
+        enum class Visual { Normal, Hover, Pressed, Disabled };
+
+        const std::string& Text() const noexcept { return text_; }
+        void SetText(std::string value) { text_ = std::move(value); }
+        float PixelHeight() const noexcept { return pixelHeight_; }
+        void SetPixelHeight(float value) noexcept { pixelHeight_ = std::max(1.0f, value); }
+        bool Disabled() const noexcept { return disabled_; }
+        void SetDisabled(bool value) noexcept { disabled_ = value; clickable_ = !value; }
+
+        Float4 NormalColor() const noexcept { return normal_; }
+        Float4 HoverColor() const noexcept { return hover_; }
+        Float4 PressedColor() const noexcept { return pressed_; }
+        Float4 DisabledColor() const noexcept { return disabledColor_; }
+        Float4 TextColor() const noexcept { return textColor_; }
+        void SetNormalColor(Float4 v) noexcept { normal_ = v; }
+        void SetHoverColor(Float4 v) noexcept { hover_ = v; }
+        void SetPressedColor(Float4 v) noexcept { pressed_ = v; }
+        void SetDisabledColor(Float4 v) noexcept { disabledColor_ = v; }
+        void SetTextColor(Float4 v) noexcept { textColor_ = v; }
+
+        const std::string& NormalTexture() const noexcept { return normalTex_; }
+        const std::string& HoverTexture() const noexcept { return hoverTex_; }
+        const std::string& PressedTexture() const noexcept { return pressedTex_; }
+        void SetNormalTexture(std::string v) { normalTex_ = std::move(v); }
+        void SetHoverTexture(std::string v) { hoverTex_ = std::move(v); }
+        void SetPressedTexture(std::string v) { pressedTex_ = std::move(v); }
+        NineSlice Slice() const noexcept { return slice_; }
+        void SetSlice(NineSlice v) noexcept { slice_ = v; }
+
+        // Pointer state, refreshed every frame by UiSystem.
+        void SetInteraction(bool hovered, bool held) noexcept { hovered_ = hovered; held_ = held; }
+        bool Hovered() const noexcept { return hovered_; }
+        bool Held() const noexcept { return held_ && hovered_; }
+        Visual CurrentVisual() const noexcept
+        {
+            if (disabled_) return Visual::Disabled;
+            if (held_ && hovered_) return Visual::Pressed;
+            if (hovered_) return Visual::Hover;
+            return Visual::Normal;
+        }
+
+        Vec2 DesiredSize() const override;
+        void Emit(std::vector<SpriteDraw>&, std::vector<TextDraw>&) const override;
+    private:
+        std::string text_;
+        float pixelHeight_ = 16;
+        bool disabled_ = false;
+        bool hovered_ = false, held_ = false;
+        Float4 normal_{0.20f, 0.22f, 0.28f, 1};
+        Float4 hover_{0.26f, 0.29f, 0.36f, 1};
+        Float4 pressed_{0.14f, 0.40f, 0.66f, 1};
+        Float4 disabledColor_{0.16f, 0.16f, 0.18f, 1};
+        Float4 textColor_{0.95f, 0.96f, 0.98f, 1};
+        std::string normalTex_, hoverTex_, pressedTex_;
+        NineSlice slice_{};
+    };
+
+    // Plays a video asset as an ordinary textured rect. The control owns a
+    // playback clock; the host supplies frames through UiContext::resolveVideoFrame.
+    class VideoTexture final : public UiControl
+    {
+    public:
+        explicit VideoTexture(ObjectCore& owner) : UiControl(owner) {}
+        const char* TypeName() const noexcept override { return "video"; }
+
+        const std::string& Video() const noexcept { return video_; }
+        void SetVideo(std::string value) { video_ = std::move(value); }
+        bool Playing() const noexcept { return playing_; }
+        void SetPlaying(bool value) noexcept { playing_ = value; }
+        bool Loop() const noexcept { return loop_; }
+        void SetLoop(bool value) noexcept { loop_ = value; }
+        float Speed() const noexcept { return speed_; }
+        void SetSpeed(float value) noexcept { speed_ = value; }
+        Float4 Tint() const noexcept { return tint_; }
+        void SetTint(Float4 value) noexcept { tint_ = value; }
+        double Time() const noexcept { return time_; }
+        void SetTime(double value) noexcept { time_ = std::max(0.0, value); }
+        void Restart() noexcept { time_ = 0; }
+
+        void Tick(float delta) override { if (playing_) time_ += static_cast<double>(delta) * speed_; }
+        void Emit(std::vector<SpriteDraw>&, std::vector<TextDraw>&) const override;
+    private:
+        std::string video_;
+        bool playing_ = true;
+        bool loop_ = true;
+        float speed_ = 1;
+        double time_ = 0;
+        Float4 tint_{1, 1, 1, 1};
+    };
+
+    // A minimal HTML interpreter. Parses a bounded subset of markup into a stack
+    // of blocks and lays them out / paints them itself (no child GameObjects).
+    // Supported: div p h1 h2 h3 span b strong i br hr img button a ul li, plus
+    // inline style color / background / font-size. Clicking a rendered button or
+    // link fires the control's `clicked` signal.
+    class UiHtml final : public UiControl
+    {
+    public:
+        explicit UiHtml(ObjectCore& owner) : UiControl(owner) { clickable_ = true; }
+        const char* TypeName() const noexcept override { return "html"; }
+
+        const std::string& Html() const noexcept { return html_; }
+        void SetHtml(std::string value);
+        Float4 Background() const noexcept { return background_; }
+        void SetBackground(Float4 value) noexcept { background_ = value; }
+
+        std::size_t BlockCount() const noexcept { return blocks_.size(); }
+        // True if the last laid-out position `point` is over a link / button block.
+        bool PointHitsLink(Vec2 point) const;
+
+        Vec2 DesiredSize() const override;
+        void Arrange(const Rect& self, const std::vector<UiControl*>& children) override;
+        void Emit(std::vector<SpriteDraw>&, std::vector<TextDraw>&) const override;
+    private:
+        struct Block
+        {
+            enum class Kind { Text, Rule, Image, Button };
+            Kind kind = Kind::Text;
+            std::string text;
+            std::string src;              // image source / link target
+            Float4 color{0.95f, 0.96f, 0.98f, 1};
+            Float4 background{0, 0, 0, 0};
+            float fontSize = 16;
+            bool bold = false;
+            bool link = false;
+            Rect rect{};                  // resolved by Arrange
+        };
+        float BlockHeight(const Block& block) const;
+        void Parse();
+
+        std::string html_;
+        std::vector<Block> blocks_;
+        Float4 background_{0, 0, 0, 0};
     };
 }

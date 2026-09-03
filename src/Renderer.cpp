@@ -463,6 +463,7 @@ void Renderer::RenderSprites(const ViewportFrame& frame)
     for (const auto& text : frame.texts)
     {
         auto glyphs = fontAtlas_.Layout(text.text, text.x, text.y, text.pixelHeight, text.color, fontTexture_);
+        for (auto& glyph : glyphs) glyph.clip = text.clip;
         draws.insert(draws.end(), glyphs.begin(), glyphs.end());
     }
     if (frame.fps)

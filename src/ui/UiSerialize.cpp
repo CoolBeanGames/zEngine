@@ -61,6 +61,7 @@ namespace zengine::ui
         static const std::vector<std::string> types = {
             "control", "container", "hbox", "vbox", "center", "margin", "panel",
             "text", "longText", "textEntry", "textureRect", "colorRect", "progressBar",
+            "scroll", "button", "video", "html",
         };
         return types;
     }
@@ -86,6 +87,10 @@ namespace zengine::ui
         if (type == "textureRect")  return owner.AddBehavior<TextureRect>();
         if (type == "colorRect")    return owner.AddBehavior<ColorRect>();
         if (type == "progressBar")  return owner.AddBehavior<ProgressBar>();
+        if (type == "scroll")       return owner.AddBehavior<ScrollContainer>();
+        if (type == "button")       return owner.AddBehavior<Button>();
+        if (type == "video")        return owner.AddBehavior<VideoTexture>();
+        if (type == "html")         return owner.AddBehavior<UiHtml>();
         throw std::invalid_argument("Unknown UI control type '" + std::string(type) + "'.");
     }
 
@@ -144,6 +149,42 @@ namespace zengine::ui
             add("fill_color", Vec4Text(c->Fill()));
             add("background_color", Vec4Text(c->Background()));
         }
+        if (const auto* c = dynamic_cast<const ScrollContainer*>(&control))
+        {
+            add("scroll_x", FloatText(c->ScrollX()));
+            add("scroll_y", FloatText(c->ScrollY()));
+            add("horizontal", c->Horizontal() ? "1" : "0");
+            add("fill_cross", c->FillCross() ? "1" : "0");
+        }
+        if (const auto* c = dynamic_cast<const Button*>(&control))
+        {
+            add("text", c->Text());
+            add("pixel_height", FloatText(c->PixelHeight()));
+            add("disabled", c->Disabled() ? "1" : "0");
+            add("normal_color", Vec4Text(c->NormalColor()));
+            add("hover_color", Vec4Text(c->HoverColor()));
+            add("pressed_color", Vec4Text(c->PressedColor()));
+            add("disabled_color", Vec4Text(c->DisabledColor()));
+            add("text_color", Vec4Text(c->TextColor()));
+            add("normal_texture", c->NormalTexture());
+            add("hover_texture", c->HoverTexture());
+            add("pressed_texture", c->PressedTexture());
+            const NineSlice s = c->Slice();
+            add("slice", FloatText(s.left) + " " + FloatText(s.top) + " " + FloatText(s.right) + " " + FloatText(s.bottom));
+        }
+        if (const auto* c = dynamic_cast<const VideoTexture*>(&control))
+        {
+            add("video", c->Video());
+            add("playing", c->Playing() ? "1" : "0");
+            add("loop", c->Loop() ? "1" : "0");
+            add("speed", FloatText(c->Speed()));
+            add("tint", Vec4Text(c->Tint()));
+        }
+        if (const auto* c = dynamic_cast<const UiHtml*>(&control))
+        {
+            add("html", c->Html());
+            add("background", Vec4Text(c->Background()));
+        }
         return props;
     }
 
@@ -166,7 +207,11 @@ namespace zengine::ui
         {
             if (auto* h = dynamic_cast<HTileBoxContainer*>(&control)) h->SetFillCross(ParseBool(value));
             else if (auto* v = dynamic_cast<VTileBoxContainer*>(&control)) v->SetFillCross(ParseBool(value));
+            else if (auto* s = dynamic_cast<ScrollContainer*>(&control)) s->SetFillCross(ParseBool(value));
         }
+        else if (key == "scroll_x") { if (auto* s = dynamic_cast<ScrollContainer*>(&control)) s->SetScrollX(ParseFloat(value)); }
+        else if (key == "scroll_y") { if (auto* s = dynamic_cast<ScrollContainer*>(&control)) s->SetScrollY(ParseFloat(value)); }
+        else if (key == "horizontal") { if (auto* s = dynamic_cast<ScrollContainer*>(&control)) s->SetHorizontal(ParseBool(value)); }
         else if (key == "margins")
         {
             if (auto* c = dynamic_cast<MarginContainer*>(&control))
@@ -184,25 +229,41 @@ namespace zengine::ui
         {
             if (auto* p = dynamic_cast<PanelContainer*>(&control)) p->SetTint(ParseVec4(value));
             else if (auto* t = dynamic_cast<TextureRect*>(&control)) t->SetTint(ParseVec4(value));
+            else if (auto* v = dynamic_cast<VideoTexture*>(&control)) v->SetTint(ParseVec4(value));
         }
         else if (key == "slice")
         {
-            if (auto* p = dynamic_cast<PanelContainer*>(&control))
-            {
-                const Float4 s = ParseVec4(value);
-                p->SetSlice({s.x, s.y, s.z, s.w});
-            }
+            const Float4 s = ParseVec4(value);
+            if (auto* p = dynamic_cast<PanelContainer*>(&control)) p->SetSlice({s.x, s.y, s.z, s.w});
+            else if (auto* b = dynamic_cast<Button*>(&control)) b->SetSlice({s.x, s.y, s.z, s.w});
         }
+        else if (key == "disabled") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetDisabled(ParseBool(value)); }
+        else if (key == "normal_color") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetNormalColor(ParseVec4(value)); }
+        else if (key == "hover_color") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetHoverColor(ParseVec4(value)); }
+        else if (key == "pressed_color") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetPressedColor(ParseVec4(value)); }
+        else if (key == "disabled_color") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetDisabledColor(ParseVec4(value)); }
+        else if (key == "text_color") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetTextColor(ParseVec4(value)); }
+        else if (key == "normal_texture") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetNormalTexture(std::string(value)); }
+        else if (key == "hover_texture") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetHoverTexture(std::string(value)); }
+        else if (key == "pressed_texture") { if (auto* b = dynamic_cast<Button*>(&control)) b->SetPressedTexture(std::string(value)); }
+        else if (key == "video") { if (auto* v = dynamic_cast<VideoTexture*>(&control)) v->SetVideo(std::string(value)); }
+        else if (key == "playing") { if (auto* v = dynamic_cast<VideoTexture*>(&control)) v->SetPlaying(ParseBool(value)); }
+        else if (key == "loop") { if (auto* v = dynamic_cast<VideoTexture*>(&control)) v->SetLoop(ParseBool(value)); }
+        else if (key == "speed") { if (auto* v = dynamic_cast<VideoTexture*>(&control)) v->SetSpeed(ParseFloat(value)); }
+        else if (key == "html") { if (auto* h = dynamic_cast<UiHtml*>(&control)) h->SetHtml(std::string(value)); }
+        else if (key == "background") { if (auto* h = dynamic_cast<UiHtml*>(&control)) h->SetBackground(ParseVec4(value)); }
         else if (key == "text")
         {
             if (auto* t = dynamic_cast<Text*>(&control)) t->SetValue(std::string(value));
             else if (auto* e = dynamic_cast<TextEntry*>(&control)) e->SetValue(std::string(value));
+            else if (auto* b = dynamic_cast<Button*>(&control)) b->SetText(std::string(value));
         }
         else if (key == "placeholder") { if (auto* e = dynamic_cast<TextEntry*>(&control)) e->SetPlaceholder(std::string(value)); }
         else if (key == "pixel_height")
         {
             if (auto* t = dynamic_cast<Text*>(&control)) t->SetPixelHeight(ParseFloat(value));
             else if (auto* e = dynamic_cast<TextEntry*>(&control)) e->SetPixelHeight(ParseFloat(value));
+            else if (auto* b = dynamic_cast<Button*>(&control)) b->SetPixelHeight(ParseFloat(value));
         }
         else if (key == "color")
         {

@@ -15,6 +15,9 @@ public:
     void Draw(const std::function<bool(GameObjectId)>& visible);
     // Delivers a UI "clicked" signal to the running script that owns `id`, if any.
     void UiClicked(GameObjectId id) { scene_.scripts.EmitSignal(id, "clicked"); }
+    // ZE-66: button down / up signals (also used by other controls that opt in).
+    void UiPressed(GameObjectId id) { scene_.scripts.EmitSignal(id, "pressed"); }
+    void UiReleased(GameObjectId id) { scene_.scripts.EmitSignal(id, "released"); }
     const ObjectStore& Objects() const {return scene_.objects;}
     ObjectStore& Objects() {return scene_.objects;}
     const std::map<GameObjectId,std::filesystem::path>& Models() const {return models_;}

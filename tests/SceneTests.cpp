@@ -161,6 +161,34 @@ int main()
             auto* rt=uiCopy.objects.Find(uiCopy.objects.At(2).Id())->GetBehavior<ui::Text>();
             Check(rt && rt->Value()=="Score: \"9000\"" && rt->Clickable(),"Text value with quotes lost on restore");
         }
+        // ZE-66: the new scroll / button / video / html controls round-trip too.
+        {
+            ObjectStore s; ScriptHost h;
+            auto& scrollObj=s.Restore2D(11,"List");
+            auto& scroll=dynamic_cast<ui::ScrollContainer&>(ui::AddUiControl(scrollObj,"scroll"));
+            scroll.SetScrollY(24); scroll.SetHorizontal(false); scroll.SetFillCross(false);
+            auto& btnObj=s.Create2D("Ok"); btnObj.SetParent(scrollObj.Id());
+            auto& btn=dynamic_cast<ui::Button&>(ui::AddUiControl(btnObj,"button"));
+            btn.SetText("Play \"now\""); btn.SetDisabled(true); btn.SetPressedColor({1,0,0,1});
+            auto& vidObj=s.Create2D("Clip"); vidObj.SetParent(scrollObj.Id());
+            auto& vid=dynamic_cast<ui::VideoTexture&>(ui::AddUiControl(vidObj,"video"));
+            vid.SetVideo("media/intro.zvid"); vid.SetLoop(false); vid.SetSpeed(1.5f);
+            auto& docObj=s.Create2D("Doc"); docObj.SetParent(scrollObj.Id());
+            auto& doc=dynamic_cast<ui::UiHtml&>(ui::AddUiControl(docObj,"html"));
+            doc.SetHtml("<h2>Hi</h2><p>there</p>");
+
+            const auto enc=scenes::Encode(scenes::Capture(s,h));
+            auto copy=scenes::Instantiate(scenes::Decode(enc));
+            Check(scenes::Encode(scenes::Capture(copy.objects,copy.scripts))==enc,"ZE-66 UI scene round trip changed authored data");
+            auto* rs=copy.objects.Find(11)->GetBehavior<ui::ScrollContainer>();
+            Check(rs && rs->ScrollY()==24 && !rs->FillCross(),"ScrollContainer props lost");
+            auto* rbtn=copy.objects.Find(copy.objects.At(1).Id())->GetBehavior<ui::Button>();
+            Check(rbtn && rbtn->Text()=="Play \"now\"" && rbtn->Disabled() && !rbtn->Clickable() && rbtn->PressedColor().x==1,"Button props lost");
+            auto* rvid=copy.objects.Find(copy.objects.At(2).Id())->GetBehavior<ui::VideoTexture>();
+            Check(rvid && rvid->Video()=="media/intro.zvid" && !rvid->Loop() && rvid->Speed()==1.5f,"VideoTexture props lost");
+            auto* rdoc=copy.objects.Find(copy.objects.At(3).Id())->GetBehavior<ui::UiHtml>();
+            Check(rdoc && rdoc->Html()=="<h2>Hi</h2><p>there</p>" && rdoc->BlockCount()==2,"UiHtml markup lost");
+        }
         Reject([&]{objects.Restore(42,"Duplicate");});
         Reject([&]{objects.Restore(std::numeric_limits<GameObjectId>::max(),"Overflow");});
         std::filesystem::remove_all(root); // Only this test's freshly reserved directory.

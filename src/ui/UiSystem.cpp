@@ -4,7 +4,18 @@
 
 namespace zengine::ui
 {
-    void UiSystem::Build(ObjectStore& objects, Vec2 screenSize, const UiContext& context)
+    namespace
+    {
+        Rect Intersect(const Rect& a, const Rect& b)
+        {
+            const float x0 = std::max(a.x, b.x), y0 = std::max(a.y, b.y);
+            const float x1 = std::min(a.x + a.width, b.x + b.width);
+            const float y1 = std::min(a.y + a.height, b.y + b.height);
+            return {x0, y0, std::max(0.0f, x1 - x0), std::max(0.0f, y1 - y0)};
+        }
+    }
+
+    void UiSystem::Build(ObjectStore& objects, Vec2 screenSize, const UiContext& context, float deltaSeconds)
     {
         nodes_.clear();
         roots_.clear();
@@ -18,6 +29,7 @@ namespace zengine::ui
             auto* control = object.GetBehavior<UiControl>();
             if (!control) continue;
             control->SetContext(&context);
+            if (deltaSeconds > 0) control->Tick(deltaSeconds);
             index_.emplace(object.Id(), nodes_.size());
             nodes_.push_back(Node{object.Id(), control, {}, control->Visible()});
         }
@@ -43,7 +55,7 @@ namespace zengine::ui
             nodes_[r].control->SetLayoutRect(ResolveAnchor(
                 screenRect, nodes_[r].control->GetAnchor(), nodes_[r].control->LocalOffset(),
                 nodes_[r].control->DesiredSize()));
-            Layout(r, nodes_[r].control->LayoutRect());
+            Layout(r, nodes_[r].control->LayoutRect(), nullptr);
         }
     }
 
@@ -54,20 +66,30 @@ namespace zengine::ui
         });
     }
 
-    void UiSystem::Layout(std::size_t index, const Rect& area)
+    void UiSystem::Layout(std::size_t index, const Rect& area, const Rect* clip)
     {
         Node& node = nodes_[index];
         node.control->SetLayoutRect(area);
+        node.control->SetClip(clip);
 
         std::vector<UiControl*> childControls;
         childControls.reserve(node.children.size());
         for (std::size_t c : node.children) childControls.push_back(nodes_[c].control);
         node.control->Arrange(area, childControls);
 
+        Rect ownClip{};
+        Rect childClipStorage{};
+        const Rect* childClip = clip;
+        if (node.control->ClipsChildren(ownClip, area))
+        {
+            childClipStorage = clip ? Intersect(*clip, ownClip) : ownClip;
+            childClip = &childClipStorage;
+        }
+
         for (std::size_t c : node.children)
         {
             nodes_[c].visible = node.visible && nodes_[c].control->Visible();
-            Layout(c, nodes_[c].control->LayoutRect());
+            Layout(c, nodes_[c].control->LayoutRect(), childClip);
         }
     }
 
@@ -91,7 +113,16 @@ namespace zengine::ui
     void UiSystem::Emit(std::vector<SpriteDraw>& sprites, std::vector<TextDraw>& texts) const
     {
         for (std::size_t n : PaintOrder())
+        {
+            const std::size_t firstSprite = sprites.size(), firstText = texts.size();
             nodes_[n].control->Emit(sprites, texts);
+            if (const Rect* clip = nodes_[n].control->ClipRect())
+            {
+                const SpriteRect r{clip->x, clip->y, clip->width, clip->height};
+                for (std::size_t i = firstSprite; i < sprites.size(); ++i) sprites[i].clip = r;
+                for (std::size_t i = firstText; i < texts.size(); ++i) texts[i].clip = r;
+            }
+        }
     }
 
     const Rect* UiSystem::RectOf(GameObjectId id) const
@@ -107,20 +138,41 @@ namespace zengine::ui
         for (auto it = painted.rbegin(); it != painted.rend(); ++it)
         {
             const Node& node = nodes_[*it];
-            if (node.control->Clickable() && node.control->LayoutRect().Contains(pixel))
+            if (node.control->Clickable() && node.control->AcceptsPoint(pixel))
                 return node.id;
         }
         return 0;
     }
 
-    std::vector<GameObjectId> UiSystem::Interact(Vec2 pixel, bool pressed, const std::vector<char32_t>& typed)
+    std::vector<GameObjectId> UiSystem::Interact(Vec2 pixel, bool pressed,
+                                                const std::vector<char32_t>& typed, float wheelDelta)
     {
         std::vector<GameObjectId> clicks;
+        presses_.clear();
+        releases_.clear();
         const GameObjectId under = HitTest(pixel);
 
-        if (pressed && !pressedOn_)
+        // Mouse wheel -> nearest scrolling container under the cursor.
+        if (wheelDelta != 0.0f)
         {
-            pressedOn_ = under ? under : GameObjectId{1}; // sentinel: press began on empty space
+            const auto painted = PaintOrder();
+            for (auto it = painted.rbegin(); it != painted.rend(); ++it)
+            {
+                Node& node = nodes_[*it];
+                auto* scroll = dynamic_cast<ScrollContainer*>(node.control);
+                if (!scroll || !node.control->AcceptsPoint(pixel)) continue;
+                const float step = 32.0f * wheelDelta;
+                if (scroll->Horizontal()) scroll->SetScrollX(scroll->ScrollX() - step);
+                else scroll->SetScrollY(scroll->ScrollY() - step);
+                break;
+            }
+        }
+
+        if (pressed && !pressActive_)
+        {
+            pressActive_ = true;
+            pressedOn_ = under; // 0 == press began over empty space
+            if (under) presses_.push_back(under);
             focused_ = 0;
             if (under)
             {
@@ -133,9 +185,14 @@ namespace zengine::ui
                 if (node.id != focused_)
                     if (auto* entry = dynamic_cast<TextEntry*>(node.control)) entry->SetFocused(false);
         }
-        else if (!pressed && pressedOn_)
+        else if (!pressed && pressActive_)
         {
-            if (pressedOn_ != GameObjectId{1} && under == pressedOn_) clicks.push_back(under);
+            if (pressedOn_ && under == pressedOn_)
+            {
+                clicks.push_back(under);
+                releases_.push_back(under);
+            }
+            pressActive_ = false;
             pressedOn_ = 0;
         }
 
@@ -146,6 +203,12 @@ namespace zengine::ui
                 if (auto* entry = dynamic_cast<TextEntry*>(nodes_[it->second].control))
                     for (char32_t codepoint : typed) entry->Type(codepoint);
         }
+
+        // Refresh Button pointer state for visuals (after pressedOn_ is updated).
+        for (auto& node : nodes_)
+            if (auto* button = dynamic_cast<Button*>(node.control))
+                button->SetInteraction(node.id == under, pressed && pressedOn_ == node.id);
+
         return clicks;
     }
 }

@@ -31,6 +31,7 @@ namespace
         };
         ctx.textureSize = [](std::string_view) { return Vec2{}; };
         ctx.resolveTexture = [](std::string_view) { return TextureHandle{}; };
+        ctx.resolveVideoFrame = [](std::string_view, double, bool) { return TextureHandle{}; };
         return ctx;
     }
 }
@@ -260,6 +261,159 @@ void EmitBatch()
     Check(texts.empty(), "hidden control is not emitted");
 }
 
+void ScrollContainerBehaviour()
+{
+    const auto ctx = MakeContext();
+    ObjectStore store;
+
+    auto& scrollObj = store.Create2D("Scroll");
+    auto& scroll = scrollObj.AddBehavior<ScrollContainer>();
+    scroll.SetAnchor(Anchor::TopLeft);
+    scroll.SetSize({200, 100});
+    scroll.SetSpacing(0);
+
+    for (int i = 0; i < 5; ++i)
+    {
+        auto& rowObj = store.Create2D("Row");
+        rowObj.SetParent(scrollObj.Id());
+        auto& row = rowObj.AddBehavior<ColorRect>();
+        row.SetSize({180, 40});
+        row.SetClickable(true);
+        row.SetOrder(i);
+    }
+
+    UiSystem ui;
+    ui.Build(store, {800, 600}, ctx);
+
+    // Content is 5*40 = 200 tall; viewport 100 -> first row at the top.
+    std::vector<GameObjectId> rows;
+    for (std::size_t i = 0; i < store.Size(); ++i)
+        if (store.At(i).Name() == "Row") rows.push_back(store.At(i).Id());
+    Check(Near(ui.RectOf(rows[0])->y, 0), "first row at content top");
+    Check(Near(scroll.ContentSize().y, 200), "content height measured");
+
+    // Wheel down (negative) scrolls the content up.
+    ui.Interact({50, 50}, false, {}, -3.0f);
+    ui.Build(store, {800, 600}, ctx);
+    Check(scroll.ScrollY() > 0, "wheel scrolled the container");
+    Check(ui.RectOf(rows[0])->y < 0, "first row moved above the viewport");
+
+    // A row scrolled fully out of view is no longer hit-testable (clipped).
+    scroll.SetScrollY(200); // clamped to 100 on next build
+    ui.Build(store, {800, 600}, ctx);
+    Check(Near(scroll.ScrollY(), 100), "scroll clamped to max");
+    Check(ui.HitTest({50, 5}) != rows[0], "clipped-away row is not hit at the very top");
+    Check(ui.HitTest({50, 90}) == rows[4], "last row is hit near the bottom");
+
+    // Emitted geometry for a clipped child carries the clip rect.
+    std::vector<SpriteDraw> sprites; std::vector<TextDraw> texts;
+    ui.Emit(sprites, texts);
+    bool anyClipped = false;
+    for (const auto& s : sprites) if (s.clip.width > 0 && s.clip.height > 0) anyClipped = true;
+    Check(anyClipped, "scroll children emit with a clip rect");
+}
+
+void ButtonStatesAndSignals()
+{
+    const auto ctx = MakeContext();
+    ObjectStore store;
+
+    auto& obj = store.Create2D("Btn");
+    auto& button = obj.AddBehavior<Button>();
+    button.SetAnchor(Anchor::TopLeft);
+    button.SetSize({120, 32});
+    button.SetText("Go");
+
+    UiSystem ui;
+    ui.Build(store, {400, 300}, ctx);
+
+    Check(button.CurrentVisual() == Button::Visual::Normal, "button starts normal");
+
+    // Hover (move over, not pressed).
+    ui.Interact({20, 10}, false);
+    Check(button.CurrentVisual() == Button::Visual::Hover, "pointer over -> hover visual");
+
+    // Press over the button.
+    auto presses = ui.Interact({20, 10}, true);
+    Check(ui.Presses().size() == 1 && ui.Presses()[0] == obj.Id(), "press reported");
+    Check(button.CurrentVisual() == Button::Visual::Pressed, "held -> pressed visual");
+
+    // Release over the button -> click + release.
+    auto clicks = ui.Interact({20, 10}, false);
+    Check(clicks.size() == 1 && clicks[0] == obj.Id(), "release over button = click");
+    Check(ui.Releases().size() == 1 && ui.Releases()[0] == obj.Id(), "release reported");
+
+    // Disabled buttons are not clickable and paint the disabled visual.
+    button.SetDisabled(true);
+    ui.Build(store, {400, 300}, ctx);
+    Check(ui.HitTest({20, 10}) == 0, "disabled button is not hit");
+    Check(button.CurrentVisual() == Button::Visual::Disabled, "disabled visual");
+
+    std::vector<SpriteDraw> sprites; std::vector<TextDraw> texts;
+    ui.Emit(sprites, texts);
+    Check(!sprites.empty() && !texts.empty() && texts[0].text == "Go", "button emits a background + label");
+}
+
+void VideoPlayback()
+{
+    UiContext ctx = MakeContext();
+    std::string lastAsset; double lastTime = -1; bool lastLoop = false;
+    ctx.resolveVideoFrame = [&](std::string_view a, double t, bool loop) {
+        lastAsset = std::string(a); lastTime = t; lastLoop = loop; return TextureHandle{};
+    };
+
+    ObjectStore store;
+    auto& obj = store.Create2D("Vid");
+    auto& video = obj.AddBehavior<VideoTexture>();
+    video.SetAnchor(Anchor::Fill);
+    video.SetVideo("clips/intro.zvid");
+    video.SetSpeed(2.0f);
+
+    UiSystem ui;
+    ui.Build(store, {320, 240}, ctx, 0.5f); // advance 0.5s at 2x -> t = 1.0
+    std::vector<SpriteDraw> sprites; std::vector<TextDraw> texts;
+    ui.Emit(sprites, texts);
+    Check(lastAsset == "clips/intro.zvid", "video asset forwarded to the host");
+    Check(Near(static_cast<float>(lastTime), 1.0f), "playback clock advanced by delta * speed");
+
+    video.SetPlaying(false);
+    ui.Build(store, {320, 240}, ctx, 5.0f);
+    ui.Emit(sprites, texts);
+    Check(Near(static_cast<float>(video.Time()), 1.0f), "paused video does not advance");
+}
+
+void HtmlInterpreter()
+{
+    const auto ctx = MakeContext();
+    ObjectStore store;
+
+    auto& obj = store.Create2D("Html");
+    auto& html = obj.AddBehavior<UiHtml>();
+    html.SetAnchor(Anchor::TopLeft);
+    html.SetSize({400, 300});
+    html.SetHtml("<h1 style=\"color:#ff0000\">Title</h1><p>Hello &amp; welcome</p><hr>"
+                 "<img src=\"pic.png\"><button id=\"ok\">OK</button>");
+
+    Check(html.BlockCount() == 5, "html parsed into five blocks (h1, p, hr, img, button)");
+
+    UiSystem ui;
+    ui.Build(store, {800, 600}, ctx);
+
+    std::vector<SpriteDraw> sprites; std::vector<TextDraw> texts;
+    ui.Emit(sprites, texts);
+    bool sawTitle = false, sawBody = false, sawButton = false;
+    for (const auto& t : texts)
+    {
+        if (t.text == "Title") { sawTitle = true; Check(Near(t.color.x, 1.0f) && Near(t.color.y, 0.0f), "h1 inline colour applied"); }
+        if (t.text == "Hello & welcome") sawBody = true;
+        if (t.text == "OK") sawButton = true;
+    }
+    Check(sawTitle && sawBody && sawButton, "html emits its text runs");
+
+    // The rendered <button> region reports as a link hit; the control is clickable.
+    Check(ui.HitTest({10, 10}) == obj.Id(), "html control is clickable");
+}
+
 int main()
 {
     try
@@ -270,7 +424,12 @@ int main()
         HitTestAndClicks();
         TextEntryTyping();
         EmitBatch();
-        std::cout << "PASS: anchors, containers, hit-testing, clicks, text entry, batched emit\n";
+        ScrollContainerBehaviour();
+        ButtonStatesAndSignals();
+        VideoPlayback();
+        HtmlInterpreter();
+        std::cout << "PASS: anchors, containers, hit-testing, clicks, text entry, batched emit, "
+                     "scroll, button, video, html\n";
         return 0;
     }
     catch (const std::exception& error)
