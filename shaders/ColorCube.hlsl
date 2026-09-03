@@ -15,7 +15,12 @@ cbuffer SceneConstants : register(b0)
     float4 FogParams;      // ZE-75: x near, y far, z density, w volumetric step count
     float4 HeightFog;      // ZE-75: x base, y falloff, z strength, w volumetric on
     float4 MaterialSpec;   // ZE-75: x roughness, y specular
+    float4x4 ShadowMatrix; // ZE-112: world -> shadow-caster light clip space
+    float4 ShadowParams;   // ZE-112: x strength (0 = no shadows), y texel size, z depth bias, w caster light index
 };
+
+Texture2D ShadowMap : register(t1);
+SamplerComparisonState ShadowSampler : register(s1);
 
 struct GpuLight
 {
@@ -47,6 +52,7 @@ struct PixelInput
     float3 color : COLOR;
     float2 uv : TEXCOORD0;
     float3 worldPos : TEXCOORD1;
+    float3 shadowTerm : TEXCOORD2; // ZE-112: the shadow-caster light's own contribution
 };
 
 float LightAtten(GpuLight light, int type, float3 worldPos, out float3 toLight)
@@ -65,11 +71,13 @@ float LightAtten(GpuLight light, int type, float3 worldPos, out float3 toLight)
     return a;
 }
 
-float3 ShadeVertex(float3 worldPos, float3 worldNormal)
+float3 ShadeVertex(float3 worldPos, float3 worldNormal, out float3 shadowTerm)
 {
+    shadowTerm = 0.0f;
     float3 result = Ambient.rgb;
     float3 toView = normalize(CameraPos.xyz - worldPos);
     float shininess = lerp(6.0f, 120.0f, saturate(1.0f - MaterialSpec.x));
+    int casterIndex = (int)ShadowParams.w;
     int count = (int)LightParams.x;
     [loop]
     for (int i = 0; i < count; ++i)
@@ -79,15 +87,35 @@ float3 ShadeVertex(float3 worldPos, float3 worldNormal)
         float3 toLight;
         float attenuation = LightAtten(light, type, worldPos, toLight);
         float ndotl = saturate(dot(worldNormal, toLight));
-        result += light.colorIntensity.xyz * (ndotl * attenuation);
+        float3 contribution = light.colorIntensity.xyz * (ndotl * attenuation);
         if (MaterialSpec.y > 0.001f && ndotl > 0.0f)
         {
             float3 h = normalize(toLight + toView);
             float spec = pow(saturate(dot(worldNormal, h)), shininess);
-            result += light.colorIntensity.xyz * (spec * attenuation * MaterialSpec.y);
+            contribution += light.colorIntensity.xyz * (spec * attenuation * MaterialSpec.y);
         }
+        result += contribution;
+        if (i == casterIndex) shadowTerm = contribution;
     }
     return result;
+}
+
+// 0 = fully shadowed, 1 = lit. PCF 3x3.
+float ShadowFactor(float3 worldPos)
+{
+    if (ShadowParams.x < 0.001f) return 1.0f;
+    float4 lc = mul(float4(worldPos, 1.0f), ShadowMatrix);
+    lc.xyz /= lc.w;
+    float2 uv = lc.xy * float2(0.5f, -0.5f) + 0.5f;
+    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f || lc.z > 1.0f) return 1.0f;
+    float depth = lc.z - ShadowParams.z;
+    float sum = 0.0f;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+            sum += ShadowMap.SampleCmpLevelZero(ShadowSampler, uv + float2(x, y) * ShadowParams.y, depth);
+    return lerp(1.0f, sum / 9.0f, ShadowParams.x);
 }
 
 float FogAmount(float3 worldPos)
@@ -145,11 +173,14 @@ PixelInput VSMain(VertexInput input)
     output.position = mul(float4(input.position, 1.0f), WorldViewProjection);
     output.worldPos = mul(float4(input.position, 1.0f), World).xyz;
 
+    output.shadowTerm = 0.0f;
     if (Ambient.w > 0.5f && LightParams.x > 0.5f)
     {
         float3 n = mul(float4(input.normal, 0.0f), NormalWorld).xyz;
         float3 worldNormal = n * rsqrt(max(dot(n, n), 1e-20f));
-        output.color = input.color * ShadeVertex(output.worldPos, worldNormal);
+        float3 shadowTerm;
+        output.color = input.color * ShadeVertex(output.worldPos, worldNormal, shadowTerm);
+        output.shadowTerm = input.color * shadowTerm;
     }
     else
     {
@@ -161,7 +192,10 @@ PixelInput VSMain(VertexInput input)
 
 float4 PSMain(PixelInput input) : SV_TARGET
 {
-    float3 lit = input.color * Albedo.Sample(AlbedoSampler, input.uv).rgb * MaterialTint.rgb;
+    // ZE-112: darken the shadow-caster light's contribution where the fragment is occluded.
+    float shadow = ShadowFactor(input.worldPos);
+    float3 shaded = max(input.color - input.shadowTerm * (1.0f - shadow), 0.0f);
+    float3 lit = shaded * Albedo.Sample(AlbedoSampler, input.uv).rgb * MaterialTint.rgb;
 
     float fog = FogAmount(input.worldPos);
     float3 result = lerp(lit, FogColorMode.rgb, fog) + Volumetric(input.worldPos);

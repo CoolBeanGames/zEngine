@@ -105,6 +105,7 @@ target_link_libraries(zPlayer PRIVATE zEngineGameRuntime zEngineRenderer)
 add_custom_command(TARGET zPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:zPlayer>/shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorCube.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/ColorCube.hlsl"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShadowDepth.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/ShadowDepth.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Sprite.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/Sprite.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx/LICENSE" "$<TARGET_FILE_DIR:zPlayer>/ufbx-LICENSE.txt")
 add_custom_command(TARGET zPlayer POST_BUILD
@@ -175,6 +176,9 @@ add_custom_command(TARGET zEngine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorCube.hlsl"
             "$<TARGET_FILE_DIR:zEngine>/shaders/ColorCube.hlsl"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShadowDepth.hlsl"
+            "$<TARGET_FILE_DIR:zEngine>/shaders/ShadowDepth.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Sprite.hlsl"
             "$<TARGET_FILE_DIR:zEngine>/shaders/Sprite.hlsl"

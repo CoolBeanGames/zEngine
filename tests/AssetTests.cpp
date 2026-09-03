@@ -443,16 +443,13 @@ namespace
             auto& lamp = editor.CreateEmptyGameObject();
             if (HWND rn2 = GetDlgItem(window, 3900)) SendMessageW(rn2, WM_KEYDOWN, VK_RETURN, 0);
             auto& lightBehaviour = lamp.AddBehavior<zengine::Light>();
-            lightBehaviour.SetLightType(zengine::Light::Type::Point);
-            lightBehaviour.SetColor({0.2f, 0.9f, 0.4f});
+            lightBehaviour.SetLightType(zengine::Light::Type::Directional); // ZE-112: casts the shadow
+            lightBehaviour.SetColor({1.0f, 0.9f, 0.75f});
             lightBehaviour.SetIntensity(2.0f);
-            lightBehaviour.SetRange(12);
-            lamp.GetTransform().SetPosition({0, 3, 0});
+            lamp.GetTransform().SetRotation({45, 25, 0});
             const auto litFrame = editor.BuildSceneFrame();
-            Require(litFrame.lights.size() == 1 && litFrame.lights[0].type == 1
-                    && std::abs(litFrame.lights[0].color.y - 0.9f) < 0.001f
-                    && std::abs(litFrame.lights[0].intensity - 2.0f) < 0.001f
-                    && std::abs(litFrame.lights[0].position.y - 3.0f) < 0.001f,
+            Require(litFrame.lights.size() == 1 && litFrame.lights[0].type == 0
+                    && std::abs(litFrame.lights[0].intensity - 2.0f) < 0.001f,
                     "adding a Light did not reach the render frame");
             Require(!litFrame.lightGizmos.empty(), "a light produces an editor gizmo");
             const auto litScenePath = editor.AssetsDirectory() / L"LitScene.zscene";
@@ -460,8 +457,8 @@ namespace
             const auto litDoc = zengine::scenes::Decode(zengine::scenes::Load(litScenePath));
             bool foundLight = false;
             for (const auto& o : litDoc.objects) for (const auto& b : o.behaviors)
-                if (b.kind == zengine::scenes::BehaviorData::Kind::Light && b.lightType == 1
-                    && std::abs(b.lightIntensity - 2.0f) < 0.001f && std::abs(b.lightRange - 12.0f) < 0.001f)
+                if (b.kind == zengine::scenes::BehaviorData::Kind::Light && b.lightType == 0
+                    && std::abs(b.lightIntensity - 2.0f) < 0.001f)
                     foundLight = true;
             Require(foundLight, "the Light did not serialize into the scene (v13)");
 

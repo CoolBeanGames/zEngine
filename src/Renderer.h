@@ -78,6 +78,13 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> axesBuffer_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> colliderBuffer_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> overlayDepth_;
+    // ZE-112: single directional shadow map.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> shadowTexture_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilView> shadowDsv_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shadowSrv_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_;
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> shadowVertexShader_;
+    void CreateShadowResources();
     UINT gridVertexCount_ = 0;
     UINT axesVertexCount_ = 0;
     MeshHandle cube_;

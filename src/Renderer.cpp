@@ -101,6 +101,8 @@ struct Renderer::SceneConstants
     XMFLOAT4 fogParams{8, 60, 0.03f, 6};           // near, far, density, volumetric steps
     XMFLOAT4 heightFog{0, 6, 0, 0};                // base, falloff, strength, volumetric on
     XMFLOAT4 materialSpec{0.5f, 0, 0, 0};          // roughness, specular
+    XMFLOAT4X4 shadowMatrix{};                     // ZE-112: world -> shadow light clip
+    XMFLOAT4 shadowParams{0, 0, 0, -1};            // strength, texel size, bias, caster index (-1 none)
 };
 struct Renderer::LightConstants
 {
@@ -142,8 +144,43 @@ void Renderer::Initialize(HWND window, const std::uint32_t width, const std::uin
     rasterizer.CullMode = D3D11_CULL_NONE; // Static previews also display mirrored/two-sided FBX geometry.
     rasterizer.DepthClipEnable = TRUE;
     ThrowIfFailed(device_->CreateRasterizerState(&rasterizer, &rasterizer_), "Create rasterizer");
+    CreateShadowResources();
     CreateEditorGuides();
     CreateSpritePass();
+}
+
+void Renderer::CreateShadowResources()
+{
+    constexpr UINT kSize = 2048;
+    D3D11_TEXTURE2D_DESC t{};
+    t.Width = t.Height = kSize;
+    t.MipLevels = t.ArraySize = 1;
+    t.Format = DXGI_FORMAT_R32_TYPELESS;
+    t.SampleDesc.Count = 1;
+    t.Usage = D3D11_USAGE_DEFAULT;
+    t.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+    ThrowIfFailed(device_->CreateTexture2D(&t, nullptr, &shadowTexture_), "Create shadow map");
+
+    D3D11_DEPTH_STENCIL_VIEW_DESC dsv{};
+    dsv.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    ThrowIfFailed(device_->CreateDepthStencilView(shadowTexture_.Get(), &dsv, &shadowDsv_), "Create shadow DSV");
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R32_FLOAT;
+    srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv.Texture2D.MipLevels = 1;
+    ThrowIfFailed(device_->CreateShaderResourceView(shadowTexture_.Get(), &srv, &shadowSrv_), "Create shadow SRV");
+
+    D3D11_SAMPLER_DESC s{};
+    s.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    s.AddressU = s.AddressV = s.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+    s.BorderColor[0] = s.BorderColor[1] = s.BorderColor[2] = s.BorderColor[3] = 1.0f;
+    s.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    s.MaxLOD = D3D11_FLOAT32_MAX;
+    ThrowIfFailed(device_->CreateSamplerState(&s, &shadowSampler_), "Create shadow sampler");
+
+    context_->ClearDepthStencilView(shadowDsv_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
 }
 
 void Renderer::CreateDeviceAndSwapChain(HWND window, const std::uint32_t width, const std::uint32_t height)
@@ -261,6 +298,11 @@ void Renderer::CreateShaders()
                                               vertexBytecode->GetBufferPointer(), vertexBytecode->GetBufferSize(),
                                               &inputLayout_),
                   "Create input layout");
+
+    // ZE-112: depth-only vertex shader for the directional shadow map.
+    const ComPtr<ID3DBlob> shadowVs = CompileShader(ShaderFile(L"ShadowDepth.hlsl"), "VSMain", "vs_5_0");
+    ThrowIfFailed(device_->CreateVertexShader(shadowVs->GetBufferPointer(), shadowVs->GetBufferSize(), nullptr, &shadowVertexShader_),
+                  "Create shadow depth vertex shader");
 }
 
 void Renderer::CreateCube()
@@ -802,6 +844,70 @@ void Renderer::Render(const ViewportFrame& frame)
     XMStoreFloat3(&cameraWorld, XMMatrixInverse(nullptr, view).r[3]);
     const EnvironmentData env = frame.environment.value_or(EnvironmentData{});
 
+    // ZE-112: one directional shadow map for the brightest directional light.
+    int shadowCaster = -1;
+    float shadowBrightness = 0;
+    for (int i = 0; i < lightCount; ++i)
+    {
+        const auto& l = frame.lights[static_cast<std::size_t>(i)];
+        if (l.type != 0) continue;
+        const float b = l.intensity * (l.color.x + l.color.y + l.color.z);
+        if (b > shadowBrightness) { shadowBrightness = b; shadowCaster = i; }
+    }
+    XMMATRIX shadowMatrix = XMMatrixIdentity();
+    if (shadowCaster >= 0 && !frame.meshes.empty())
+    {
+        XMFLOAT3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+        for (const auto& d : frame.meshes)
+        {
+            XMFLOAT3 p;
+            XMStoreFloat3(&p, XMVector3TransformCoord(XMVectorZero(),
+                TransformMatrix(d.transform) * (d.parentMatrix ? XMLoadFloat4x4(&*d.parentMatrix) : XMMatrixIdentity())));
+            lo = {std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
+            hi = {std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+        }
+        const XMVECTOR centre = XMVectorSet((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f, 1);
+        float radius = 4.0f;
+        radius = std::max(radius, 0.5f * std::sqrt((hi.x-lo.x)*(hi.x-lo.x) + (hi.y-lo.y)*(hi.y-lo.y) + (hi.z-lo.z)*(hi.z-lo.z)) + 6.0f);
+        const auto& L = frame.lights[static_cast<std::size_t>(shadowCaster)];
+        XMVECTOR dir = XMVector3Normalize(XMVectorSet(L.direction.x, L.direction.y, L.direction.z, 0));
+        if (XMVectorGetX(XMVector3LengthSq(dir)) < 0.5f) dir = XMVectorSet(0, -1, 0, 0);
+        XMVECTOR up = std::abs(XMVectorGetY(dir)) > 0.95f ? XMVectorSet(1, 0, 0, 0) : XMVectorSet(0, 1, 0, 0);
+        const XMMATRIX lightView = XMMatrixLookToLH(centre - dir * (radius * 2.0f), dir, up);
+        const XMMATRIX lightProj = XMMatrixOrthographicLH(radius * 2.0f, radius * 2.0f, 0.05f, radius * 4.0f);
+        shadowMatrix = lightView * lightProj;
+
+        // Depth-only pass into the shadow map.
+        D3D11_VIEWPORT sv{0, 0, 2048.0f, 2048.0f, 0.0f, 1.0f};
+        context_->OMSetRenderTargets(0, nullptr, shadowDsv_.Get());
+        context_->ClearDepthStencilView(shadowDsv_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+        context_->RSSetViewports(1, &sv);
+        context_->RSSetState(rasterizer_.Get());
+        context_->IASetInputLayout(inputLayout_.Get());
+        context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        context_->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
+        context_->VSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf());
+        context_->PSSetShader(nullptr, nullptr, 0);
+        context_->OMSetDepthStencilState(nullptr, 0);
+        constexpr UINT stride0 = static_cast<UINT>(sizeof(Vertex)), offset0 = 0;
+        for (const auto& d : frame.meshes)
+        {
+            if (!d.mesh) continue;
+            SceneConstants sc{};
+            const XMMATRIX w = TransformMatrix(d.transform) * (d.parentMatrix ? XMLoadFloat4x4(&*d.parentMatrix) : XMMatrixIdentity());
+            XMStoreFloat4x4(&sc.worldViewProjection, XMMatrixTranspose(w * shadowMatrix));
+            D3D11_MAPPED_SUBRESOURCE m{};
+            ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m), "Map shadow constants");
+            *static_cast<SceneConstants*>(m.pData) = sc;
+            context_->Unmap(sceneConstantBuffer_.Get(), 0);
+            context_->IASetVertexBuffers(0, 1, d.mesh->vertices.GetAddressOf(), &stride0, &offset0);
+            context_->IASetIndexBuffer(d.mesh->indices.Get(), d.mesh->indexFormat, 0);
+            for (const auto& part : d.mesh->parts) context_->DrawIndexed(part.indexCount, part.firstIndex, 0);
+        }
+        // The main pass below rebinds render targets, viewport and shaders.
+    }
+    const float shadowStrength = shadowCaster >= 0 ? 0.85f : 0.0f;
+
     const auto setConstants = [&](const XMMATRIX& matrix, bool lit, Float4 tint = {1, 1, 1, 1}, Float2 spec = {0.5f, 0.0f}) {
         SceneConstants constants{};
         XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(matrix * view * projection));
@@ -818,6 +924,8 @@ void Renderer::Render(const ViewportFrame& frame)
         constants.fogParams = XMFLOAT4{env.fogNear, env.fogFar, env.fogDensity, static_cast<float>(env.volumetricSteps)};
         constants.heightFog = XMFLOAT4{env.heightBase, env.heightFalloff, env.heightStrength, env.volumetric ? 1.0f : 0.0f};
         constants.materialSpec = XMFLOAT4{spec.x, spec.y, 0, 0};
+        XMStoreFloat4x4(&constants.shadowMatrix, XMMatrixTranspose(shadowMatrix));
+        constants.shadowParams = XMFLOAT4{(lit && lightCount > 0) ? shadowStrength : 0.0f, 1.0f / 2048.0f, 0.0015f, static_cast<float>(shadowCaster)};
         D3D11_MAPPED_SUBRESOURCE mapped{};
         ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map scene constants");
         *static_cast<SceneConstants*>(mapped.pData) = constants;
@@ -843,6 +951,8 @@ void Renderer::Render(const ViewportFrame& frame)
     context_->PSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf()); // ZE-65: material tint read in PSMain
     context_->PSSetConstantBuffers(1, 1, lightConstantBuffer_.GetAddressOf()); // ZE-75: volumetric fog reads the lights
     context_->PSSetSamplers(0, 1, albedoSampler_.GetAddressOf());
+    context_->PSSetShaderResources(1, 1, shadowSrv_.GetAddressOf()); // ZE-112 shadow map
+    context_->PSSetSamplers(1, 1, shadowSampler_.GetAddressOf());
     const auto drawLines = [&](ID3D11Buffer* buffer, UINT count, const XMMATRIX& matrix) {
         setConstants(matrix, false); // editor guides are always unlit
         context_->IASetVertexBuffers(0, 1, &buffer, &stride, &offset);
