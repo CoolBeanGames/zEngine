@@ -950,7 +950,7 @@ a Breakpoint has been reached
     <prompt>right now there is no way to setup the UI in the inspector, all elements need inspector elements added</prompt>
     <requirements>all elements can now be set in the inspector</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -958,14 +958,14 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>ui,inspector</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>The Inspector now binds to 2D objects and edits every ui:: control. InspectorPanel::Bind takes ObjectCore* (was GameObject*); EditorShell::SelectGameObject passes the object directly instead of As3D(...) (UI objects are GameObject2D, so As3D was null and the panel showed nothing). Transform rows branch on Is2D(): a 2D object edits Position X/Y, Rotation (in the Z slot) and Scale X/Y; the unused axis fields are disabled/blank (TransformFieldUsed). New ui::UiControlSchema(control) in UiSerialize returns the ordered editable properties as {key,label,UiPropertyKind} (Line/Multiline/Float/Int/Bool/Vec2/Color/Anchor); values are still exchanged as the SaveUiControl/LoadUiProperty strings. RefreshBehaviors renders a row per schema entry for any UiControl behavior: bool -&gt; false/true combo, anchor -&gt; 20-name combo, Vec2 -&gt; 2 axis fields, Color/region/margins/slice -&gt; 4 axis fields, float/int/line -&gt; edit field, markup -&gt; multiline. ChangeBehaviorField writes via LoadUiProperty (rebuilding the whole tuple for axis rows); generic combos handled through the existing CBN_SELCHANGE path. The Add Behavior menu greys Mesh/Collider/bodies/Camera for 2D objects (and the handlers refuse them). Test seams: InspectorPanel::FieldWindowForProperty + EditorShell::InspectorUiField. AssetTests --ui drives the Inspector to set ProgressBar value/vertical/fill_color/anchor and the 2D rotation, asserting each reaches the control. Full ctest 35/35; builds/debug + builds/test built.</notes>
+    <filesChanged>src/InspectorPanel.h; src/InspectorPanel.cpp; src/EditorShell.h; src/EditorShell.cpp; src/ui/UiSerialize.h; src/ui/UiSerialize.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-63">

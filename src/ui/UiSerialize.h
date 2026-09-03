@@ -28,4 +28,31 @@ namespace zengine::ui
     // Applies one property. Unknown keys are ignored (forward compatibility).
     // Throws std::invalid_argument on a malformed value.
     void LoadUiProperty(UiControl& control, std::string_view key, std::string_view value);
+
+    // ----- Inspector schema ----------------------------------------------
+    // How an editor should present one property. Values are still exchanged as
+    // the plain strings SaveUiControl / LoadUiProperty use.
+    enum class UiPropertyKind
+    {
+        Line,       // single-line text / asset name
+        Multiline,  // multi-line text (HTML markup)
+        Float,
+        Int,
+        Bool,       // "0"/"1"; present as a two-item choice
+        Vec2,       // two space-separated floats
+        Color,      // four space-separated floats (RGBA / region / margins / slice)
+        Anchor,     // one of AnchorName()
+    };
+
+    struct UiPropertyField
+    {
+        const char* key;
+        const char* label;
+        UiPropertyKind kind;
+    };
+
+    // The editable properties of `control`, in display order (base fields first,
+    // then the concrete type's own fields). Read the current value from
+    // SaveUiControl(); write a new one with LoadUiProperty(control, key, value).
+    std::vector<UiPropertyField> UiControlSchema(const UiControl& control);
 }

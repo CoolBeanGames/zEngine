@@ -188,6 +188,62 @@ namespace zengine::ui
         return props;
     }
 
+    std::vector<UiPropertyField> UiControlSchema(const UiControl& control)
+    {
+        using K = UiPropertyKind;
+        std::vector<UiPropertyField> f = {
+            {"anchor", "Anchor", K::Anchor},
+            {"size", "Size", K::Vec2},
+            {"min_size", "Min size", K::Vec2},
+            {"order", "Draw order", K::Int},
+            {"visible", "Visible", K::Bool},
+            {"clickable", "Clickable", K::Bool},
+        };
+        const auto add = [&](std::initializer_list<UiPropertyField> more) { f.insert(f.end(), more); };
+
+        if (dynamic_cast<const Container*>(&control))
+            add({{"padding", "Padding", K::Float}, {"spacing", "Spacing", K::Float}});
+        if (dynamic_cast<const HTileBoxContainer*>(&control) || dynamic_cast<const VTileBoxContainer*>(&control))
+            add({{"fill_cross", "Fill cross axis", K::Bool}});
+        if (dynamic_cast<const ScrollContainer*>(&control))
+            add({{"fill_cross", "Fill cross axis", K::Bool},
+                 {"horizontal", "Scroll horizontally", K::Bool},
+                 {"scroll_x", "Scroll X", K::Float},
+                 {"scroll_y", "Scroll Y", K::Float}});
+        if (dynamic_cast<const MarginContainer*>(&control))
+            add({{"margins", "Margins (L T R B)", K::Color}});
+        if (dynamic_cast<const PanelContainer*>(&control))
+            add({{"texture", "Texture", K::Line}, {"tint", "Tint (RGBA)", K::Color},
+                 {"slice", "Nine-slice (L T R B)", K::Color}});
+        if (const auto* t = dynamic_cast<const Text*>(&control))
+            add({{"text", "Text", dynamic_cast<const LongText*>(t) ? K::Multiline : K::Line},
+                 {"pixel_height", "Pixel height", K::Float}, {"color", "Colour (RGBA)", K::Color}});
+        if (dynamic_cast<const TextEntry*>(&control))
+            add({{"text", "Text", K::Line}, {"placeholder", "Placeholder", K::Line},
+                 {"pixel_height", "Pixel height", K::Float}});
+        if (dynamic_cast<const TextureRect*>(&control))
+            add({{"texture", "Texture", K::Line}, {"region", "Region (u0 v0 u1 v1)", K::Color},
+                 {"tint", "Tint (RGBA)", K::Color}});
+        if (dynamic_cast<const ColorRect*>(&control))
+            add({{"color", "Colour (RGBA)", K::Color}});
+        if (dynamic_cast<const ProgressBar*>(&control))
+            add({{"value", "Value (0 - 1)", K::Float}, {"vertical", "Vertical", K::Bool},
+                 {"fill_color", "Fill colour (RGBA)", K::Color}, {"background_color", "Background colour (RGBA)", K::Color}});
+        if (dynamic_cast<const Button*>(&control))
+            add({{"text", "Label", K::Line}, {"pixel_height", "Pixel height", K::Float}, {"disabled", "Disabled", K::Bool},
+                 {"normal_color", "Normal colour (RGBA)", K::Color}, {"hover_color", "Hover colour (RGBA)", K::Color},
+                 {"pressed_color", "Pressed colour (RGBA)", K::Color}, {"disabled_color", "Disabled colour (RGBA)", K::Color},
+                 {"text_color", "Text colour (RGBA)", K::Color},
+                 {"normal_texture", "Normal texture", K::Line}, {"hover_texture", "Hover texture", K::Line},
+                 {"pressed_texture", "Pressed texture", K::Line}, {"slice", "Nine-slice (L T R B)", K::Color}});
+        if (dynamic_cast<const VideoTexture*>(&control))
+            add({{"video", "Video asset (.zvid)", K::Line}, {"playing", "Playing", K::Bool}, {"loop", "Loop", K::Bool},
+                 {"speed", "Speed", K::Float}, {"tint", "Tint (RGBA)", K::Color}});
+        if (dynamic_cast<const UiHtml*>(&control))
+            add({{"html", "Markup", K::Multiline}, {"background", "Background (RGBA)", K::Color}});
+        return f;
+    }
+
     void LoadUiProperty(UiControl& control, std::string_view key, std::string_view value)
     {
         if (key == "anchor")

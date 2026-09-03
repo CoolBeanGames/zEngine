@@ -3,6 +3,7 @@
 #include "core/GameObject.h"
 #include "ScriptHost.h"
 #include "physics/PhysicsBehavior.h"
+#include "ui/UiSerialize.h"
 #include <windows.h>
 #include <commctrl.h>
 #include <array>
@@ -31,7 +32,7 @@ public:
     enum class MeshAction { Add, Choose, Cube, Clear };
     ~InspectorPanel();
     void Create(HWND parent, HINSTANCE instance, HFONT font, std::function<void()> changed);
-    void Bind(zengine::GameObject* object,bool editData=true,bool editTransform=true);
+    void Bind(zengine::ObjectCore* object,bool editData=true,bool editTransform=true);
     void RefreshBehaviors();
     void SetScriptHost(zengine::ScriptHost* host) { scriptHost_ = host; }
     void RefreshLiveValues();
@@ -48,6 +49,9 @@ public:
     bool AssignPrefabAt(POINT screenPoint,const std::string& asset);
     bool AssignObjectReferenceAt(POINT screenPoint, zengine::GameObjectId target);
     HWND Window() const noexcept { return window_; }
+    // Test seam: the edit/combo control that edits property `key` (component `axis`
+    // for Vec2 / Color rows) of `behavior`, or nullptr. Used by the UI-inspector tests.
+    HWND FieldWindowForProperty(const zengine::Behavior* behavior, const std::string& key, int axis = 0) const;
 private:
     bool editData_=true,editTransform_=true;
     struct Field { HWND window = nullptr; bool valid = true; std::wstring focusText; };
@@ -85,6 +89,11 @@ private:
         bool arrayHeader = false; // "+ Add element" row for an exported script array field.
         int arrayIndex = -1;      // >=0: one element row of the exported array named `name`.
         Style style = Style::Normal;
+        // ZE-81: rows that edit a ui::UiControl property. `name` holds the property
+        // key; the value is exchanged as the string SaveUiControl / LoadUiProperty use.
+        bool uiControl = false;
+        zengine::ui::UiPropertyKind uiKind = zengine::ui::UiPropertyKind::Line;
+        std::vector<std::wstring> comboItems; // generic combo choices (bool / anchor)
     };
     std::wstring BehaviorValue(std::size_t index);
     void ChangeBehaviorField(std::size_t index);
@@ -114,7 +123,8 @@ private:
     HBRUSH fieldBrush_ = nullptr;
     HBRUSH invalidBrush_ = nullptr;
     std::array<Field, 11> fields_{};
-    zengine::GameObject* object_ = nullptr;
+    zengine::ObjectCore* object_ = nullptr;
+    bool TransformFieldUsed(int index) const; // 2D objects use only pos.xy / rot / scale.xy
     std::function<void()> changed_;
     std::function<void()> addScript_;
     std::function<std::vector<std::wstring>()> scriptList_;

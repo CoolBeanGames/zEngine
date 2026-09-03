@@ -1006,6 +1006,48 @@ void UiEditorTests(bool capture)
         Require(reloadedPanel && reloadedPanel->GetAnchor()==zengine::ui::Anchor::Fill && reloadedPanel->Tint().w>0.8f,"Panel props lost across save/reload");
         Require(reloadedBar && std::abs(reloadedBar->Value()-0.3f)<0.001f && reloadedBar->Order()==1,"ProgressBar props lost across save/reload");
 
+        // ZE-81: every UI control is editable in the Inspector (2D object binding).
+        {
+            auto& editable=editor.CreateUiControl("progressBar"); // CreateUiControl selects it
+            auto* pb=editable.GetBehavior<zengine::ui::ProgressBar>();
+            Require(pb!=nullptr,"progressBar control missing");
+            const HWND inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
+            Require(inspector!=nullptr,"Inspector window not found for a 2D selection");
+
+            const auto commit=[&](HWND field,unsigned code){ SendMessageW(inspector,WM_COMMAND,MAKEWPARAM(GetDlgCtrlID(field),code),reinterpret_cast<LPARAM>(field)); };
+
+            const HWND valueField=editor.InspectorUiField("value");
+            Require(valueField!=nullptr,"Inspector has no ProgressBar 'value' row");
+            SetWindowTextW(valueField,L"0.8"); commit(valueField,EN_CHANGE);
+            Require(std::abs(pb->Value()-0.8f)<0.001f,"Inspector edit did not write ProgressBar.value");
+
+            const HWND verticalField=editor.InspectorUiField("vertical"); // bool -> combo
+            Require(verticalField!=nullptr,"Inspector has no 'vertical' row");
+            SendMessageW(verticalField,CB_SETCURSEL,1,0); commit(verticalField,CBN_SELCHANGE);
+            Require(pb->Vertical(),"Inspector combo did not set ProgressBar.vertical");
+
+            const HWND fillBlue=editor.InspectorUiField("fill_color",2); // colour component
+            Require(fillBlue!=nullptr,"Inspector has no 'fill_color' row");
+            SetWindowTextW(fillBlue,L"0.5"); commit(fillBlue,EN_CHANGE);
+            Require(std::abs(pb->Fill().z-0.5f)<0.001f,"Inspector did not write a colour component");
+
+            const HWND anchorField=editor.InspectorUiField("anchor"); // enum -> combo
+            Require(anchorField!=nullptr,"Inspector has no 'anchor' row");
+            const auto centre=SendMessageW(anchorField,CB_FINDSTRINGEXACT,static_cast<WPARAM>(-1),reinterpret_cast<LPARAM>(L"center"));
+            Require(centre>=0,"anchor combo is missing 'center'");
+            SendMessageW(anchorField,CB_SETCURSEL,centre,0); commit(anchorField,CBN_SELCHANGE);
+            Require(pb->GetAnchor()==zengine::ui::Anchor::Center,"Inspector combo did not set the anchor");
+
+            // 2D transform: rotation occupies the Z slot; the unused axes are disabled.
+            const HWND rotation=GetDlgItem(inspector,InspectorPanel::FirstTransformField+5); // component 1 (Rotation), Z slot
+            const HWND positionZ=GetDlgItem(inspector,InspectorPanel::FirstTransformField+2); // component 0 (Position), Z slot
+            Require(rotation && IsWindowEnabled(rotation),"2D rotation field should be editable");
+            Require(positionZ && !IsWindowEnabled(positionZ),"2D position Z field should be disabled");
+            SetWindowTextW(rotation,L"45"); SendMessageW(inspector,WM_COMMAND,MAKEWPARAM(GetDlgCtrlID(rotation),EN_CHANGE),reinterpret_cast<LPARAM>(rotation));
+            Require(std::abs(editable.GetTransform().Rotation()-45.0f)<0.01f,"Inspector did not write the 2D rotation");
+            editor.DeleteGameObject(editable.Id()); // drop the scratch control before the capture below
+        }
+
         editor.Render(); // exercises the viewport UI emit path
         if(capture){ for(int i=0;i<4;++i) editor.Render(); CaptureScreen(window,L"ui-editor-qa.bmp"); }
     }

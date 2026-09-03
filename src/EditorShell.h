@@ -101,6 +101,9 @@ public:
     // Routes a completed object drag onto the Inspector (screen point + dragged object).
     // Same effect as releasing a scene-tree drag over the Inspector; used by tests.
     bool DropObjectOnInspector(POINT screenPoint, zengine::GameObjectId object);
+    // Test seam: the Inspector edit/combo control for UI property `key` (component
+    // `axis` for Vec2 / Colour rows) of the currently selected UI control.
+    HWND InspectorUiField(const std::string& key, int axis = 0) const;
     bool AddMeshRenderer(zengine::GameObjectId object);
     void AssignCube(zengine::GameObjectId object);
     void ClearMesh(zengine::GameObjectId object);

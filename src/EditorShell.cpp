@@ -800,7 +800,7 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
     const int index=static_cast<int>(found-rows.begin());
     firstObject_=std::clamp(firstObject_,0,std::max(0,static_cast<int>(rows.size())-visible));
     if(index<firstObject_)firstObject_=index;else if(index>=firstObject_+visible)firstObject_=index-visible+1;
-    if (inspectorPanel_) inspectorPanel_->Bind(zengine::As3D(object),CanEdit(id),CanEdit(id,true));
+    if (inspectorPanel_) inspectorPanel_->Bind(object,CanEdit(id),CanEdit(id,true));
     selectedObject_ = id;
     if (prefabLinks_.contains(id)) status_=L"Prefab instance root: edits are saved as instance overrides; double-click the asset to edit every non-overridden instance";
     else if (prefabSources_.contains(id)) status_=L"Nested prefab content is inherited; edit its prefab asset to change it";
@@ -1255,6 +1255,14 @@ bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::
 bool EditorShell::DropObjectOnInspector(POINT screenPoint, zengine::GameObjectId object)
 {
     return inspectorPanel_ && inspectorPanel_->AssignObjectReferenceAt(screenPoint, object);
+}
+HWND EditorShell::InspectorUiField(const std::string& key, int axis) const
+{
+    if (!inspectorPanel_ || !selectedObject_) return nullptr;
+    const auto* object = objects_.Find(selectedObject_);
+    if (!object) return nullptr;
+    const auto* control = object->GetBehavior<zengine::ui::UiControl>();
+    return control ? inspectorPanel_->FieldWindowForProperty(control, key, axis) : nullptr;
 }
 zengine::GameObjectId EditorShell::ScriptDropTarget(POINT point) const
 {

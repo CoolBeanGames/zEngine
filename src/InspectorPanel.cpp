@@ -118,7 +118,7 @@ void InspectorPanel::Create(HWND parent, HINSTANCE instance, HFONT font, std::fu
     Layout();
 }
 
-void InspectorPanel::Bind(zengine::GameObject* object,bool editData,bool editTransform)
+void InspectorPanel::Bind(zengine::ObjectCore* object,bool editData,bool editTransform)
 {
     if (object_ != object) collapsedBehaviors_.clear();
     EndScrub(true);
@@ -176,6 +176,32 @@ void InspectorPanel::RefreshBehaviors()
         if(!entry.field.window)throw std::runtime_error("Cannot create collider shape control.");SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
         for(const auto* value:{L"Box",L"Sphere",L"Capsule"})SendMessageW(entry.field.window,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(value));behaviorFields_.push_back(std::move(entry));
     };
+    // Generic drop-down for a ui:: control property (bool / anchor). `items` are
+    // the LoadUiProperty value strings, in list order.
+    const auto addUiCombo = [&](zengine::Behavior* behavior, const char* key, std::wstring label, std::vector<std::wstring> items) {
+        BehaviorField entry; entry.behavior=behavior; entry.name=key; entry.label=std::move(label);
+        entry.combo=true; entry.uiControl=true; entry.uiKind=zengine::ui::UiPropertyKind::Bool; entry.comboItems=std::move(items);
+        const auto id=FirstBehaviorField+behaviorFields_.size();
+        entry.field.window=CreateWindowExW(0,L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
+        if(!entry.field.window)throw std::runtime_error("Cannot create UI property combo.");
+        SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+        for(const auto& item:entry.comboItems)SendMessageW(entry.field.window,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(item.c_str()));
+        EnableWindow(entry.field.window,editData_);
+        behaviorFields_.push_back(std::move(entry));
+    };
+    // One edit-field row for a ui:: control property of the given kind.
+    const auto addUiField = [&](zengine::Behavior* behavior, const zengine::ui::UiPropertyField& prop) {
+        using K = zengine::ui::UiPropertyKind;
+        const int axisCount = prop.kind==K::Vec2 ? 2 : prop.kind==K::Color ? 4 : 1;
+        const bool multiline = prop.kind==K::Multiline;
+        for (int axis=0; axis<axisCount; ++axis)
+        {
+            add(behavior, prop.key, Wide(prop.label), false, true, true, BehaviorField::Style::Normal, multiline);
+            auto& e = behaviorFields_.back();
+            e.uiControl=true; e.uiKind=prop.kind;
+            if (axisCount>1) { e.axis=axis; e.axisCount=axisCount; }
+        }
+    };
     const auto addBitmask = [&](zengine::Behavior* behavior, std::string name, std::wstring label) {
         BehaviorField entry; entry.behavior=behavior; entry.name=std::move(name); entry.label=std::move(label); entry.bitmask=true;
         for (int bit=0; bit<CollisionBits; ++bit) {
@@ -194,7 +220,9 @@ void InspectorPanel::RefreshBehaviors()
     {
         auto& behavior=object_->BehaviorAt(i);
         auto* script=dynamic_cast<zengine::ScriptBehavior*>(&behavior);
+        auto* uiCtl=dynamic_cast<zengine::ui::UiControl*>(&behavior);
         const auto name=script ? std::filesystem::path(Wide(script->Asset())).stem().wstring() :
+            uiCtl ? L"UI — "+Wide(uiCtl->TypeName()) :
             dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
         add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
@@ -255,13 +283,36 @@ void InspectorPanel::RefreshBehaviors()
                 if(!field.name.empty()) behaviorFields_.back().type=field.type;
             }
         }
+        if (uiCtl)
+        {
+            using K = zengine::ui::UiPropertyKind;
+            for (const auto& prop : zengine::ui::UiControlSchema(*uiCtl))
+            {
+                if (prop.kind == K::Bool) addUiCombo(&behavior, prop.key, Wide(prop.label), {L"false", L"true"});
+                else if (prop.kind == K::Anchor)
+                {
+                    std::vector<std::wstring> anchors;
+                    for (int a=0; a<20; ++a) anchors.push_back(Wide(zengine::ui::AnchorName(static_cast<zengine::ui::Anchor>(a))));
+                    addUiCombo(&behavior, prop.key, Wide(prop.label), std::move(anchors));
+                    behaviorFields_.back().uiKind = K::Anchor;
+                }
+                else addUiField(&behavior, prop);
+            }
+        }
     }
     for (std::size_t i=0;i<behaviorFields_.size();++i)
     {
         if (behaviorFields_[i].bitmask) { RefreshCollisionBits(behaviorFields_[i]); continue; }
         auto control=behaviorFields_[i].field.window; if (!control) continue;
         const auto value=BehaviorValue(i);
-        if(behaviorFields_[i].combo)SendMessageW(control,CB_SETCURSEL,dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)?static_cast<int>(dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)->Shape()):0,0);
+        if(behaviorFields_[i].combo && behaviorFields_[i].uiControl)
+        {
+            int sel=0;
+            for (int n=0;n<static_cast<int>(behaviorFields_[i].comboItems.size());++n)
+                if (behaviorFields_[i].comboItems[n]==value) { sel=n; break; }
+            SendMessageW(control,CB_SETCURSEL,sel,0);
+        }
+        else if(behaviorFields_[i].combo)SendMessageW(control,CB_SETCURSEL,dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)?static_cast<int>(dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)->Shape()):0,0);
         else if(behaviorFields_[i].objectReference) SetWindowTextW(control,(value.empty()||value==L"None")?L"None — click to pick":value.c_str());
         else SetWindowTextW(control,(behaviorFields_[i].prefab&&value.empty())?L"Choose prefab...":value.c_str());
         behaviorFields_[i].field.focusText=value;
@@ -274,6 +325,13 @@ void InspectorPanel::RefreshBehaviors()
     Layout();
 }
 
+HWND InspectorPanel::FieldWindowForProperty(const zengine::Behavior* behavior, const std::string& key, int axis) const
+{
+    for (const auto& entry : behaviorFields_)
+        if (entry.behavior == behavior && entry.uiControl && entry.name == key && (entry.axis < 0 || entry.axis == axis))
+            return entry.field.window;
+    return nullptr;
+}
 int InspectorPanel::BehaviorHeight() const
 {
     int height=0;
@@ -296,6 +354,16 @@ bool InspectorPanel::IsBehaviorCollapsed(const BehaviorField& entry) const
 std::wstring InspectorPanel::BehaviorValue(std::size_t index)
 {
     const auto& entry=behaviorFields_.at(index);
+    if (entry.uiControl)
+    {
+        auto* uiCtl=dynamic_cast<zengine::ui::UiControl*>(entry.behavior);
+        if(!uiCtl)return {};
+        std::string raw;
+        for(const auto& [k,v]:zengine::ui::SaveUiControl(*uiCtl)) if(k==entry.name){raw=v;break;}
+        if(entry.uiKind==zengine::ui::UiPropertyKind::Bool) return (raw=="1"||raw=="true")?L"true":L"false";
+        if(entry.axis>=0){std::istringstream in(raw);std::string tok="0";for(int a=0;a<=entry.axis;++a)if(!(in>>tok))tok="0";return Wide(tok);}
+        return Wide(raw);
+    }
     if(entry.combo)return {};
     if (entry.priority) { std::wostringstream out; out<<std::setprecision(9)<<entry.behavior->Priority(); return out.str(); }
     if (auto* camera=dynamic_cast<zengine::Camera*>(entry.behavior)) {
@@ -329,6 +397,49 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
 {
     if (updating_ || !editData_) return;
     auto& entry=behaviorFields_.at(index);
+    if (entry.uiControl)
+    {
+        auto* uiCtl=dynamic_cast<zengine::ui::UiControl*>(entry.behavior);
+        try
+        {
+            if(!uiCtl)throw std::invalid_argument("no control");
+            using K=zengine::ui::UiPropertyKind;
+            std::string out;
+            if(entry.combo)
+            {
+                const auto sel=SendMessageW(entry.field.window,CB_GETCURSEL,0,0);
+                if(sel<0||sel>=static_cast<int>(entry.comboItems.size()))throw std::invalid_argument("bad choice");
+                out=Utf8(entry.comboItems[static_cast<std::size_t>(sel)]);
+            }
+            else
+            {
+                const auto text=ReadText(entry.field.window);
+                if(entry.axis>=0)
+                {
+                    float v;if(!ParseNumber(text,v))throw std::invalid_argument("bad number");
+                    const auto base=index-entry.axis;std::wstring combined;
+                    for(int a=0;a<entry.axisCount;++a){if(a)combined+=L' ';combined+=(a==entry.axis?text:BehaviorValue(base+a));}
+                    out=Utf8(combined);
+                }
+                else if(entry.uiKind==K::Float||entry.uiKind==K::Int)
+                {
+                    float v;if(!ParseNumber(text,v))throw std::invalid_argument("bad number");
+                    out=Utf8(text);
+                }
+                else if(entry.multiline)
+                {
+                    std::string s=Utf8(text),n;for(std::size_t i=0;i<s.size();++i){if(s[i]=='\r'&&i+1<s.size()&&s[i+1]=='\n')continue;n+=s[i];}out=std::move(n);
+                }
+                else out=Utf8(text);
+            }
+            zengine::ui::LoadUiProperty(*uiCtl,entry.name,out);
+            entry.field.valid=true;
+            if(changed_)changed_();
+        }
+        catch(const std::exception&){entry.field.valid=false;}
+        InvalidateRect(entry.field.window,nullptr,FALSE);
+        return;
+    }
     try
     {
         if(entry.combo){auto* collider=dynamic_cast<zengine::physics::Collider*>(entry.behavior);const auto selected=SendMessageW(entry.field.window,CB_GETCURSEL,0,0);if(!collider||selected<0||selected>2)throw std::invalid_argument("Invalid collider shape");collider->SetShape(static_cast<zengine::physics::ColliderShape>(selected));entry.field.valid=true;if(changed_)changed_();return;}
@@ -452,20 +563,46 @@ void InspectorPanel::RefreshLiveValues()
     updating_=false;
 }
 
+bool InspectorPanel::TransformFieldUsed(int index) const
+{
+    if (index < 2) return true;
+    if (!object_ || !object_->Is2D()) return true;
+    const int component = (index - 2) / 3, axis = (index - 2) % 3;
+    // 2D: Position uses X/Y, Rotation uses the Z slot only, Scale uses X/Y.
+    if (component == 1) return axis == 2;
+    return axis != 2;
+}
 float InspectorPanel::Value(int index) const
 {
     if (!object_) return 0;
-    const auto& transform = object_->GetTransform();
-    const int component = (index - 2) / 3;
+    const int component = (index - 2) / 3, axis = (index - 2) % 3;
+    if (object_->Is2D())
+    {
+        if (!TransformFieldUsed(index)) return 0;
+        const auto& t = zengine::As2D(*object_).GetTransform();
+        if (component == 0) return axis == 0 ? t.Position().x : t.Position().y;
+        if (component == 1) return t.Rotation();
+        return axis == 0 ? t.Scale().x : t.Scale().y;
+    }
+    const auto& transform = zengine::As3D(*object_).GetTransform();
     const auto& v = component == 0 ? transform.Position() : component == 1 ? transform.Rotation() : transform.Scale();
-    const int axis = (index - 2) % 3;
     return axis == 0 ? v.x : axis == 1 ? v.y : v.z;
 }
 void InspectorPanel::SetValue(int index, float value)
 {
     if (!object_) return;
-    auto& transform = object_->GetTransform();
     const int component = (index - 2) / 3, axis = (index - 2) % 3;
+    if (object_->Is2D())
+    {
+        if (!TransformFieldUsed(index)) return;
+        auto& t = zengine::As2D(*object_).GetTransform();
+        if (component == 0) { auto p = t.Position(); (axis == 0 ? p.x : p.y) = value; t.SetPosition(p); }
+        else if (component == 1) t.SetRotation(value);
+        else { auto s = t.Scale(); (axis == 0 ? s.x : s.y) = value; t.SetScale(s); }
+        if (changed_) changed_();
+        return;
+    }
+    auto& transform = zengine::As3D(*object_).GetTransform();
     auto v = component == 0 ? transform.Position() : component == 1 ? transform.Rotation() : transform.Scale();
     if (axis == 0) v.x = value; else if (axis == 1) v.y = value; else v.z = value;
     if (component == 0) transform.SetPosition(v);
@@ -483,6 +620,7 @@ std::wstring InspectorPanel::FieldValue(int index) const
         for (const auto& tag : object_->Tags()) { if (!text.empty()) text += ", "; text += tag; }
         return Wide(text);
     }
+    if (!TransformFieldUsed(index)) return {};
     std::wostringstream text;
     text << std::setprecision(7) << Value(index);
     return text.str();
@@ -501,7 +639,7 @@ void InspectorPanel::RefreshFields()
     {
         SetText(index, FieldValue(index));
         fields_[index].focusText = FieldValue(index);
-        EnableWindow(fields_[index].window, object_ != nullptr && (index<2?editData_:editTransform_));
+        EnableWindow(fields_[index].window, object_ != nullptr && TransformFieldUsed(index) && (index<2?editData_:editTransform_));
     }
     InvalidateRect(window_, nullptr, FALSE);
 }
@@ -816,7 +954,9 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
         if (LOWORD(w) == AddBehaviorButton && HIWORD(w) == BN_CLICKED && object_)
         {
             const auto menu = CreatePopupMenu();
-            AppendMenuW(menu,MF_STRING | (object_->GetBehavior<zengine::MeshRenderer>() ? MF_GRAYED : 0),AddMeshCommand,L"Mesh Renderer");
+            const bool is2D = object_->Is2D(); // 3D-only behaviors are disabled for UI / 2D objects
+            const UINT only3D = is2D ? MF_GRAYED : 0;
+            AppendMenuW(menu,MF_STRING | only3D | (object_->GetBehavior<zengine::MeshRenderer>() ? MF_GRAYED : 0),AddMeshCommand,L"Mesh Renderer");
             // "Add Script" opens a submenu of every .zsh in the project; the last item browses.
             const auto scripts = CreatePopupMenu();
             std::size_t listed = 0;
@@ -829,10 +969,10 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             if (listed) AppendMenuW(scripts,MF_SEPARATOR,0,nullptr);
             AppendMenuW(scripts,MF_STRING,AddScriptCommand,L"Browse…");
             AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(scripts),L"Add Script");
-            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|(object_->GetBehavior<zengine::physics::Collider>()?MF_GRAYED:0),AddColliderCommand,L"Collider");
-            const bool hasBody=object_->GetBehavior<zengine::physics::RigidBody>()||object_->GetBehavior<zengine::physics::KinematicBody>()||object_->GetBehavior<zengine::physics::StaticBody>()||object_->GetBehavior<zengine::physics::Area>();const UINT bodyFlags=MF_STRING|(hasBody?MF_GRAYED:0);
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|only3D|(object_->GetBehavior<zengine::physics::Collider>()?MF_GRAYED:0),AddColliderCommand,L"Collider");
+            const bool hasBody=object_->GetBehavior<zengine::physics::RigidBody>()||object_->GetBehavior<zengine::physics::KinematicBody>()||object_->GetBehavior<zengine::physics::StaticBody>()||object_->GetBehavior<zengine::physics::Area>();const UINT bodyFlags=MF_STRING|only3D|(hasBody?MF_GRAYED:0);
             AppendMenuW(menu,bodyFlags,AddRigidBodyCommand,L"Rigid Body");AppendMenuW(menu,bodyFlags,AddKinematicBodyCommand,L"Kinematic Body");AppendMenuW(menu,bodyFlags,AddStaticBodyCommand,L"Static Body");AppendMenuW(menu,bodyFlags,AddAreaCommand,L"Area");
-            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|(object_->GetBehavior<zengine::Camera>()?MF_GRAYED:0),AddCameraCommand,L"Camera");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|only3D|(object_->GetBehavior<zengine::Camera>()?MF_GRAYED:0),AddCameraCommand,L"Camera");
             RECT button{}; GetWindowRect(addBehaviorButton_,&button);
             const auto command = TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,button.left,button.bottom,0,window_,nullptr);
             DestroyMenu(menu);
@@ -846,8 +986,8 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             { const auto list=scriptList_(); if (scriptItem<static_cast<int>(list.size())) attachScript_(list[scriptItem]); }
             return 0;
         }
-        if(LOWORD(w)>=AddColliderCommand&&LOWORD(w)<=AddAreaCommand&&object_){if(LOWORD(w)==AddColliderCommand)object_->AddBehavior<zengine::physics::Collider>();else if(LOWORD(w)==AddRigidBodyCommand)object_->AddBehavior<zengine::physics::RigidBody>();else if(LOWORD(w)==AddKinematicBodyCommand)object_->AddBehavior<zengine::physics::KinematicBody>();else if(LOWORD(w)==AddStaticBodyCommand)object_->AddBehavior<zengine::physics::StaticBody>();else object_->AddBehavior<zengine::physics::Area>();RefreshBehaviors();if(changed_)changed_();return 0;}
-        if(LOWORD(w)==AddCameraCommand&&object_&&!object_->GetBehavior<zengine::Camera>()){object_->AddBehavior<zengine::Camera>();RefreshBehaviors();if(changed_)changed_();return 0;}
+        if(LOWORD(w)>=AddColliderCommand&&LOWORD(w)<=AddAreaCommand&&object_&&!object_->Is2D()){if(LOWORD(w)==AddColliderCommand)object_->AddBehavior<zengine::physics::Collider>();else if(LOWORD(w)==AddRigidBodyCommand)object_->AddBehavior<zengine::physics::RigidBody>();else if(LOWORD(w)==AddKinematicBodyCommand)object_->AddBehavior<zengine::physics::KinematicBody>();else if(LOWORD(w)==AddStaticBodyCommand)object_->AddBehavior<zengine::physics::StaticBody>();else object_->AddBehavior<zengine::physics::Area>();RefreshBehaviors();if(changed_)changed_();return 0;}
+        if(LOWORD(w)==AddCameraCommand&&object_&&!object_->Is2D()&&!object_->GetBehavior<zengine::Camera>()){object_->AddBehavior<zengine::Camera>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if (LOWORD(w) == AddMeshCommand || LOWORD(w) == ChooseMeshButton || LOWORD(w) == CubeMeshButton || LOWORD(w) == ClearMeshButton)
         {
             if (object_ && meshAction_) meshAction_(LOWORD(w) == AddMeshCommand ? MeshAction::Add : LOWORD(w) == ChooseMeshButton ? MeshAction::Choose : LOWORD(w) == CubeMeshButton ? MeshAction::Cube : MeshAction::Clear);
