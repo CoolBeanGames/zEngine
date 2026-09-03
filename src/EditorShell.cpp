@@ -1030,6 +1030,16 @@ void EditorShell::PollAssetWork()
                 const std::string asset(reinterpret_cast<const char*>(relative.data()),relative.size());
                 meshBindings_[object->Id()] = {asset,handle};
                 mesh->SetAsset(asset);
+                // ZE-126: adopt the package's default .material (written on import) unless one is already set.
+                if (mesh->Material().empty())
+                {
+                    const auto defaultMaterial = result.path.parent_path() / (result.path.parent_path().filename().wstring() + L".material");
+                    if (std::filesystem::is_regular_file(defaultMaterial))
+                    {
+                        const auto rel = std::filesystem::relative(defaultMaterial, assetsDirectory_).generic_u8string();
+                        mesh->SetMaterial(std::string(reinterpret_cast<const char*>(rel.data()), rel.size()));
+                    }
+                }
                 if (!result.object) SelectGameObject(object->Id());
                 else if (selectedObject_ == object->Id()) inspectorPanel_->RefreshBehaviors();
                 if (!result.restoreOnly) OnObjectChanged();

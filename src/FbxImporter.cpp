@@ -7,7 +7,9 @@
 #include <cwctype>
 #include <fstream>
 #include <limits>
+#include <locale>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 
 namespace
@@ -92,6 +94,23 @@ namespace
         if (!std::isfinite(result.x) || !std::isfinite(result.y) || !std::isfinite(result.z))
             throw std::runtime_error("FBX contains invalid numeric data.");
         return result;
+    }
+
+    // ZE-126: sniff an image container from its leading bytes so extracted FBX
+    // textures land as real, viewable files instead of opaque blobs.
+    const wchar_t* ImageExtension(const std::vector<std::uint8_t>& b)
+    {
+        const auto has = [&](std::initializer_list<std::uint8_t> sig, std::size_t at = 0) {
+            if (b.size() < at + sig.size()) return false;
+            std::size_t i = at; for (std::uint8_t s : sig) if (b[i++] != s) return false; return true;
+        };
+        if (has({0x89, 0x50, 0x4E, 0x47})) return L".png";
+        if (has({0xFF, 0xD8, 0xFF})) return L".jpg";
+        if (has({0x42, 0x4D})) return L".bmp";
+        if (has({0x47, 0x49, 0x46, 0x38})) return L".gif";
+        if (has({0x44, 0x44, 0x53, 0x20})) return L".dds";
+        if (has({0x49, 0x49, 0x2A, 0x00}) || has({0x4D, 0x4D, 0x00, 0x2A})) return L".tif";
+        return L"";
     }
 
     void WriteBytes(const std::filesystem::path& path, const void* data, std::size_t size)
@@ -255,11 +274,39 @@ std::filesystem::path FbxImporter::Import(const std::filesystem::path& source,
     // Incomplete packages are deliberately not listed (asset.ready is written last).
     std::filesystem::copy_file(source, package / "model.fbx");
     std::filesystem::create_directory(package / "albedo");
+    // ZE-126: also drop each albedo as a real image file and author a default
+    // ".material" (built-in Standard) pointing at the first one, so an imported
+    // model shows its textures with an editable material and no manual setup.
+    std::filesystem::create_directory(package / "textures");
+    std::string materialAlbedo; // package-relative image path for the default material
+    Float3 materialTint{1, 1, 1};
     for (std::size_t index = 0; index < data.materials.size(); ++index)
     {
         const auto& image = data.materials[index].image;
-        if (!image.empty()) WriteBytes(package / "albedo" / (std::to_string(index) + ".image"), image.data(), image.size());
+        if (image.empty()) continue;
+        WriteBytes(package / "albedo" / (std::to_string(index) + ".image"), image.data(), image.size());
+        if (const std::wstring ext = ImageExtension(image); !ext.empty())
+        {
+            const auto file = std::wstring(L"texture_") + std::to_wstring(index) + ext;
+            WriteBytes(package / "textures" / file, image.data(), image.size());
+            if (materialAlbedo.empty())
+            {
+                const auto rel = (std::filesystem::path("textures") / file).generic_u8string();
+                materialAlbedo.assign(rel.begin(), rel.end());
+                materialTint = data.materials[index].color;
+            }
+        }
     }
+    const auto packageName = package.filename().u8string();
+    const std::string materialPathRel(packageName.begin(), packageName.end());
+    std::ostringstream material;
+    material.imbue(std::locale::classic());
+    material << "ZMATERIAL 1\nshader \"\"\n";
+    material << "value \"tint\" float4 " << materialTint.x << ' ' << materialTint.y << ' ' << materialTint.z << " 1\n";
+    material << "value \"albedo\" texture \"" << (materialAlbedo.empty() ? "" : materialPathRel + "/" + materialAlbedo) << "\"\n";
+    material << "value \"roughness\" float 0.5\nvalue \"specular\" float 0\n";
+    const auto materialText = material.str();
+    WriteBytes(package / (package.filename().wstring() + L".material"), materialText.data(), materialText.size());
     constexpr char marker[] = "zEngine FBX package v1 / ufbx 0.21.3\n";
     WriteBytes(package / "asset.ready", marker, sizeof(marker) - 1);
     return package / "model.fbx";

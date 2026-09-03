@@ -104,6 +104,15 @@ namespace
         const auto duplicate = FbxImporter::Import(source, test.path / "Assets", warnings);
         Require(package != duplicate, "Duplicate imports must not overwrite assets");
         Require(std::filesystem::exists(package.parent_path() / "asset.ready"), "Package was not marked complete");
+        // ZE-126: import extracts textures as real files and authors a default .material.
+        {
+            const auto dir = package.parent_path();
+            const auto materialFile = dir / (dir.filename().wstring() + L".material");
+            Require(std::filesystem::is_regular_file(materialFile), "Import did not author a default .material");
+            Require(std::filesystem::is_regular_file(dir / "textures" / "texture_2.bmp"), "Import did not extract the albedo as a real image file");
+            std::ifstream mf(materialFile); const std::string mtext{std::istreambuf_iterator<char>(mf), std::istreambuf_iterator<char>()};
+            Require(mtext.find("ZMATERIAL 1") == 0 && mtext.find("texture_2.bmp") != std::string::npos, "Default .material does not reference the extracted texture");
+        }
         std::filesystem::remove(source.parent_path() / "checker.bmp");
         Require(!FbxImporter::Load(source).warnings.empty(), "Missing textures should warn and fall back");
         std::filesystem::remove(source);
@@ -949,7 +958,11 @@ void FolderTests(bool capture) {
         std::vector<std::string> warnings;const auto model=FbxImporter::Import(CreateSource(test.path/L"source"),actors,warnings);
         const auto id=editor.CreateEmptyGameObject().Id();Require(GetDlgItem(window,3900)!=nullptr,"Created model GameObject did not enter rename mode");SetWindowTextW(GetDlgItem(window,3900),L"Grid Actor");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);Require(editor.GameObjects().Find(id)->Name()=="Grid Actor","Inline GameObject rename failed");editor.QueueModel(model,id);
         const auto deadline=GetTickCount64()+10000;while(editor.BuildSceneFrame().meshes.size()<2 && GetTickCount64()<deadline){editor.Render();Sleep(2);}
-        Require(editor.BuildSceneFrame().meshes.size()==2,"Model in nested asset folder could not render");Require(editor.SaveScene(),"Save folder model failed");
+        Require(editor.BuildSceneFrame().meshes.size()==2,"Model in nested asset folder could not render");
+        // ZE-126: assigning an imported model adopts the package's default .material.
+        Require(editor.GameObjects().Find(id)->GetBehavior<zengine::MeshRenderer>()->Material().ends_with(".material"),
+                "Imported model did not adopt its default .material");
+        Require(editor.SaveScene(),"Save folder model failed");
         editor.OpenAssetFolder(root);const auto entries=assetLibrary::List(root,root);
         Require(entries.size()==2 && assetLibrary::Type(entries[1])==assetLibrary::Kind::Input && entries[0]==actors,"Root listing flattened folders or lost protected Input Map");
         bool rejected=false;try{editor.OpenAssetFolder(test.path);}catch(...){rejected=true;}Require(rejected,"Folder navigation escaped project");
