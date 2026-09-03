@@ -920,23 +920,23 @@ a Breakpoint has been reached
     <name>UI 2</name>
     <prompt>add more types to the UI, and additional options for it</prompt>
     <requirements></requirements>
-    <inProgress>true</inProgress>
-    <done>false</done>
+    <inProgress>false</inProgress>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey>k7m2x9qp</lockKey>
+    <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
     <tags>scripting, UI</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Four new ui:: controls on the ZE-61 subsystem. ScrollContainer ("scroll"): stacks children on one axis, wheel-scrolls, clamps to content; its rect clips descendants via a new optional clip rect on SpriteDraw/TextDraw (CPU rect-clip in AppendSprite, propagated to glyphs by Renderer); UiSystem::Layout carries the intersected clip down, HitTest respects it (AcceptsPoint), Interact gained a wheelDelta arg. Button ("button"): normal/hover/pressed/disabled visuals (state tints + optional textures + nine-slice) + centred label; UiSystem refreshes pointer state each frame and now also returns press/release events (Presses()/Releases()) -&gt; GameSession::UiPressed/UiReleased emit "pressed"/"released" ("uiButton" script class carries both signals). VideoTexture ("video"): plays a clip as a textured rect; new src/ui/VideoClip = engine ".zvid" container (ASCII header + raw RGBA, no codec dep); control owns a playback clock (UiSystem::Build gained a deltaSeconds arg -&gt; UiControl::Tick); host feeds frames through UiContext::resolveVideoFrame (PlayerMain caches clips + uploads current frame; wheel via WM_MOUSEWHEEL). UiHtml ("html"): bounded subset parser (div/p/h1-3/span/b/i/br/hr/img/a/button/ul/li + inline color/background/font-size) -&gt; self-laid-out/painted blocks; clicking a rendered link/button fires clicked. All four: scene v9 round-trip (UiSerialize type names + Save/LoadUiProperty), editor Add&gt;UI menu (data-driven, no code), script native classes uiScroll/uiButton/uiVideo/uiHtml (+ NativeTypes rows). Tests: UiTests scroll/button/video/html, Render2DTests clip, SceneTests ZE-66 round-trip, ScriptTests new classes + button signals. Full ctest 35/35; builds/debug + builds/test built. Follow-ups: real image texture loading still white 1x1 (ZE-64/65); editor viewport has no resolveVideoFrame so video previews as a white rect; ZE-81 will add Inspector rows for all UI controls.</notes>
+    <filesChanged>src/ui/UiControl.h; src/ui/UiControl.cpp; src/ui/UiSystem.h; src/ui/UiSystem.cpp; src/ui/UiSerialize.cpp; src/ui/VideoClip.h; src/ui/VideoClip.cpp; src/Render2D.h; src/Render2D.cpp; src/Renderer.cpp; src/runtime/GameSession.h; src/runtime/PlayerMain.cpp; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; tests/UiTests.cpp; tests/Render2DTests.cpp; tests/SceneTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
     <image></image>
     <subtasks>
       <subtask done="true">scrolling container (allows scrolling through the contents, they still support clicking, and other subcontainers. use the parent/child relationship)</subtask>
