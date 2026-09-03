@@ -13,6 +13,7 @@
 #include <map>
 #include "RenderScene.h"
 #include "ModelData.h"
+#include "ui/UiSystem.h"
 #include "core/GameObject.h"
 #include "ScriptHost.h"
 #include "Scene.h"
@@ -87,10 +88,13 @@ public:
     zengine::GameObject& CreateEmptyGameObject();
     enum class ObjectPreset { Empty, Cube, Camera, RigidBody, KinematicBody, StaticBody, Area };
     zengine::GameObject& CreateGameObject(ObjectPreset,zengine::GameObjectId parent=0);
+    // Creates a GameObject2D carrying the named ui:: control (ui::UiControlTypes()).
+    zengine::GameObject2D& CreateUiControl(std::string_view type,zengine::GameObjectId parent=0);
     void CopyGameObject(zengine::GameObjectId);
     zengine::GameObjectId PasteGameObject(zengine::GameObjectId parent=0);
     void DeleteGameObject(zengine::GameObjectId);
     static constexpr int AddEmptyCommand=3700,AddCubeCommand=3701,AddCameraCommand=3702,AddRigidCommand=3703,AddKinematicCommand=3704,AddStaticCommand=3705,AddAreaObjectCommand=3706,CopyObjectCommand=3710,PasteObjectCommand=3711,DeleteObjectCommand=3712;
+    static constexpr int AddUiControlBase=3740,AddUiControlLast=3759; // one per ui::UiControlTypes()
     std::filesystem::path CreateScriptAsset();
     void OpenScript(const std::filesystem::path& path);
     bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);
@@ -328,6 +332,7 @@ private:
     HWND viewportWindow_ = nullptr;
     bool mouseButtonsPrev_[3] = {}; // L/R/M pressed last TickInput, for just_pressed/just_released
     std::unique_ptr<Renderer> renderer_;
+    zengine::ui::UiSystem uiViewport_; // screen-space UI preview for the viewport
 
     HFONT uiFont_ = nullptr;
     HFONT headerFont_ = nullptr;

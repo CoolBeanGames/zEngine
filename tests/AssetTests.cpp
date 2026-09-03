@@ -4,6 +4,7 @@
 #include "core/MeshRenderer.h"
 #include "core/Camera.h"
 #include "physics/PhysicsBehavior.h"
+#include "ui/UiControl.h"
 #include "InspectorPanel.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
@@ -968,6 +969,49 @@ void CameraTests(bool capture)
     CoUninitialize();
     std::cout<<"PASS: camera GameObject, single main-camera tag, frustum gizmos, Game-tab camera view, serialisation, script reference type\n";
 }
+void UiEditorTests(bool capture)
+{
+    Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
+    TestDirectory test;
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        const HWND window=editor.Create(SW_HIDE,test.path/"Project");
+        editor.InitializeRenderer();
+
+        auto& panel=editor.CreateUiControl("panel");
+        Require(panel.Is2D(),"UI control is not a GameObject2D");
+        auto* panelUi=panel.GetBehavior<zengine::ui::PanelContainer>();
+        Require(panelUi!=nullptr,"panel did not get a PanelContainer behavior");
+        panelUi->SetAnchor(zengine::ui::Anchor::Fill);
+        panelUi->SetTint({0.1f,0.1f,0.14f,0.85f});
+
+        auto& bar=editor.CreateUiControl("progressBar",panel.Id());
+        Require(bar.Parent()==panel.Id(),"UI child was not parented to the selected control");
+        auto* barUi=bar.GetBehavior<zengine::ui::ProgressBar>();
+        barUi->SetValue(0.3f); barUi->SetSize({260,20}); barUi->SetOrder(1);
+
+        auto& label=editor.CreateUiControl("text",panel.Id());
+        label.GetBehavior<zengine::ui::Text>()->SetValue("Loading...");
+
+        Require(editor.SaveScene(editor.AssetsDirectory()/L"Menu.zscene"),"Could not save the UI scene");
+        Require(editor.OpenScene(editor.AssetsDirectory()/L"Menu.zscene"),"Could not reload the UI scene");
+
+        const zengine::ui::ProgressBar* reloadedBar=nullptr; const zengine::ui::PanelContainer* reloadedPanel=nullptr;
+        for(std::size_t i=0;i<editor.GameObjects().Size();++i)
+        {
+            auto& object=const_cast<zengine::ObjectStore&>(editor.GameObjects()).At(i);
+            if(auto* b=object.GetBehavior<zengine::ui::ProgressBar>()) reloadedBar=b;
+            if(auto* p=object.GetBehavior<zengine::ui::PanelContainer>()) reloadedPanel=p;
+        }
+        Require(reloadedPanel && reloadedPanel->GetAnchor()==zengine::ui::Anchor::Fill && reloadedPanel->Tint().w>0.8f,"Panel props lost across save/reload");
+        Require(reloadedBar && std::abs(reloadedBar->Value()-0.3f)<0.001f && reloadedBar->Order()==1,"ProgressBar props lost across save/reload");
+
+        editor.Render(); // exercises the viewport UI emit path
+        if(capture){ for(int i=0;i<4;++i) editor.Render(); CaptureScreen(window,L"ui-editor-qa.bmp"); }
+    }
+    CoUninitialize();
+    std::cout<<"PASS: UI controls via the scene tree, GameObject2D + behavior, parenting, scene persistence, viewport emit\n";
+}
 void ViewTabsTests(bool capture)
 {
     Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");
@@ -1185,6 +1229,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--picker") ObjectPickerTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--view-tabs") ViewTabsTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--camera") CameraTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--ui") UiEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--meshes") MeshBehaviorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scripts") ScriptIntegrationEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--scenes") SceneEditorTests(argc > 2 && std::string(argv[2]) == "--capture");

@@ -3,7 +3,9 @@
 #include "core/MeshRenderer.h"
 #include "core/Camera.h"
 #include "physics/PhysicsBehavior.h"
+#include "ui/UiSerialize.h"
 #include <algorithm>
+#include <cctype>
 #include <limits>
 
 std::vector<zengine::GameObjectId> EditorShell::ObjectRows() const {
@@ -65,6 +67,26 @@ zengine::GameObject& EditorShell::CreateGameObject(ObjectPreset preset,zengine::
     }
     else if(preset!=ObjectPreset::Empty){rename(preset==ObjectPreset::RigidBody?"RigidBody":preset==ObjectPreset::KinematicBody?"KinematicBody":preset==ObjectPreset::StaticBody?"StaticBody":"Area");object.AddBehavior<zengine::physics::Collider>();if(preset==ObjectPreset::RigidBody)object.AddBehavior<zengine::physics::RigidBody>();else if(preset==ObjectPreset::KinematicBody)object.AddBehavior<zengine::physics::KinematicBody>();else if(preset==ObjectPreset::StaticBody)object.AddBehavior<zengine::physics::StaticBody>();else object.AddBehavior<zengine::physics::Area>();inspectorPanel_->RefreshBehaviors();OnObjectChanged();}
     status_=preset==ObjectPreset::Camera?L"Created Camera GameObject - it is now the main camera":L"Created GameObject";
+    BeginObjectRename(object.Id());
+    return object;
+}
+zengine::GameObject2D& EditorShell::CreateUiControl(std::string_view type,zengine::GameObjectId parent) {
+    RequireScene();
+    if(Playing())throw std::runtime_error("Stop Play before creating objects.");
+    if(!zengine::ui::IsUiControlType(type))throw std::runtime_error("Unknown UI control type.");
+    if(parent)RequireEditable(parent);
+    std::string base=std::string(1,static_cast<char>(std::toupper(type[0])))+std::string(type.substr(1));
+    std::string name=base;
+    for(unsigned suffix=1;;++suffix){bool used=false;for(std::size_t i=0;i<objects_.Size();++i)if(objects_.At(i).Name()==name){used=true;break;}if(!used)break;name=base+" ("+std::to_string(suffix)+")";}
+    auto& object=objects_.Create2D(std::move(name));
+    if(parent)object.SetParent(parent);
+    else if(!editingPrefab_.empty() && objects_.Size()>1)object.SetParent(objects_.At(0).Id());
+    zengine::ui::AddUiControl(object,type);
+    MarkSceneDirty();
+    SelectGameObject(object.Id());
+    inspectorPanel_->RefreshBehaviors();OnObjectChanged();
+    status_=L"Created UI control - edit it in the Inspector";
+    InvalidateRect(window_,nullptr,FALSE);
     BeginObjectRename(object.Id());
     return object;
 }

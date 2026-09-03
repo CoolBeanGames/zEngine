@@ -15,6 +15,7 @@
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include "core/Camera.h"
+#include "ui/UiSerialize.h"
 #include <commdlg.h>
 #include <commctrl.h>
 
@@ -335,7 +336,16 @@ void EditorShell::Render()
         if (GetTickCount64()-lastInspectorRefresh_>=100)
         { inspectorPanel_->RefreshLiveValues(); ReportScriptErrors(); InvalidateRect(window_,&sceneBrowser_,FALSE); lastInspectorRefresh_=GetTickCount64(); }
     }
-    auto frame=BuildSceneFrame();if(showFps_)frame.fps=currentFps_;renderer_->Render(frame);
+    auto frame=BuildSceneFrame();if(showFps_)frame.fps=currentFps_;
+    {
+        zengine::ui::UiContext uiContext;
+        uiContext.measureText=[&](std::string_view s,float h){return renderer_->MeasureText(s,h);};
+        uiContext.textureSize=[](std::string_view){return zengine::Vec2{};};
+        uiContext.resolveTexture=[&](std::string_view){return renderer_->WhiteTexture();};
+        uiViewport_.Build(objects_,renderer_->ViewportSize(),uiContext);
+        uiViewport_.Emit(frame.sprites,frame.texts);
+    }
+    renderer_->Render(frame);
 }
 
 bool EditorShell::PrepareScripts()
@@ -1553,6 +1563,7 @@ LRESULT EditorShell::HandleMessage(
         break;
     case WM_COMMAND:
         if(LOWORD(wParam)>=AddEmptyCommand&&LOWORD(wParam)<=AddAreaObjectCommand){CreateGameObject(static_cast<ObjectPreset>(LOWORD(wParam)-AddEmptyCommand),selectedObject_);return 0;}
+        if(HIWORD(wParam)==0&&LOWORD(wParam)>=AddUiControlBase&&LOWORD(wParam)<=AddUiControlLast){const auto& types=zengine::ui::UiControlTypes();const std::size_t index=LOWORD(wParam)-AddUiControlBase;if(index<types.size())CreateUiControl(types[index],selectedObject_);return 0;}
         if(LOWORD(wParam)==CopyObjectCommand){if(selectedObject_)CopyGameObject(selectedObject_);return 0;}
         if(LOWORD(wParam)==PasteObjectCommand){PasteGameObject(selectedObject_);return 0;}
         if(LOWORD(wParam)==DeleteObjectCommand){if(selectedObject_)DeleteGameObject(selectedObject_);return 0;}
@@ -1591,10 +1602,11 @@ LRESULT EditorShell::HandleMessage(
         ScreenToClient(window_, &point);
         if(PtInRect(&sceneBrowser_,point)) {
             const auto target=ScriptDropTarget(point);if(target)SelectGameObject(target);else {selectedObject_=0;inspectorPanel_->Bind(nullptr);InvalidateRect(window_,&sceneBrowser_,FALSE);}
-            HMENU menu=CreatePopupMenu(),add=CreatePopupMenu(),physics=CreatePopupMenu();const UINT addFlags=MF_STRING|((Playing()||!sceneOpen_||(target&&!CanEdit(target)))?MF_GRAYED:0);
+            HMENU menu=CreatePopupMenu(),add=CreatePopupMenu(),physics=CreatePopupMenu(),ui=CreatePopupMenu();const UINT addFlags=MF_STRING|((Playing()||!sceneOpen_||(target&&!CanEdit(target)))?MF_GRAYED:0);
             AppendMenuW(add,addFlags,AddEmptyCommand,L"Empty GameObject");AppendMenuW(add,addFlags,AddCubeCommand,L"Cube");AppendMenuW(add,addFlags,AddCameraCommand,L"Camera");
             AppendMenuW(physics,addFlags,AddRigidCommand,L"Rigid Body + Collider");AppendMenuW(physics,addFlags,AddKinematicCommand,L"Kinematic Body + Collider");AppendMenuW(physics,addFlags,AddStaticCommand,L"Static Body + Collider");AppendMenuW(physics,addFlags,AddAreaObjectCommand,L"Area + Collider");
-            AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(physics),L"Physics");AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(add),target?L"Add Child":L"Add");AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+            {int uid=AddUiControlBase;for(const auto& uiType:zengine::ui::UiControlTypes()){const std::wstring label(uiType.begin(),uiType.end());AppendMenuW(ui,addFlags,static_cast<UINT>(uid++),label.c_str());}}
+            AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(physics),L"Physics");AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(ui),L"UI");AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(add),target?L"Add Child":L"Add");AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
             const UINT objectFlags=MF_STRING|((Playing()||!target||!CanEdit(target))?MF_GRAYED:0);const UINT pasteFlags=MF_STRING|((Playing()||!objectClipboard_||(target&&!CanEdit(target)))?MF_GRAYED:0);
             AppendMenuW(menu,objectFlags,CopyObjectCommand,L"Copy");AppendMenuW(menu,pasteFlags,PasteObjectCommand,target?L"Paste as Child":L"Paste");AppendMenuW(menu,objectFlags,DeleteObjectCommand,L"Delete");AppendMenuW(menu,objectFlags,RenameObjectCommand,L"Rename");
             AppendMenuW(menu,MF_SEPARATOR,0,nullptr);const UINT transformFlags=MF_STRING|((Playing()||!target||!CanEdit(target,true))?MF_GRAYED:0);

@@ -38,6 +38,7 @@ public:
     std::size_t LastSpriteCount() const noexcept { return lastSpriteCount_; }
     // Text extent in screen pixels, using the shared UI font atlas (built on first use).
     zengine::Vec2 MeasureText(std::string_view text, float pixelHeight);
+    zengine::Vec2 ViewportSize() const noexcept { return {static_cast<float>(width_), static_cast<float>(height_)}; }
 
 private:
     using Vertex = MeshVertex;

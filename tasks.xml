@@ -951,12 +951,12 @@ a Breakpoint has been reached
     <name>Start on a UI subsystem</name>
     <prompt>use inheritance and the 2D rendering, we will need to make several types. parenting will be very important. later we will make other styles of UI and more controls.</prompt>
     <requirements></requirements>
-    <inProgress>true</inProgress>
-    <done>false</done>
+    <inProgress>false</inProgress>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey>k4p9x2wq</lockKey>
+    <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy>ZE-72</blockedBy>
@@ -966,28 +966,28 @@ a Breakpoint has been reached
     <build>true</build>
     <release>true</release>
     <tags></tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>A full UI subsystem built on ZE-60's 2D pass and the ZE-73 GameObject2D. New zEngineUi lib (src/ui/): UiControl is a Behavior on a GameObject2D - the GameObject2D parent hierarchy IS the UI tree. Anchors: 9 points + per-axis fills + half-anchors, auto-sizing (ResolveAnchor). Containers: Container (padding/spacing base), HTileBox / VTileBox (row/column, optional cross-fill), CenterContainer, MarginContainer, PanelContainer (nine-sliced sprite bg). Leaves: Text, LongText (newline-aware), TextEntry (Type() applies keystrokes, queryable Value()), TextureRect (region/tint), ColorRect, ProgressBar (h/v, value 0..1). UiSystem walks the tree, lays every control out top-down from the screen rect, emits the whole UI as ONE ordered batch into the sprite/text lists (renderer batches by texture), hit-tests the topmost clickable control and drives press/release click detection + TextEntry focus/typing; `order` field controls paint + hit order. Scripting VM: native class chain uiControl -&gt; uiContainer -&gt; uiHTileBox/uiVTileBox/uiCenterBox/uiMarginBox/uiPanel, uiControl -&gt; uiText -&gt; uiLongText, uiControl -&gt; uiTextEntry/uiTextureRect/uiColorRect/uiProgressBar - each carries the layout fields and a `clicked` signal, so `class Menu : uiPanel { func start(){ clicked.connect(h); } }` compiles and inherits everything (ui-prefixed names because text/container/control collided with common identifiers). Scene format bumped to v9: a UiControl serializes as `ui "&lt;type&gt;" &lt;n&gt;` + n `ui_prop "&lt;key&gt;" "&lt;value&gt;"` lines (src/ui/UiSerialize: TypeName / AddUiControl factory / SaveUiControl / LoadUiProperty, unknown keys ignored). Capture/Encode/Decode/Instantiate/Append all handle Kind::Ui; prefabs get it free. Editor: scene-tree right-click -&gt; Add -&gt; UI submenu (13 types) creates a GameObject2D + control via CreateUiControl(); the editor viewport previews the UI each frame (UiSystem emit in the render path). Game runtime: PlayerMain owns a ui::UiSystem, builds + emits the UI every frame and routes pointer clicks -&gt; Session::UiClicked -&gt; ScriptHost::EmitSignal(owner,"clicked") -&gt; the script's connected handler. Renderer::MeasureText exposes the font atlas for layout; textures currently resolve to the 1x1 white texture (real image loading belongs with the ZE-64/65 material work - subtask 4 explicitly asks for "its own way to add textures", which UploadTexture is). Tests: UiToolkit (anchors/containers/hit-test/clicks/entry/batch), ScriptTests "UI control classes", SceneTests v9 UI round-trip, ScriptHostTests clicked-signal, AssetTests --ui (scene-tree create + persistence + viewport emit). 35/35 ctest green; builds/debug + builds/release built, Release zipped for GitHub. Follow-ups: real UI image texture loading, keyboard text into TextEntry in the player loop, editor viewport click-through in Play.</notes>
+    <filesChanged>src/ui/UiControl.h; src/ui/UiControl.cpp; src/ui/UiSystem.h; src/ui/UiSystem.cpp; src/ui/UiSerialize.h; src/ui/UiSerialize.cpp; scripting/include/zscript/NativeTypes.h; scripting/src/Script.cpp; scripting/tests/ScriptTests.cpp; src/Scene.h; src/Scene.cpp; src/Renderer.h; src/Renderer.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/runtime/GameSession.h; src/runtime/PlayerMain.cpp; src/EditorShell.h; src/EditorShell.cpp; src/EditorHierarchy.cpp; tests/UiTests.cpp; tests/SceneTests.cpp; tests/ScriptHostTests.cpp; tests/AssetTests.cpp; CMakeLists.txt</filesChanged>
     <image></image>
     <subtasks>
-      <subtask done="false">supports anchors (with auto anchor modes (ie top left, filll, bottom half, etc)</subtask>
-      <subtask done="false">container base (controls children position/size, has parameters for adjusting)</subtask>
-      <subtask done="false">hTileBoxContainer (positions children in a row horizontally, can fill vertically or not)</subtask>
-      <subtask done="false">vTileBoxContainer (positions children in a row vertically, can fill horizontally or not)</subtask>
-      <subtask done="false">centerContainer (keep chilcdren exactly centered)</subtask>
-      <subtask done="false">marginContainer (keeys a configurable margin around the edge)</subtask>
-      <subtask done="false">panelContainer (basic contailer that renders a sprite)</subtask>
-      <subtask done="false">text (simple single line text field)</subtask>
-      <subtask done="false">longText (multiline text field)</subtask>
-      <subtask done="false">textEntery (allows user to enter text, can be queried for value)</subtask>
-      <subtask done="false">textureRect (displays a texture)</subtask>
-      <subtask done="false">colorRect (like a texture rect but fills the entire rect with a solid color)</subtask>
-      <subtask done="false">progressBar (displays a configurable scrollable horizontal or vertical progress bar)</subtask>
-      <subtask done="false">signals on all of this for if it was clicked by the mouse</subtask>
-      <subtask done="false">ordering settings</subtask>
-      <subtask done="false">batch entire UI draw as a single object</subtask>
-      <subtask done="false">all of these support prefabs, and all are created through the scene tree</subtask>
-      <subtask done="false">they can also be spawned and the base control inherits from gameObject2D</subtask>
+      <subtask done="true">supports anchors (with auto anchor modes (ie top left, filll, bottom half, etc)</subtask>
+      <subtask done="true">container base (controls children position/size, has parameters for adjusting)</subtask>
+      <subtask done="true">hTileBoxContainer (positions children in a row horizontally, can fill vertically or not)</subtask>
+      <subtask done="true">vTileBoxContainer (positions children in a row vertically, can fill horizontally or not)</subtask>
+      <subtask done="true">centerContainer (keep chilcdren exactly centered)</subtask>
+      <subtask done="true">marginContainer (keeys a configurable margin around the edge)</subtask>
+      <subtask done="true">panelContainer (basic contailer that renders a sprite)</subtask>
+      <subtask done="true">text (simple single line text field)</subtask>
+      <subtask done="true">longText (multiline text field)</subtask>
+      <subtask done="true">textEntery (allows user to enter text, can be queried for value)</subtask>
+      <subtask done="true">textureRect (displays a texture)</subtask>
+      <subtask done="true">colorRect (like a texture rect but fills the entire rect with a solid color)</subtask>
+      <subtask done="true">progressBar (displays a configurable scrollable horizontal or vertical progress bar)</subtask>
+      <subtask done="true">signals on all of this for if it was clicked by the mouse</subtask>
+      <subtask done="true">ordering settings</subtask>
+      <subtask done="true">batch entire UI draw as a single object</subtask>
+      <subtask done="true">all of these support prefabs, and all are created through the scene tree</subtask>
+      <subtask done="true">they can also be spawned and the base control inherits from gameObject2D</subtask>
     </subtasks>
   </task>
   <task id="ZE-63">
