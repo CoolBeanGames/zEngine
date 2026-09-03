@@ -70,6 +70,7 @@ Index::Index() {
     add(L"Physics",L"cast",L"gameObject",true);add(L"Physics",L"cast_all",L"array",true);
     for(const auto name:{L"lerp",L"sin",L"cos",L"tan",L"sqrt",L"exp",L"round"})add(L"Mathf",name,L"float",true);
     add(L"Mathf",L"dot",L"float",true);add(L"Mathf",L"cross",L"Vector3",true);
+    add(L"Mathf",L"clamp",L"float",true);add(L"Mathf",L"random",L"float",true);add(L"Mathf",L"random_range",L"float",true);add(L"Mathf",L"random_int",L"int",true);
     add(L"PhysicsBody",L"velocity",L"Vector3");add(L"PhysicsBody",L"angular_velocity",L"Vector3");
     for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})add(L"PhysicsBody",name,L"void",true);
     for(const auto name:{L"collision_entered",L"collision_stayed",L"collision_exited",L"area_entered",L"area_stayed",L"area_exited"})add(L"PhysicsBody",name,L"signal");
@@ -83,6 +84,7 @@ Index::Index() {
     for(const auto name:{L"is_action_pressed",L"is_action_just_pressed",L"is_action_just_released",L"action",L"get_axis",L"get_vector"})sig(L"Input",name,L"string action");
     for(const auto name:{L"sin",L"cos",L"tan",L"sqrt",L"exp",L"round"})sig(L"Mathf",name,L"float value");
     sig(L"Mathf",L"lerp",L"float from, float to, float weight");sig(L"Mathf",L"dot",L"Vector3 a, Vector3 b");sig(L"Mathf",L"cross",L"Vector3 a, Vector3 b");
+    sig(L"Mathf",L"clamp",L"float value, float min, float max");sig(L"Mathf",L"random",L"");sig(L"Mathf",L"random_range",L"float min, float max");sig(L"Mathf",L"random_int",L"float min, float max");
     sig(L"Physics",L"cast",L"Vector3 from, Vector3 to, int layer_mask");sig(L"Physics",L"cast_all",L"Vector3 from, Vector3 to, int layer_mask");
     for(const auto name:{L"add_force",L"add_impulse",L"add_torque",L"add_angular_impulse"})sig(L"PhysicsBody",name,L"Vector3 amount");
     for(const auto name:{L"was_moved",L"was_rotated",L"was_scaled"})sig(L"Transform",name,L"Vector3 value");

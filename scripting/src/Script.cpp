@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cctype>
 #include <cmath>
+#include <random>
 #include <limits>
 #include <iomanip>
 #include <locale>
@@ -715,6 +716,10 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     {Function f;f.params={"float","float","float"};f.result="float";math.methods.emplace("lerp",std::move(f));}
     {Function f;f.params={"Vector3","Vector3"};f.result="float";math.methods.emplace("dot",std::move(f));}
     {Function f;f.params={"Vector3","Vector3"};f.result="Vector3";math.methods.emplace("cross",std::move(f));}
+    {Function f;f.params={"float","float","float"};f.result="float";math.methods.emplace("clamp",std::move(f));}          // ZE-110
+    {Function f;f.params={};f.result="float";math.methods.emplace("random",std::move(f));}                              // [0, 1)
+    {Function f;f.params={"float","float"};f.result="float";math.methods.emplace("random_range",std::move(f));}          // [min, max)
+    {Function f;f.params={"float","float"};f.result="int";math.methods.emplace("random_int",std::move(f));}              // [min, max] inclusive
     program.classes.emplace(math.name,std::move(math));
     // Scene: host-owned scene management. Scene.load("<name>") switches the running
     // scene; Scene.current() returns the active scene's name.
@@ -967,6 +972,7 @@ struct Runtime::Impl {
     Runtime::PrefabSpawnCall prefabSpawnCall;
     Runtime::PrintCallback printCallback;
     std::function<void(ObjectRef,std::string_view)> audioCallback; // audioPlayer.play() / .stop()
+    std::mt19937_64 rng{std::random_device{}()};                   // Mathf.random* (ZE-110)
     std::function<void(std::string_view)> sceneLoadCall;
     std::function<std::string()> sceneCurrentCall;
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
@@ -1364,6 +1370,29 @@ struct Runtime::Impl {
                 const auto a=std::get<Vector3>(Coerce(args[0],"Vector3",t)),b=std::get<Vector3>(Coerce(args[1],"Vector3",t));
                 if(name=="dot")return a.x*b.x+a.y*b.y+a.z*b.z;
                 return Coerce(Vector3{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x},"Vector3",t);
+            }
+            if(name=="clamp") { // ZE-110
+                if(args.size()!=3)Error(t,"Mathf.clamp takes value, min and max");
+                const auto v=number(0),lo=number(1),hi=number(2);
+                if(lo>hi)Error(t,"Mathf.clamp requires min <= max");
+                return v<lo?lo:v>hi?hi:v;
+            }
+            if(name=="random") {
+                if(!args.empty())Error(t,"Mathf.random takes no arguments");
+                return std::uniform_real_distribution<double>(0.0,1.0)(rng);
+            }
+            if(name=="random_range") {
+                if(args.size()!=2)Error(t,"Mathf.random_range takes min and max");
+                const auto lo=number(0),hi=number(1);
+                if(lo>hi)Error(t,"Mathf.random_range requires min <= max");
+                if(lo==hi)return lo;
+                return std::uniform_real_distribution<double>(lo,hi)(rng);
+            }
+            if(name=="random_int") {
+                if(args.size()!=2)Error(t,"Mathf.random_int takes min and max");
+                const auto lo=static_cast<std::int64_t>(std::llround(number(0))),hi=static_cast<std::int64_t>(std::llround(number(1)));
+                if(lo>hi)Error(t,"Mathf.random_int requires min <= max");
+                return static_cast<std::int64_t>(std::uniform_int_distribution<std::int64_t>(lo,hi)(rng));
             }
             if(args.size()!=1)Error(t,"Mathf unary methods take one number");
             const auto value=number(0);double result=0;

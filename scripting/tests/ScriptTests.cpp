@@ -452,10 +452,29 @@ void MathfFunctions() {
             return Mathf.dot(a,b)==32 && Mathf.cross(Vector3(1,0,0),Vector3(0,1,0))==Vector3(0,0,1);
         }
         func invalid(){float value=Mathf.sqrt(-1);}
+        func clamp_ok():bool {
+            return Mathf.clamp(5,0,10)==5 && Mathf.clamp(-3,0,10)==0 && Mathf.clamp(99,0,10)==10;
+        }
+        func bad_clamp(){float v=Mathf.clamp(1,10,0);}
+        func randoms():bool {
+            int i=0; while (i<200) {
+                float r=Mathf.random();
+                float g=Mathf.random_range(-2,2);
+                int n=Mathf.random_int(3,6);
+                if (r<0 or r>=1) { return false; }
+                if (g < -2 or g >= 2) { return false; }
+                if (n<3 or n>6) { return false; }
+                i = i + 1;
+            }
+            return true;
+        }
     })");
     Runtime runtime(program);const auto object=runtime.Create("MathTest");
     Check(std::get<bool>(runtime.Call(object,"scalar")),"Mathf scalar methods returned incorrect values");
     Check(std::get<bool>(runtime.Call(object,"vector")),"Mathf vector methods returned incorrect values");
+    Check(std::get<bool>(runtime.Call(object,"clamp_ok")),"Mathf.clamp returned incorrect values");
+    Check(std::get<bool>(runtime.Call(object,"randoms")),"Mathf.random* left its documented range");
+    Error([&]{runtime.Call(object,"bad_clamp");},"min <= max");
     Error([&]{runtime.Call(object,"invalid");},"nonnegative");
     Error([&]{Compile("class Bad : Mathf {}");},"Cannot inherit");
     Error([&]{Compile("class Bad { Mathf value=Mathf(); }");},"supplied by the host");
