@@ -5,6 +5,7 @@
 #include "physics/PhysicsBehavior.h"
 #include "ui/UiSerialize.h"
 #include "audio/AudioSource.h"
+#include "core/Light.h"
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -69,6 +70,13 @@ zengine::GameObject& EditorShell::CreateGameObject(ObjectPreset preset,zengine::
     else if(preset==ObjectPreset::AudioPlayer){
         rename("Audio Player");
         object.AddBehavior<zengine::audio::AudioSource>();
+        inspectorPanel_->RefreshBehaviors(); OnObjectChanged();
+    }
+    else if(preset==ObjectPreset::PointLight||preset==ObjectPreset::DirectionalLight||preset==ObjectPreset::SpotLight){
+        const auto type = preset==ObjectPreset::PointLight?zengine::Light::Type::Point
+                        : preset==ObjectPreset::SpotLight?zengine::Light::Type::Spot : zengine::Light::Type::Directional;
+        rename(preset==ObjectPreset::PointLight?"Point Light":preset==ObjectPreset::SpotLight?"Spot Light":"Directional Light");
+        object.AddBehavior<zengine::Light>().SetLightType(type);
         inspectorPanel_->RefreshBehaviors(); OnObjectChanged();
     }
     else if(preset!=ObjectPreset::Empty){rename(preset==ObjectPreset::RigidBody?"RigidBody":preset==ObjectPreset::KinematicBody?"KinematicBody":preset==ObjectPreset::StaticBody?"StaticBody":"Area");object.AddBehavior<zengine::physics::Collider>();if(preset==ObjectPreset::RigidBody)object.AddBehavior<zengine::physics::RigidBody>();else if(preset==ObjectPreset::KinematicBody)object.AddBehavior<zengine::physics::KinematicBody>();else if(preset==ObjectPreset::StaticBody)object.AddBehavior<zengine::physics::StaticBody>();else object.AddBehavior<zengine::physics::Area>();inspectorPanel_->RefreshBehaviors();OnObjectChanged();}

@@ -10,7 +10,7 @@ namespace zengine::scenes
     constexpr std::size_t MaxSceneBytes=8*1024*1024;
     struct BehaviorData
     {
-        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area, Camera, Ui, Audio, AudioEffect };
+        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area, Camera, Ui, Audio, AudioEffect, Light };
         Kind kind=Kind::Mesh;
         std::string uiType; // when kind==Ui: ui::UiControl::TypeName()
         std::vector<std::pair<std::string,std::string>> uiProps; // ordered key/value
@@ -24,6 +24,11 @@ namespace zengine::scenes
         // ZE-109: when kind==AudioEffect (sits on an Area)
         int audioEffectKind=0; // audio::EffectKind
         float audioEffectDecay=1.5f, audioEffectWetMix=0.6f, audioEffectBlend=1.0f;
+        // ZE-74: when kind==Light
+        int lightType=0; // Light::Type
+        Vec3 lightColor{1,1,1};
+        float lightIntensity=1, lightRange=10, lightFalloff=2, lightSpotInner=20, lightSpotOuter=35;
+        bool lightStatic=false;
         bool enabled=true;
         float priority=0;
         std::string asset;

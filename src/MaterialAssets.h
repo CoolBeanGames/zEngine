@@ -30,6 +30,7 @@ namespace zengine::materials
     {
         std::string shader;        // project-relative ".shader" path; empty = built-in Standard (albedo x tint)
         std::vector<Value> values; // author-pinned parameter values
+        bool lit = true;           // ZE-74: false => this material ignores scene lights (always full brightness)
         bool operator==(const MaterialDoc&) const = default;
     };
 
@@ -56,6 +57,7 @@ namespace zengine::materials
         bool builtin = true;
         std::string pixelShaderHlsl;   // "" when builtin
         std::vector<Value> parameters; // merged, shader declaration order
+        bool lit = true;               // ZE-74: from MaterialDoc::lit
         bool ok = true;
         std::string error;
 

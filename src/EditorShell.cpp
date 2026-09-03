@@ -16,6 +16,8 @@
 #include "core/ScriptBehavior.h"
 #include "core/MeshRenderer.h"
 #include "core/Camera.h"
+#include "core/Light.h"
+#include "SceneLights.h"
 #include "ui/UiSerialize.h"
 #include "ui/VideoClip.h"
 #include <commdlg.h>
@@ -552,6 +554,8 @@ ViewportFrame EditorShell::BuildSceneFrame() const
             DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
             frame.meshes.push_back({bound->second.mesh, object.GetTransform(),parent, ResolveMaterial(mesh->Material())});
         }
+        if (const auto* light = object.GetBehavior<zengine::Light>(); light && light->Enabled() && frame.lights.size() < 8)
+            frame.lights.push_back(MakeLight(*light, object.GetTransform(), ParentMatrix(objects_, object)));
     }
     if (const auto* object = SelectedGameObject(); object && CanEdit(object->Id(),true))
     {
@@ -1478,7 +1482,7 @@ MaterialHandle EditorShell::ResolveMaterial(const std::string& materialAsset) co
         if (const auto texture = effective.Texture("albedo"); !texture.empty())
             try { albedo = renderer_->UploadImage(assetLibrary::Resolve(assetsDirectory_, std::filesystem::u8path(texture))); }
             catch (...) {}
-        handle = renderer_->UploadMaterial(albedo, Float4{tint[0], tint[1], tint[2], tint[3]});
+        handle = renderer_->UploadMaterial(albedo, Float4{tint[0], tint[1], tint[2], tint[3]}, effective.lit);
     }
     catch (...) { handle = {}; }
     materialCache_[materialAsset] = handle;
@@ -1831,6 +1835,11 @@ LRESULT EditorShell::HandleMessage(
     case WM_COMMAND:
         if(LOWORD(wParam)>=AddEmptyCommand&&LOWORD(wParam)<=AddAreaObjectCommand){CreateGameObject(static_cast<ObjectPreset>(LOWORD(wParam)-AddEmptyCommand),selectedObject_);return 0;}
         if(LOWORD(wParam)==AddAudioPlayerCommand){CreateGameObject(ObjectPreset::AudioPlayer,selectedObject_);return 0;}
+        if(LOWORD(wParam)>=AddLightBase&&LOWORD(wParam)<=AddLightLast){
+            const int k=LOWORD(wParam)-AddLightBase;
+            CreateGameObject(k==0?ObjectPreset::PointLight:k==2?ObjectPreset::SpotLight:ObjectPreset::DirectionalLight,selectedObject_);
+            return 0;
+        }
         if(HIWORD(wParam)==0&&LOWORD(wParam)>=AddUiControlBase&&LOWORD(wParam)<=AddUiControlLast){const auto& types=zengine::ui::UiControlTypes();const std::size_t index=LOWORD(wParam)-AddUiControlBase;if(index<types.size())CreateUiControl(types[index],selectedObject_);return 0;}
         if(LOWORD(wParam)==CopyObjectCommand){if(selectedObject_)CopyGameObject(selectedObject_);return 0;}
         if(LOWORD(wParam)==PasteObjectCommand){PasteGameObject(selectedObject_);return 0;}
@@ -1872,6 +1881,7 @@ LRESULT EditorShell::HandleMessage(
             const auto target=ScriptDropTarget(point);if(target)SelectGameObject(target);else {selectedObject_=0;inspectorPanel_->Bind(nullptr);InvalidateRect(window_,&sceneBrowser_,FALSE);}
             HMENU menu=CreatePopupMenu(),add=CreatePopupMenu(),physics=CreatePopupMenu(),ui=CreatePopupMenu();const UINT addFlags=MF_STRING|((Playing()||!sceneOpen_||(target&&!CanEdit(target)))?MF_GRAYED:0);
             AppendMenuW(add,addFlags,AddEmptyCommand,L"Empty GameObject");AppendMenuW(add,addFlags,AddCubeCommand,L"Cube");AppendMenuW(add,addFlags,AddCameraCommand,L"Camera");AppendMenuW(add,addFlags,AddAudioPlayerCommand,L"Audio Player");
+            {HMENU lights=CreatePopupMenu();AppendMenuW(lights,addFlags,AddLightBase+0,L"Point");AppendMenuW(lights,addFlags,AddLightBase+1,L"Directional");AppendMenuW(lights,addFlags,AddLightBase+2,L"Spot");AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(lights),L"Light");}
             AppendMenuW(physics,addFlags,AddRigidCommand,L"Rigid Body + Collider");AppendMenuW(physics,addFlags,AddKinematicCommand,L"Kinematic Body + Collider");AppendMenuW(physics,addFlags,AddStaticCommand,L"Static Body + Collider");AppendMenuW(physics,addFlags,AddAreaObjectCommand,L"Area + Collider");
             {int uid=AddUiControlBase;for(const auto& uiType:zengine::ui::UiControlTypes()){const std::wstring label(uiType.begin(),uiType.end());AppendMenuW(ui,addFlags,static_cast<UINT>(uid++),label.c_str());}}
             AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(physics),L"Physics");AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(ui),L"UI");AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(add),target?L"Add Child":L"Add");AppendMenuW(menu,MF_SEPARATOR,0,nullptr);

@@ -38,7 +38,7 @@ public:
     // ZE-65: decode an image file (PNG/JPEG/BMP/TIFF/GIF) to a sampleable texture,
     // and bundle a resolved Material Instance (albedo texture + tint).
     TextureHandle UploadImage(const std::filesystem::path& file);
-    MaterialHandle UploadMaterial(TextureHandle albedo, Float4 tint);
+    MaterialHandle UploadMaterial(TextureHandle albedo, Float4 tint, bool lit = true);
     std::size_t LastSpriteCount() const noexcept { return lastSpriteCount_; }
     // Text extent in screen pixels, using the shared UI font atlas (built on first use).
     zengine::Vec2 MeasureText(std::string_view text, float pixelHeight);
@@ -47,6 +47,7 @@ public:
 private:
     using Vertex = MeshVertex;
     struct SceneConstants;
+    struct LightConstants;
     struct SpriteConstants;
 
     void CreateDeviceAndSwapChain(HWND window, std::uint32_t width, std::uint32_t height);
@@ -69,6 +70,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11PixelShader> pixelShader_;
     Microsoft::WRL::ComPtr<ID3D11InputLayout> inputLayout_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> sceneConstantBuffer_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> lightConstantBuffer_; // ZE-74
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> whiteTexture_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> albedoSampler_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer_;

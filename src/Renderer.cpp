@@ -42,6 +42,7 @@ struct RenderMaterial
 {
     TextureHandle albedo;             // null -> fall back to the model's imported texture
     Float4 tint{1, 1, 1, 1};
+    bool lit = true;                  // ZE-74: false -> mesh ignores scene lights
 };
 
 namespace
@@ -88,9 +89,15 @@ namespace
 struct Renderer::SceneConstants
 {
     XMFLOAT4X4 worldViewProjection;
+    XMFLOAT4X4 world;                  // ZE-74: object -> world (for per-vertex lighting)
     XMFLOAT4X4 normalWorld;
-    XMFLOAT4 lightDirection;
     XMFLOAT4 materialTint{1, 1, 1, 1}; // ZE-65: material instance tint (albedo multiplier)
+    XMFLOAT4 ambient{0.10f, 0.10f, 0.12f, 0.0f}; // ZE-74: rgb ambient; w = 1 apply lights, 0 = full bright
+    XMFLOAT4 lightParams{0, 0, 0, 0};  // x = active light count
+};
+struct Renderer::LightConstants
+{
+    struct GpuLight { XMFLOAT4 posType{}, dirRange{}, colorIntensity{}, spot{}; } lights[8]{};
 };
 
 struct Renderer::SpriteConstants
@@ -302,6 +309,9 @@ void Renderer::CreateCube()
     constantDescription.Usage = D3D11_USAGE_DYNAMIC;
     constantDescription.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     constantDescription.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    D3D11_BUFFER_DESC lightDescription = constantDescription;
+    lightDescription.ByteWidth = static_cast<UINT>(sizeof(LightConstants));
+    ThrowIfFailed(device_->CreateBuffer(&lightDescription, nullptr, &lightConstantBuffer_), "Create light constant buffer");
     ThrowIfFailed(device_->CreateBuffer(&constantDescription, nullptr, &sceneConstantBuffer_),
                   "Create scene constant buffer");
     cube_ = std::move(mesh);
@@ -514,11 +524,12 @@ std::vector<std::uint8_t> DecodeImageFileRGBA(const std::wstring& file, unsigned
     return pixels;
 }
 
-MaterialHandle Renderer::UploadMaterial(TextureHandle albedo, Float4 tint)
+MaterialHandle Renderer::UploadMaterial(TextureHandle albedo, Float4 tint, bool lit)
 {
     auto material = std::make_shared<RenderMaterial>();
     material->albedo = std::move(albedo);
     material->tint = tint;
+    material->lit = lit;
     return material;
 }
 
@@ -757,15 +768,37 @@ void Renderer::Render(const ViewportFrame& frame)
                                             std::max(0.001f,gv.nearZ),std::max(gv.nearZ+0.01f,gv.farZ));
     }
 
-    const auto setConstants = [&](const XMMATRIX& matrix, bool unlit, Float4 tint = {1, 1, 1, 1}) {
+    // ZE-74: the scene renders unlit unless there is at least one light.
+    const int lightCount = std::min<int>(8, static_cast<int>(frame.lights.size()));
+    {
+        LightConstants lc{};
+        for (int i = 0; i < lightCount; ++i)
+        {
+            const auto& l = frame.lights[static_cast<std::size_t>(i)];
+            const float dl = std::sqrt(l.direction.x * l.direction.x + l.direction.y * l.direction.y + l.direction.z * l.direction.z);
+            const float inv = dl > 1e-6f ? 1.0f / dl : 0.0f;
+            lc.lights[i].posType = {l.position.x, l.position.y, l.position.z, static_cast<float>(l.type)};
+            lc.lights[i].dirRange = {l.direction.x * inv, l.direction.y * inv, l.direction.z * inv, std::max(0.01f, l.range)};
+            lc.lights[i].colorIntensity = {l.color.x * l.intensity, l.color.y * l.intensity, l.color.z * l.intensity, 0};
+            lc.lights[i].spot = {l.spotCosInner, l.spotCosOuter, std::max(0.1f, l.falloff), 0};
+        }
+        D3D11_MAPPED_SUBRESOURCE m{};
+        ThrowIfFailed(context_->Map(lightConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m), "Map light constants");
+        *static_cast<LightConstants*>(m.pData) = lc;
+        context_->Unmap(lightConstantBuffer_.Get(), 0);
+    }
+
+    const auto setConstants = [&](const XMMATRIX& matrix, bool lit, Float4 tint = {1, 1, 1, 1}) {
         SceneConstants constants{};
         XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(matrix * view * projection));
+        XMStoreFloat4x4(&constants.world, XMMatrixTranspose(matrix));
         const float determinant = XMVectorGetX(XMMatrixDeterminant(matrix));
         const XMMATRIX normals = std::abs(determinant) > 1.0e-20f
             ? XMMatrixTranspose(XMMatrixInverse(nullptr, matrix)) : XMMatrixIdentity();
         XMStoreFloat4x4(&constants.normalWorld, XMMatrixTranspose(normals));
-        constants.lightDirection = XMFLOAT4{-0.4f, -0.8f, 0.5f, unlit ? 1.0f : 0.0f};
         constants.materialTint = XMFLOAT4{tint.x, tint.y, tint.z, tint.w};
+        constants.ambient = XMFLOAT4{0.10f, 0.10f, 0.12f, (lit && lightCount > 0) ? 1.0f : 0.0f};
+        constants.lightParams = XMFLOAT4{static_cast<float>((lit && lightCount > 0) ? lightCount : 0), 0, 0, 0};
         D3D11_MAPPED_SUBRESOURCE mapped{};
         ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map scene constants");
         *static_cast<SceneConstants*>(mapped.pData) = constants;
@@ -786,11 +819,12 @@ void Renderer::Render(const ViewportFrame& frame)
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
     context_->VSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf());
+    context_->VSSetConstantBuffers(1, 1, lightConstantBuffer_.GetAddressOf()); // ZE-74 lights
     context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
     context_->PSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf()); // ZE-65: material tint read in PSMain
     context_->PSSetSamplers(0, 1, albedoSampler_.GetAddressOf());
     const auto drawLines = [&](ID3D11Buffer* buffer, UINT count, const XMMATRIX& matrix) {
-        setConstants(matrix, true);
+        setConstants(matrix, false); // editor guides are always unlit
         context_->IASetVertexBuffers(0, 1, &buffer, &stride, &offset);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
         context_->PSSetShaderResources(0, 1, whiteTexture_.GetAddressOf());
@@ -805,7 +839,8 @@ void Renderer::Render(const ViewportFrame& frame)
         if (mesh.device != device_.Get()) throw std::runtime_error("Mesh belongs to another render device.");
         const RenderMaterial* material = draw.material.get();
         const Float4 tint = material ? material->tint : Float4{1, 1, 1, 1};
-        setConstants(TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity()), false, tint);
+        const bool meshLit = draw.lit && (!material || material->lit);
+        setConstants(TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity()), meshLit, tint);
         context_->IASetVertexBuffers(0, 1, mesh.vertices.GetAddressOf(), &stride, &offset);
         context_->IASetIndexBuffer(mesh.indices.Get(), mesh.indexFormat, 0);
         for (const auto& part : mesh.parts)

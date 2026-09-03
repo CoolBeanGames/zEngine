@@ -90,7 +90,7 @@ public:
     const std::filesystem::path& ScenePath() const noexcept { return scenePath_; }
     bool SceneDirty() const noexcept { return sceneDirty_; }
     zengine::GameObject& CreateEmptyGameObject();
-    enum class ObjectPreset { Empty, Cube, Camera, RigidBody, KinematicBody, StaticBody, Area, AudioPlayer };
+    enum class ObjectPreset { Empty, Cube, Camera, RigidBody, KinematicBody, StaticBody, Area, AudioPlayer, PointLight, DirectionalLight, SpotLight };
     zengine::GameObject& CreateGameObject(ObjectPreset,zengine::GameObjectId parent=0);
     // Creates a GameObject2D carrying the named ui:: control (ui::UiControlTypes()).
     zengine::GameObject2D& CreateUiControl(std::string_view type,zengine::GameObjectId parent=0);
@@ -99,6 +99,7 @@ public:
     void DeleteGameObject(zengine::GameObjectId);
     static constexpr int AddEmptyCommand=3700,AddCubeCommand=3701,AddCameraCommand=3702,AddRigidCommand=3703,AddKinematicCommand=3704,AddStaticCommand=3705,AddAreaObjectCommand=3706,AddAudioPlayerCommand=3707,CopyObjectCommand=3710,PasteObjectCommand=3711,DeleteObjectCommand=3712;
     static constexpr int AddUiControlBase=3740,AddUiControlLast=3759; // one per ui::UiControlTypes()
+    static constexpr int AddLightBase=3760,AddLightLast=3762; // 0 point, 1 directional, 2 spot (ZE-74)
     std::filesystem::path CreateScriptAsset();
     void OpenScript(const std::filesystem::path& path);
     // ZE-64: HLSL material shader assets (.shader).

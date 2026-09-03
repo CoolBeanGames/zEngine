@@ -20,6 +20,22 @@ struct MeshDraw
     zengine::Transform transform;
     std::optional<DirectX::XMFLOAT4X4> parentMatrix;
     MaterialHandle material;
+    bool lit = true; // ZE-74: false => draw at full brightness even when the scene has lights
+};
+// ZE-74: one scene light, already resolved to world space. `type` 0=directional,
+// 1=point, 2=spot. `direction` is the beam direction (unit); `range`/`falloff` /
+// the spot cone cosines only matter for point/spot.
+struct LightData
+{
+    int type = 0;
+    zengine::Vec3 position{};
+    zengine::Vec3 direction{0, -1, 0};
+    Float3 color{1, 1, 1};
+    float intensity = 1;
+    float range = 10;
+    float falloff = 2;
+    float spotCosInner = 0.94f;
+    float spotCosOuter = 0.82f;
 };
 struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; bool audioZone=false; };
 // ZE-111: audible range of a 3D AudioSource - inner (full volume) + outer (silent)
@@ -38,6 +54,7 @@ struct CameraView
 struct ViewportFrame
 {
     std::vector<MeshDraw> meshes;
+    std::vector<LightData> lights; // ZE-74: empty => the scene renders unlit
     std::vector<ColliderDraw> colliders;
     std::vector<AudioRange> audioRanges;
     std::vector<CameraView> cameraGizmos;

@@ -3,6 +3,7 @@
 #include "ui/UiControl.h"
 #include "audio/AudioSource.h"
 #include "audio/AudioEffect.h"
+#include "core/Light.h"
 #include "physics/PhysicsBehavior.h"
 #include <windows.h>
 #include <cmath>
@@ -59,7 +60,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 13\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 14\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});
@@ -204,6 +205,23 @@ int main()
             auto* rfx=copy.objects.Find(copy.objects.At(0).Id())->GetBehavior<audio::AudioEffect>();
             Check(rfx && std::abs(rfx->Decay()-3.2f)<0.001f && std::abs(rfx->WetMix()-0.75f)<0.001f && std::abs(rfx->BlendDistance()-1.5f)<0.001f,
                   "AudioEffect props lost on restore");
+        }
+        // ZE-74: a Light round-trips through scene v13.
+        {
+            ObjectStore s; ScriptHost h;
+            auto& sun=s.Create("Sun");
+            auto& l=sun.AddBehavior<Light>();
+            l.SetLightType(Light::Type::Spot); l.SetColor({0.9f,0.7f,0.4f}); l.SetIntensity(2.5f);
+            l.SetRange(18); l.SetFalloff(1.5f); l.SetSpotOuter(40); l.SetSpotInner(15); l.SetStatic(true);
+            const auto enc=scenes::Encode(scenes::Capture(s,h));
+            Check(enc.find("light ")!=std::string::npos,"Light was not serialized");
+            auto copy=scenes::Instantiate(scenes::Decode(enc));
+            Check(scenes::Encode(scenes::Capture(copy.objects,copy.scripts))==enc,"Light scene round trip changed authored data");
+            auto* rl=copy.objects.Find(copy.objects.At(0).Id())->GetBehavior<Light>();
+            Check(rl && rl->LightType()==Light::Type::Spot && rl->Static()
+                  && std::abs(rl->Intensity()-2.5f)<0.001f && std::abs(rl->Range()-18.0f)<0.001f
+                  && std::abs(rl->Color().x-0.9f)<0.001f && std::abs(rl->SpotOuter()-40.0f)<0.001f,
+                  "Light props lost on restore");
         }
         // ZE-66: the new scroll / button / video / html controls round-trip too.
         {

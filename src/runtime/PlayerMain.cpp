@@ -10,6 +10,8 @@
 #include "ShaderAssets.h"
 #include "FbxImporter.h"
 #include "core/MeshRenderer.h"
+#include "core/Light.h"
+#include "SceneLights.h"
 #include "input/InputAssets.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -103,7 +105,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                     TextureHandle albedo;
                     if(const auto texture=effective.Texture("albedo");!texture.empty())
                         try{albedo=renderer.UploadImage(assetLibrary::Resolve(assetsRoot,std::filesystem::u8path(texture)));}catch(...){}
-                    handle=renderer.UploadMaterial(albedo,Float4{tint[0],tint[1],tint[2],tint[3]});
+                    handle=renderer.UploadMaterial(albedo,Float4{tint[0],tint[1],tint[2],tint[3]},effective.lit);
                 }catch(...){handle={};}
                 materialCache[asset]=handle;
                 return handle;
@@ -156,7 +158,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                 if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();uiAssets.Invalidate();}
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
-                for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id())||object.Is2D())continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));const auto* mr=object.GetBehavior<zengine::MeshRenderer>();frame.meshes.push_back({meshes.at(object.Id()),t3d,parent,mr?resolveMeshMaterial(mr->Material()):MaterialHandle{}});}
+                for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(object.Is2D())continue;
+                    if(const auto* light=object.GetBehavior<zengine::Light>();light&&light->Enabled()&&frame.lights.size()<8){DirectX::XMFLOAT4X4 lp;DirectX::XMStoreFloat4x4(&lp,ParentMatrix(session.Objects(),object));frame.lights.push_back(MakeLight(*light,zengine::As3D(object).GetTransform(),DirectX::XMLoadFloat4x4(&lp)));}
+                    if(!visible(object.Id()))continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));const auto* mr=object.GetBehavior<zengine::MeshRenderer>();frame.meshes.push_back({meshes.at(object.Id()),t3d,parent,mr?resolveMeshMaterial(mr->Material()):MaterialHandle{}});}
                 ui.Build(session.Objects(),{static_cast<float>(width),static_cast<float>(height)},uiContext);
                 ui.Emit(frame.sprites,frame.texts);
                 renderer.Render(frame);++rendered;

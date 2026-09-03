@@ -91,6 +91,7 @@ namespace zengine::materials
         out.imbue(std::locale::classic());
         out << "ZMATERIAL 1\n";
         out << "shader " << std::quoted(doc.shader) << '\n';
+        if (!doc.lit) out << "unlit 1\n"; // ZE-74 (absent => lit, so old files load unchanged)
         for (const auto& value : doc.values)
         {
             out << "value " << std::quoted(value.name) << ' ' << TypeToken(value.type) << ' ';
@@ -120,6 +121,11 @@ namespace zengine::materials
                 doc.shader = ReadQuoted(in);
                 if (!doc.shader.empty() && (doc.shader.find("..") != std::string::npos || doc.shader.front() == '/'))
                     throw std::runtime_error("Material shader path must be project-relative.");
+            }
+            else if (token == "unlit")
+            {
+                int v = 0; if (!(in >> v)) throw std::runtime_error("Invalid material lighting flag.");
+                doc.lit = v == 0;
             }
             else if (token == "value")
             {
@@ -236,6 +242,7 @@ namespace zengine::materials
                       const std::function<std::string(const std::string&)>& loadShaderSource)
     {
         Effective effective;
+        effective.lit = doc.lit;
         std::vector<Value> declared;
 
         if (doc.shader.empty())
