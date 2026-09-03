@@ -15,6 +15,11 @@
 namespace
 {
     constexpr wchar_t ClassName[] = L"zEngineScriptEditor";
+    std::filesystem::path ResolveAsset(const std::filesystem::path& assets, const std::filesystem::path& path)
+    {
+        return zengine::shaders::IsShader(path) ? zengine::shaders::Resolve(assets, path)
+                                                : zengine::scripts::Resolve(assets, path);
+    }
     std::wstring Wide(const std::string& text)
     {
         const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
@@ -33,10 +38,11 @@ namespace
     }
 }
 ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, const std::filesystem::path& path, HWND embedIn)
-    : assets_(assets), path_(zengine::scripts::Resolve(assets, path)), embedded_(embedIn != nullptr)
+    : assets_(assets), path_(ResolveAsset(assets, path)), embedded_(embedIn != nullptr)
 {
+    hlsl_ = zengine::shaders::IsShader(path_);
     // Validate before opening a window. No partial document on failed reads.
-    loaded_ = zengine::scripts::Load(path_);
+    loaded_ = LoadSource();
     richEdit_ = LoadLibraryW(L"Msftedit.dll");
     if (!richEdit_) throw std::runtime_error("Windows RichEdit is unavailable.");
     const auto instance = GetModuleHandleW(nullptr);
@@ -161,9 +167,18 @@ std::wstring ScriptEditor::Text() const
     text.resize(static_cast<std::size_t>(read));
     return text;
 }
+std::string ScriptEditor::LoadSource() const
+{
+    return hlsl_ ? zengine::shaders::Load(path_) : zengine::scripts::Load(path_);
+}
+void ScriptEditor::SaveSource(std::string_view bytes) const
+{
+    if (hlsl_) zengine::shaders::Save(assets_, path_, bytes, &loaded_);
+    else zengine::scripts::Save(assets_, path_, bytes, &loaded_);
+}
 void ScriptEditor::Reload()
 {
-    const auto disk = zengine::scripts::Load(path_);
+    const auto disk = LoadSource();
     auto text = Wide(disk);
     if (!text.empty() && text.front() == 0xfeff) text.erase(text.begin());
     foldedBlocks_.clear();
@@ -183,7 +198,7 @@ bool ScriptEditor::Save()
         std::wstring text;
         for (wchar_t c : raw) { if (c == L'\r') text += L"\r\n"; else text += c; }
         const auto bytes = Utf8(text);
-        zengine::scripts::Save(assets_, path_, bytes, &loaded_);
+        SaveSource(bytes);
         loaded_ = bytes; dirty_ = false; Title(); Highlight();
         if (saved_) saved_();
         RefreshCompletionIndex();HideCompletion();
@@ -213,8 +228,9 @@ void ScriptEditor::Highlight()
 {
     KillTimer(window_, 1);
     const auto text = Text();
-    analysis_ = zengine::scripts::Analyze(text);
+    analysis_ = hlsl_ ? zengine::shaders::Analyze(text) : zengine::scripts::Analyze(text);
 #ifdef ZENGINE_SCRIPT_COMPILER
+  if (!hlsl_) {
     // Only link to the compiler in this checkout; never to another chat's unfinished worktree.
     auto normalized = text;
     std::replace(normalized.begin(), normalized.end(), L'\r', L'\n');
@@ -231,6 +247,7 @@ void ScriptEditor::Highlight()
         start += Wide(lineText.substr(0, columnBytes)).size();
         analysis_.errors.push_back({start, 1, diagnostic.line, diagnostic.column, diagnostic.message});
     }
+  }
 #endif
     formatting_ = true;
     CHARRANGE selection{}; POINT scroll{};
@@ -493,6 +510,7 @@ void ScriptEditor::ExpandAll(){SetHidden(0,Text().size(),false);foldedBlocks_.cl
 
 void ScriptEditor::RefreshCompletionIndex() {
     completionIndex_=scriptCompletion::Index{};std::size_t bytes=0,count=0;
+    if (hlsl_) return; // HLSL has no zEngine-script autocomplete index
     // Filesystem reads happen on open/save, not every keystroke. Stay project-contained.
     std::error_code error;
     for(std::filesystem::recursive_directory_iterator it(assets_,std::filesystem::directory_options::skip_permission_denied,error),end;it!=end && !error;it.increment(error)) {
@@ -531,7 +549,7 @@ void ScriptEditor::UpdateHover(POINT clientPoint) {
     SendMessageW(tooltip_,TTM_TRACKACTIVATE,TRUE,reinterpret_cast<LPARAM>(&info));
 }
 void ScriptEditor::UpdateCompletion() {
-    if(suppressCompletion_ || formatting_)return;
+    if(suppressCompletion_ || formatting_ || hlsl_)return;
     CHARRANGE range{};SendMessageW(source_,EM_EXGETSEL,0,reinterpret_cast<LPARAM>(&range));
     if(range.cpMin!=range.cpMax){HideCompletion();return;}
     completion_=completionIndex_.Complete(Text(),range.cpMin);completionSelection_=0;

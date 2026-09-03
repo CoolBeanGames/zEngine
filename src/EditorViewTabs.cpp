@@ -83,8 +83,11 @@ void EditorShell::OpenInlineScript(const std::filesystem::path& path)
 {
     EnsureScriptTab();
     std::filesystem::path resolved;
-    try { resolved = zengine::scripts::Resolve(assetsDirectory_, path); }
-    catch (const std::exception& error) { status_ = L"Cannot open script: " + Wide(error.what()); InvalidateRect(window_, &statusBar_, FALSE); return; }
+    try {
+        resolved = zengine::shaders::IsShader(path) ? zengine::shaders::Resolve(assetsDirectory_, path)
+                                                    : zengine::scripts::Resolve(assetsDirectory_, path);
+    }
+    catch (const std::exception& error) { status_ = L"Cannot open: " + Wide(error.what()); InvalidateRect(window_, &statusBar_, FALSE); return; }
     if (inlineEditor_ && _wcsicmp(inlineEditor_->Path().c_str(), resolved.c_str()) == 0) { RefreshFunctionList(); return; }
     if (inlineEditor_ && !inlineEditor_->ConfirmClose()) return;
 

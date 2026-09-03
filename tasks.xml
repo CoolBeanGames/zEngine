@@ -1025,7 +1025,7 @@ a Breakpoint has been reached
     <prompt>the first half of the Material system, it is esentially a shader. Later though we will build a visual editor for now just support HLSL.</prompt>
     <requirements>we can now create and compile HLSL code.</requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -1033,19 +1033,19 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
     <release>false</release>
     <tags>rendering</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>First half of the Material system: a ".shader" asset is plain HLSL text. New src/ShaderAssets.{h,cpp} (in zEngineScriptTools, links d3dcompiler): IsShader/Resolve/Load/Save/Create (atomic writes, project containment - mirrors ScriptAssets) with a template shader (cbuffer Parameters + Texture2D + PSMain). shaders::Parse(source) extracts the parameters - cbuffer scalars (float/float2/3/4, default read from a trailing "// default: ..." comment) and top-level Texture2D slots - and compiles the pixel entry (PSMain, ps_5_0) with D3DCompile to prove the HLSL is valid, returning {parameters, compiled, errors}. shaders::Analyze(wsource) is the editor tokeniser (HLSL keyword/type/preprocessor sets, bracket balance) and folds in the D3DCompile diagnostics as inline errors. Editor: assetLibrary::Kind::Shader (icon + "Material Shader" label); library right-click "Create Material Shader (.shader)"; double-click opens it in the inline ScriptEditor. ScriptEditor is now extension-aware (bool hlsl_): shader vs script Resolve/Load/Save, shaders::Analyze for highlighting/errors, and the zEngine-script compiler pass + autocomplete index are skipped for HLSL. It only defines code + parameters - nothing is applied to any object yet (that is ZE-65). Tests: ScriptEditorTests gains an HLSL block (create/round-trip, Parse params + compile ok, invalid HLSL reported, Analyze valid/invalid, .shader opened + saved through the editor). Full ctest 35/35; builds/debug + builds/test built.</notes>
+    <filesChanged>src/ShaderAssets.h; src/ShaderAssets.cpp; src/ScriptEditor.h; src/ScriptEditor.cpp; src/AssetLibrary.h; src/EditorShell.h; src/EditorShell.cpp; src/EditorViewTabs.cpp; tests/ScriptEditorTests.cpp; CMakeLists.txt; tasks.xml</filesChanged>
     <image></image>
     <subtasks>
-      <subtask done="false">use text editor for HLSL</subtask>
-      <subtask done="false">call the extension .shader</subtask>
-      <subtask done="false">only defines code and parameters, cannot be applied to objefcts</subtask>
+      <subtask done="true">use text editor for HLSL</subtask>
+      <subtask done="true">call the extension .shader</subtask>
+      <subtask done="true">only defines code and parameters, cannot be applied to objefcts</subtask>
     </subtasks>
   </task>
   <task id="ZE-67">

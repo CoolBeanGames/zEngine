@@ -53,6 +53,7 @@ namespace
         case assetLibrary::Kind::Input: return L"Input Map";
         case assetLibrary::Kind::Image: return L"Image";
         case assetLibrary::Kind::Model: return L"Model";
+        case assetLibrary::Kind::Shader: return L"Material Shader";
         case assetLibrary::Kind::Folder: return L"Folder";
         default: return L"File";
         }
@@ -1237,6 +1238,25 @@ void EditorShell::OpenScript(const std::filesystem::path& path)
     OpenInlineScript(resolved);
     SetViewTab(ViewTab::Script);
 }
+std::filesystem::path EditorShell::CreateShaderAsset()
+{
+    RequireProject();
+    const auto path = zengine::shaders::Create(AssetFolder());
+    RefreshAssets();
+    selectedAsset_ = static_cast<int>(std::find(assets_.begin(),assets_.end(),path)-assets_.begin());
+    const auto list=AssetListRectangle();const int visible=std::max(1,static_cast<int>(list.bottom-list.top)/84)*AssetColumns();firstAsset_=std::max(0,(selectedAsset_-visible+AssetColumns())/AssetColumns()*AssetColumns());
+    status_ = L"Created " + path.filename().wstring() + L" - double-click to edit its HLSL";
+    InvalidateRect(window_, nullptr, FALSE);
+    BeginAssetRename(path);
+    return path;
+}
+void EditorShell::OpenShader(const std::filesystem::path& path)
+{
+    RequireProject();
+    const auto resolved = zengine::shaders::Resolve(assetsDirectory_, path);
+    OpenInlineScript(resolved); // the inline editor detects the .shader extension and switches to HLSL mode
+    SetViewTab(ViewTab::Script);
+}
 bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::path& path)
 {
     RequireEditable(id);
@@ -1633,6 +1653,7 @@ LRESULT EditorShell::HandleMessage(
         const int assetIndex=AssetAt(point);selectedAsset_=assetIndex;InvalidateRect(window_,&mediaLibrary_,FALSE);
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
+        AppendMenuW(menu, MF_STRING, 3, L"Create Material Shader (.shader)");
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
         AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),NewFolderCommand,L"New Folder...");
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0),NewSceneCommand,L"Create Scene (.zscene)");
@@ -1640,6 +1661,7 @@ LRESULT EditorShell::HandleMessage(
         const auto command=TrackPopupMenu(menu, TPM_RETURNCMD|TPM_RIGHTBUTTON, screen.x,screen.y,0,window_,nullptr);
         DestroyMenu(menu);
         if (command == 1) CreateScriptAsset();
+        if (command == 3) CreateShaderAsset();
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
         if (command==NewSceneCommand) NewScene();
         if(command==NewFolderCommand)NewAssetFolderDialog();
@@ -1658,6 +1680,7 @@ LRESULT EditorShell::HandleMessage(
                 if(std::filesystem::is_directory(asset))OpenAssetFolder(asset);
                 else if (asset.extension()==L".zinput") OpenInputMap();
                 else if (zengine::scripts::IsScript(asset)) OpenScript(asset);
+                else if (zengine::shaders::IsShader(asset)) OpenShader(asset);
                 else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
                 else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
             }

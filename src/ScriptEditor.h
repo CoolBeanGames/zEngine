@@ -1,5 +1,6 @@
 #pragma once
 #include "ScriptAssets.h"
+#include "ShaderAssets.h"
 #include "ScriptCompletion.h"
 #include <windows.h>
 #include <commctrl.h>
@@ -72,6 +73,9 @@ private:
     HMODULE richEdit_ = nullptr;
     HFONT font_ = nullptr;
     bool dirty_ = false, formatting_ = false, embedded_ = false;
+    bool hlsl_ = false; // editing a .shader (HLSL) asset rather than a .zsh script
+    std::string LoadSource() const;              // .shader vs .zsh loader
+    void SaveSource(std::string_view bytes) const;
     std::set<std::size_t> foldedBlocks_;
     zengine::scripts::Analysis analysis_;
     std::function<void()> saved_;

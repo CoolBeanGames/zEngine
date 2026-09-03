@@ -1,4 +1,5 @@
 #include "ScriptAssets.h"
+#include "ShaderAssets.h"
 #include "ScriptEditor.h"
 #include "ScriptTyping.h"
 #include "ScriptCompletion.h"
@@ -208,9 +209,52 @@ int main(int argc, char**)
             SendMessageW(editor.Window(),WM_COMMAND,ScriptEditor::SaveCommand,0);
             Check(editor.ConfirmClose(),"Invalid source should still be savable");
         }
+        // ZE-64: HLSL material shader (.shader) assets.
+        {
+            namespace sh = zengine::shaders;
+            const auto shaderA = sh::Create(root), shaderB = sh::Create(root);
+            Check(shaderA != shaderB && shaderA.extension() == ".shader", "Unique .shader creation failed");
+            const auto templateSrc = sh::Load(shaderA);
+            Check(templateSrc.find("PSMain") != std::string::npos, "Shader template missing an entry point");
+
+            const auto parsed = sh::Parse(templateSrc);
+            Check(parsed.compiled && parsed.errors.empty(), "Valid template HLSL did not compile");
+            const auto hasParam = [&](const char* name, sh::ParamType type) {
+                return std::any_of(parsed.parameters.begin(), parsed.parameters.end(),
+                    [&](const sh::Parameter& p) { return p.name == name && p.type == type; });
+            };
+            Check(hasParam("albedo", sh::ParamType::Float4), "cbuffer float4 parameter not parsed");
+            Check(hasParam("smoothness", sh::ParamType::Float), "cbuffer float parameter not parsed");
+            Check(hasParam("albedoMap", sh::ParamType::Texture2D), "Texture2D slot not parsed");
+            for (const auto& p : parsed.parameters)
+                if (p.name == "albedo") Check(p.value[0] == 1 && p.value[3] == 1, "float4 default not read from comment");
+                else if (p.name == "smoothness") Check(p.value[0] == 0.5f, "float default not read from comment");
+
+            const auto broken = sh::Parse("float4 PSMain() : SV_TARGET { return notAThing(); }");
+            Check(!broken.compiled && !broken.errors.empty(), "Invalid HLSL was reported as compiling");
+
+            const std::wstring templateWide(templateSrc.begin(), templateSrc.end()); // template is ASCII
+            Check(sh::Analyze(templateWide).errors.empty(), "Valid shader flagged by the analyzer");
+            Check(!sh::Analyze(L"float4 PSMain() : SV_TARGET { return bogus(); }").errors.empty(),
+                  "Analyzer missed an HLSL compile error");
+            Check(!sh::Analyze(L"cbuffer P { float x; ").errors.empty(), "Analyzer missed an unclosed brace");
+
+            bool rejected = false;
+            try { sh::Resolve(root, root / "not-a-shader.txt"); } catch (...) { rejected = true; }
+            Check(rejected, "Shader extension check failed");
+
+            ScriptEditor shaderEditor(nullptr, root, shaderA);
+            HWND shaderControl = GetDlgItem(shaderEditor.Window(), ScriptEditor::SourceControl);
+            Check(shaderControl != nullptr, "Shader editor control missing");
+            SetWindowTextW(shaderControl, L"float4 PSMain() : SV_TARGET { return float4(1,0,0,1); }");
+            SendMessageW(shaderEditor.Window(), WM_TIMER, 1, 0);
+            SendMessageW(shaderEditor.Window(), WM_COMMAND, ScriptEditor::SaveCommand, 0);
+            Check(sh::Load(shaderA).find("float4(1,0,0,1)") != std::string::npos, "Shader editor save failed");
+            Check(shaderEditor.ConfirmClose(), "Saved shader editor should close without prompting");
+        }
         CoUninitialize();
         std::filesystem::remove_all(root);
-        std::cout << "PASS: script assets, safe saves, diagnostics, behavior references, native editor save/load/undo\n";
+        std::cout << "PASS: script assets, safe saves, diagnostics, behavior references, native editor save/load/undo, HLSL shaders\n";
         return 0;
     }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; std::filesystem::remove_all(root); return 1; }
