@@ -1,15 +1,19 @@
 #pragma once
 #include "ScriptHost.h"
 #include "physics/PhysicsBehavior.h"
+#include "ui/UiSerialize.h"
 #include <string_view>
+#include <utility>
 
 namespace zengine::scenes
 {
     constexpr std::size_t MaxSceneBytes=8*1024*1024;
     struct BehaviorData
     {
-        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area, Camera };
+        enum class Kind { Mesh, Script, Collider, RigidBody, KinematicBody, StaticBody, Area, Camera, Ui };
         Kind kind=Kind::Mesh;
+        std::string uiType; // when kind==Ui: ui::UiControl::TypeName()
+        std::vector<std::pair<std::string,std::string>> uiProps; // ordered key/value
         bool enabled=true;
         float priority=0;
         std::string asset;

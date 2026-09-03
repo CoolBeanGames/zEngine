@@ -76,6 +76,9 @@ namespace zengine::ui
         // The control's local offset, taken from its GameObject2D transform.
         Vec2 LocalOffset() const;
 
+        // Stable identifier used by scene / prefab serialization and the editor.
+        virtual const char* TypeName() const noexcept { return "control"; }
+
         // Natural size before a parent container constrains it.
         virtual Vec2 DesiredSize() const { return {std::max(size_.x, minSize_.x), std::max(size_.y, minSize_.y)}; }
 
@@ -108,6 +111,7 @@ namespace zengine::ui
     {
     public:
         explicit Container(ObjectCore& owner) : UiControl(owner) {}
+        const char* TypeName() const noexcept override { return "container"; }
         float Padding() const noexcept { return padding_; }
         void SetPadding(float value) noexcept { padding_ = std::max(0.0f, value); }
         float Spacing() const noexcept { return spacing_; }
@@ -124,6 +128,7 @@ namespace zengine::ui
     {
     public:
         explicit HTileBoxContainer(ObjectCore& owner) : Container(owner) {}
+        const char* TypeName() const noexcept override { return "hbox"; }
         bool FillCross() const noexcept { return fillCross_; }
         void SetFillCross(bool value) noexcept { fillCross_ = value; }
         void Arrange(const Rect& self, const std::vector<UiControl*>& children) override;
@@ -137,6 +142,7 @@ namespace zengine::ui
     {
     public:
         explicit VTileBoxContainer(ObjectCore& owner) : Container(owner) {}
+        const char* TypeName() const noexcept override { return "vbox"; }
         bool FillCross() const noexcept { return fillCross_; }
         void SetFillCross(bool value) noexcept { fillCross_ = value; }
         void Arrange(const Rect& self, const std::vector<UiControl*>& children) override;
@@ -150,6 +156,7 @@ namespace zengine::ui
     {
     public:
         explicit CenterContainer(ObjectCore& owner) : Container(owner) {}
+        const char* TypeName() const noexcept override { return "center"; }
         void Arrange(const Rect& self, const std::vector<UiControl*>& children) override;
     };
 
@@ -158,6 +165,7 @@ namespace zengine::ui
     {
     public:
         explicit MarginContainer(ObjectCore& owner) : Container(owner) {}
+        const char* TypeName() const noexcept override { return "margin"; }
         void SetMargins(float left, float top, float right, float bottom) noexcept
         { left_ = left; top_ = top; right_ = right; bottom_ = bottom; }
         float Left() const noexcept { return left_; }
@@ -174,6 +182,7 @@ namespace zengine::ui
     {
     public:
         explicit PanelContainer(ObjectCore& owner) : Container(owner) {}
+        const char* TypeName() const noexcept override { return "panel"; }
         const std::string& Texture() const noexcept { return texture_; }
         void SetTexture(std::string value) { texture_ = std::move(value); }
         Float4 Tint() const noexcept { return tint_; }
@@ -193,6 +202,7 @@ namespace zengine::ui
     {
     public:
         explicit Text(ObjectCore& owner) : UiControl(owner) { clickable_ = false; }
+        const char* TypeName() const noexcept override { return "text"; }
         const std::string& Value() const noexcept { return text_; }
         void SetValue(std::string value) { text_ = std::move(value); }
         float PixelHeight() const noexcept { return pixelHeight_; }
@@ -212,6 +222,7 @@ namespace zengine::ui
     {
     public:
         explicit LongText(ObjectCore& owner) : Text(owner) {}
+        const char* TypeName() const noexcept override { return "longText"; }
         Vec2 DesiredSize() const override;
     };
 
@@ -220,6 +231,7 @@ namespace zengine::ui
     {
     public:
         explicit TextEntry(ObjectCore& owner) : UiControl(owner) { clickable_ = true; }
+        const char* TypeName() const noexcept override { return "textEntry"; }
         const std::string& Value() const noexcept { return text_; }
         void SetValue(std::string value) { text_ = std::move(value); }
         const std::string& Placeholder() const noexcept { return placeholder_; }
@@ -242,6 +254,7 @@ namespace zengine::ui
     {
     public:
         explicit TextureRect(ObjectCore& owner) : UiControl(owner) {}
+        const char* TypeName() const noexcept override { return "textureRect"; }
         const std::string& Texture() const noexcept { return texture_; }
         void SetTexture(std::string value) { texture_ = std::move(value); }
         SpriteRegion Region() const noexcept { return region_; }
@@ -260,6 +273,7 @@ namespace zengine::ui
     {
     public:
         explicit ColorRect(ObjectCore& owner) : UiControl(owner) {}
+        const char* TypeName() const noexcept override { return "colorRect"; }
         Float4 Color() const noexcept { return color_; }
         void SetColor(Float4 value) noexcept { color_ = value; }
         void Emit(std::vector<SpriteDraw>&, std::vector<TextDraw>&) const override;
@@ -271,6 +285,7 @@ namespace zengine::ui
     {
     public:
         explicit ProgressBar(ObjectCore& owner) : UiControl(owner) {}
+        const char* TypeName() const noexcept override { return "progressBar"; }
         float Value() const noexcept { return value_; }
         void SetValue(float value) noexcept { value_ = std::clamp(value, 0.0f, 1.0f); }
         bool Vertical() const noexcept { return vertical_; }

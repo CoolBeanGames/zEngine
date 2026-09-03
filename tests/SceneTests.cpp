@@ -1,5 +1,6 @@
 #include "SceneAssets.h"
 #include "core/MeshRenderer.h"
+#include "ui/UiControl.h"
 #include <windows.h>
 #include <fstream>
 #include <iostream>
@@ -52,7 +53,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 9\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 10\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});
@@ -129,6 +130,36 @@ int main()
             const auto& t2d=As2D(flatRestored)->GetTransform();
             Check(t2d.Position()==Vec2{64,-32} && t2d.Rotation()==45 && t2d.Scale()==Vec2{2,3},"Transform2D values lost on restore");
             Check(As3D(flatCopy.objects.Find(solid.Id()))->GetTransform().Position().y==1,"3D object corrupted by 2D sibling");
+        }
+        // ZE-61: scene v9 serializes ui:: control behaviors on 2D objects, with a
+        // property bag per control, surviving Encode / Decode / Instantiate.
+        {
+            ObjectStore uiStore; ScriptHost uiHost;
+            auto& panel=uiStore.Restore2D(3,"Panel");
+            auto& panelUi=ui::AddUiControl(panel,"panel");
+            panelUi.SetAnchor(ui::Anchor::Fill);
+            dynamic_cast<ui::PanelContainer&>(panelUi).SetTint({0.1f,0.1f,0.12f,0.9f});
+            dynamic_cast<ui::PanelContainer&>(panelUi).SetSlice({6,6,6,6});
+            auto& bar=uiStore.Create2D("Bar"); bar.SetParent(panel.Id());
+            auto& barUi=ui::AddUiControl(bar,"progressBar");
+            barUi.SetAnchor(ui::Anchor::TopLeft); barUi.SetSize({240,18}); barUi.SetOrder(2);
+            dynamic_cast<ui::ProgressBar&>(barUi).SetValue(0.4f);
+            auto& label=uiStore.Create2D("Label"); label.SetParent(panel.Id());
+            auto& labelUi=ui::AddUiControl(label,"text");
+            dynamic_cast<ui::Text&>(labelUi).SetValue("Score: \"9000\"");
+            labelUi.SetClickable(true);
+
+            const auto uiEncoded=scenes::Encode(scenes::Capture(uiStore,uiHost));
+            Check(uiEncoded.find("ui \"panel\"")!=std::string::npos && uiEncoded.find("ui_prop \"value\" \"0.4\"")!=std::string::npos,"UI behavior was not serialized");
+            auto uiCopy=scenes::Instantiate(scenes::Decode(uiEncoded));
+            Check(scenes::Encode(scenes::Capture(uiCopy.objects,uiCopy.scripts))==uiEncoded,"UI scene round trip changed authored data");
+            auto* restoredPanel=uiCopy.objects.Find(3);
+            auto* rp=restoredPanel?restoredPanel->GetBehavior<ui::PanelContainer>():nullptr;
+            Check(rp && rp->GetAnchor()==ui::Anchor::Fill && rp->Tint().w==0.9f && rp->Slice().left==6,"Panel props lost on restore");
+            auto* rb=uiCopy.objects.Find(uiCopy.objects.At(1).Id())->GetBehavior<ui::ProgressBar>();
+            Check(rb && rb->Value()==0.4f && rb->Order()==2 && rb->Size().x==240,"ProgressBar props lost on restore");
+            auto* rt=uiCopy.objects.Find(uiCopy.objects.At(2).Id())->GetBehavior<ui::Text>();
+            Check(rt && rt->Value()=="Score: \"9000\"" && rt->Clickable(),"Text value with quotes lost on restore");
         }
         Reject([&]{objects.Restore(42,"Duplicate");});
         Reject([&]{objects.Restore(std::numeric_limits<GameObjectId>::max(),"Overflow");});
