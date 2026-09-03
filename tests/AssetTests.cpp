@@ -11,6 +11,7 @@
 #include "audio/AudioEffect.h"
 #include "core/Light.h"
 #include "core/Environment.h"
+#include "LightmapAssets.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
 #include "ScriptAssets.h"
@@ -483,6 +484,35 @@ namespace
             for (const auto& o : fogDoc.objects) for (const auto& b : o.behaviors)
                 if (b.kind == zengine::scenes::BehaviorData::Kind::Environment && b.envFogMode == 1) foundEnv = true;
             Require(foundEnv, "the Environment did not serialize into the scene (v14)");
+
+            // ZE-113: bake static lighting -> a .lightmap asset; the static mesh then
+            // renders unlit from the baked term (scene v15).
+            lightBehaviour.SetStatic(true);
+            auto& floor = editor.CreateEmptyGameObject();
+            if (HWND rn3 = GetDlgItem(window, 3900)) SendMessageW(rn3, WM_KEYDOWN, VK_RETURN, 0);
+            Require(editor.AddMeshRenderer(floor.Id()), "could not add a mesh renderer for the bake");
+            editor.AssignCube(floor.Id());
+            floor.GetTransform().SetPosition({0, -1, 0});
+            floor.GetTransform().SetScale({6, 0.2f, 6});
+            floor.GetBehavior<zengine::MeshRenderer>()->SetStatic(true);
+            Require(editor.SaveScene(fogScenePath), "could not re-save before baking");
+            editor.BakeLightmaps();
+            auto bakedPath = fogScenePath; bakedPath.replace_extension(L".lightmap");
+            Require(std::filesystem::is_regular_file(bakedPath), "Bake did not write the .lightmap asset");
+            const auto bakedDoc = zengine::lightmap::Load(bakedPath);
+            Require(bakedDoc.Find(floor.Id()) != nullptr, "the .lightmap has no entry for the static mesh");
+            Require(floor.GetBehavior<zengine::MeshRenderer>()->Lightmap().ends_with(".lightmap"),
+                    "the baked mesh was not pointed at its .lightmap");
+            bool bakedMeshUnlit = false;
+            for (const auto& m : editor.BuildSceneFrame().meshes) if (!m.lit) bakedMeshUnlit = true;
+            Require(bakedMeshUnlit, "a static + lightmapped mesh should render unlit");
+            Require(editor.SaveScene(fogScenePath), "could not save the baked scene");
+            const auto bakedDoc2 = zengine::scenes::Decode(zengine::scenes::Load(fogScenePath));
+            bool foundStaticMesh = false;
+            for (const auto& o : bakedDoc2.objects) for (const auto& b : o.behaviors)
+                if (b.kind == zengine::scenes::BehaviorData::Kind::Mesh && b.meshStatic && !b.meshLightmap.empty())
+                    foundStaticMesh = true;
+            Require(foundStaticMesh, "the static flag + lightmap path did not serialize into the scene (v15)");
 
             if (capture) { for (int i = 0; i < 3; ++i) editor.Render(); CaptureWindow(window, L"lighting-qa.bmp"); }
         }

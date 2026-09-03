@@ -26,6 +26,7 @@ int main()
         object.GetTransform().SetPosition({1.25f,-2.5f,9}); object.GetTransform().SetRotation({-90,180,45}); object.GetTransform().SetScale({2,0,-1});
         auto& mesh=object.AddBehavior<MeshRenderer>(MeshRenderer::CubeAsset); mesh.SetEnabled(false); mesh.SetPriority(-1.25f);
         mesh.SetMaterial("Materials/Chrome.material"); // ZE-65: scene v10 mesh material reference
+        mesh.SetStatic(true); mesh.SetLightmap("Scenes/Level.lightmap"); // ZE-113: scene v15
         auto& behavior=object.AddBehavior<ScriptBehavior>("Behaviors/Mover.zsh"); behavior.SetPriority(3.5f); behavior.SetEnabled(false);
         const std::string code=R"(class Mover : gameObject { export int count=1; export float speed=2; export bool active=true; export string title="default"; export Vector3 direction=Vector3(1,2,3); export Vector2 uv=Vector2(0,0); export prefab template; float hidden=7; func update(float dt) { transform.position.x+=speed*dt; } })";
         Check(host.Prepare(behavior,code,"Mover"),"Compile fixture failed");
@@ -43,6 +44,7 @@ int main()
         Check(scenes::Encode(scenes::Capture(copy.objects,copy.scripts))==encoded,"Scene round trip changed authored data");
         auto* restored=copy.objects.Find(42); Check(restored && restored->Name()==object.Name() && restored->Tags()==object.Tags(),"Object identity/name/tags lost");
         Check(encoded.find("mesh_material \"Materials/Chrome.material\"")!=std::string::npos && restored->GetBehavior<MeshRenderer>()->Material()=="Materials/Chrome.material","Mesh material reference lost across scene round trip");
+        Check(encoded.find("mesh_static 1 \"Scenes/Level.lightmap\"")!=std::string::npos && restored->GetBehavior<MeshRenderer>()->Static() && restored->GetBehavior<MeshRenderer>()->Lightmap()=="Scenes/Level.lightmap","ZE-113 mesh static/lightmap lost across scene round trip");
         Check(As3D(restored)->GetTransform().Scale().y==0 && As3D(restored)->GetTransform().Scale().z==-1,"Zero/negative scale lost");
         auto* script=restored->GetBehavior<ScriptBehavior>();
         Check(script && !script->Enabled() && script->Priority()==3.5f,"Script flags/priority lost");
@@ -61,7 +63,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 15\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 16\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});

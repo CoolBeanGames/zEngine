@@ -15,6 +15,8 @@ namespace zengine::scenes
         std::string uiType; // when kind==Ui: ui::UiControl::TypeName()
         std::vector<std::pair<std::string,std::string>> uiProps; // ordered key/value
         std::string meshMaterial; // when kind==Mesh: project-relative ".material" (ZE-65), empty = default
+        bool meshStatic=false; // ZE-113: mesh takes no part in the per-frame light loop
+        std::string meshLightmap; // ZE-113: project-relative ".lightmap" bake, empty = none
         // ZE-67: when kind==Audio
         std::string audioClip; // project-relative audio file
         bool audioSpatial=true, audioAutoplay=true, audioLoop=false;

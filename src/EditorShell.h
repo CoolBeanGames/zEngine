@@ -16,6 +16,7 @@
 #include "ui/UiSystem.h"
 #include "UiAssetBinding.h"
 #include "core/GameObject.h"
+#include "core/MeshRenderer.h"
 #include "ScriptHost.h"
 #include "Scene.h"
 #include "audio/AudioSystem.h"
@@ -57,6 +58,8 @@ public:
     void RenameAsset(const std::filesystem::path& source,const std::wstring& name);
     static constexpr int NewFolderCommand=3400,UpFolderCommand=3401,RenameAssetCommand=3402,RenameObjectCommand=3403;
     static constexpr int BuildProjectCommand=3500;
+    static constexpr int BakeLightmapsCommand=3501; // ZE-113
+    static constexpr int ToggleStaticMeshCommand=3502; // ZE-113
     bool BuildProject(const std::filesystem::path& outputParent);
     bool Building() const {return buildWork_.valid();}
     const std::filesystem::path& LastBuild() const {return lastBuild_;}
@@ -128,6 +131,7 @@ public:
     // Test seam: the Inspector edit/combo control for UI property `key` (component
     // `axis` for Vec2 / Colour rows) of the currently selected UI control.
     HWND InspectorUiField(const std::string& key, int axis = 0) const;
+    void BakeLightmaps(); // ZE-113: bake all static meshes -> <scene>.lightmap (also on the File menu)
     bool AddMeshRenderer(zengine::GameObjectId object);
     void AssignCube(zengine::GameObjectId object);
     void ClearMesh(zengine::GameObjectId object);
@@ -325,6 +329,12 @@ private:
     MaterialHandle ResolveMaterial(const std::string& materialAsset) const;
     zengine::materials::Effective ResolveMaterialEffective(const std::string& materialAsset) const;
     void ApplyMaterialValue(const std::string& materialAsset, zengine::materials::Value value);
+    // ZE-113: static lightmap baking. A static + lightmapped mesh renders from a
+    // cloned vertex buffer (baked colours, unlit); the cache is keyed by object id.
+    struct LightmapBinding { std::string lightmap; MeshHandle mesh; };
+    mutable std::map<zengine::GameObjectId, LightmapBinding> lightmapBindings_;
+    struct ResolvedMesh { MeshHandle mesh; bool lit = true; };
+    ResolvedMesh ResolveLightmapMesh(const zengine::GameObject& object, const zengine::MeshRenderer& mesh, MeshHandle fallback) const;
     std::map<std::filesystem::path, std::weak_ptr<const RenderMesh>> meshCache_;
     std::map<zengine::GameObjectId, std::uint64_t> meshRevisions_;
     int firstObject_ = 0;

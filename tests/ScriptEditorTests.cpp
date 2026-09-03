@@ -1,12 +1,14 @@
 #include "ScriptAssets.h"
 #include "ShaderAssets.h"
 #include "MaterialAssets.h"
+#include "LightmapAssets.h"
 #include "ScriptEditor.h"
 #include "ScriptTyping.h"
 #include "ScriptCompletion.h"
 #include "core/ScriptBehavior.h"
 #include <windows.h>
 #include <richedit.h>
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
@@ -288,6 +290,44 @@ int main(int argc, char**)
             bool rejectedResolve = false;
             try { mt::Resolve(root, root / "x.txt"); } catch (...) { rejectedResolve = true; }
             Check(rejectedResolve, "Material extension check failed");
+
+            // ZE-113: static lightmap baking + .lightmap assets.
+            namespace lm = zengine::lightmap;
+            // Two unit quads: a floor at y=0 and a blocker slab just above it. A
+            // single overhead directional light should light the blocker's top
+            // and leave the floor beneath it in shadow.
+            const auto quad = [](float y, float ox, float oz) {
+                lm::BakeMesh m;
+                for (float dx : {-1.0f, 1.0f}) for (float dz : {-1.0f, 1.0f})
+                    { m.positions.push_back({ox + dx, y, oz + dz}); m.normals.push_back({0, 1, 0}); }
+                m.indices = {0, 2, 1, 1, 2, 3};
+                return m;
+            };
+            lm::BakeMesh floor = quad(0.0f, 0.0f, 0.0f); floor.object = 1;
+            lm::BakeMesh slab = quad(0.5f, 0.0f, 0.0f); slab.object = 2;
+            lm::BakeLight sun; sun.type = 0; sun.direction = {0, -1, 0}; sun.color = {1, 1, 1}; sun.intensity = 1;
+            const auto baked = lm::Bake({floor, slab}, {sun}, {0.05f, 0.05f, 0.05f});
+            Check(baked.entries.size() == 2 && baked.Find(1) && baked.Find(2), "Bake did not produce an entry per mesh");
+            const float floorLum = baked.Find(1)->colors[0].x;
+            const float slabLum = baked.Find(2)->colors[0].x;
+            Check(slabLum > 0.9f, "Bake: unshadowed slab top should be near full brightness");
+            Check(floorLum < 0.2f, "Bake: floor under the slab should be shadowed");
+            Check(lm::Decode(lm::Encode(baked)) == baked, "Lightmap encode/decode round trip changed the document");
+
+            // Apply multiplies the base model's vertex colours by the baked term.
+            ModelData base; base.vertices.resize(4);
+            for (auto& v : base.vertices) v.color = {1, 1, 1};
+            const auto applied = lm::Apply(base, *baked.Find(2));
+            Check(std::abs(applied.vertices[0].color.x - slabLum) < 1e-4f, "Apply did not fold in the baked term");
+            base.vertices.resize(3); // vertex-count mismatch => unchanged
+            Check(lm::Apply(base, *baked.Find(2)).vertices.size() == 3, "Apply should no-op on a vertex-count mismatch");
+
+            const auto lmPath = lm::Resolve(root, root / "Bake.lightmap");
+            lm::Save(root, lmPath, baked);
+            Check(lm::Load(lmPath) == baked, "Lightmap disk save/load round trip changed the document");
+            bool rejectedLm = false;
+            try { lm::Resolve(root, root / "x.txt"); } catch (...) { rejectedLm = true; }
+            Check(rejectedLm, "Lightmap extension check failed");
         }
         CoUninitialize();
         std::filesystem::remove_all(root);

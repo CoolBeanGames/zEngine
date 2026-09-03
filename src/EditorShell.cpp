@@ -19,6 +19,8 @@
 #include "core/Light.h"
 #include "core/Environment.h"
 #include "SceneLights.h"
+#include "LightmapAssets.h"
+#include "CubeModel.h"
 #include "ui/UiSerialize.h"
 #include "ui/VideoClip.h"
 #include <commdlg.h>
@@ -553,7 +555,8 @@ ViewportFrame EditorShell::BuildSceneFrame() const
         if (mesh && mesh->Enabled() && !mesh->Asset().empty() && bound != meshBindings_.end() && bound->second.asset == mesh->Asset())
         {
             DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
-            frame.meshes.push_back({bound->second.mesh, object.GetTransform(),parent, ResolveMaterial(mesh->Material())});
+            const auto resolved = ResolveLightmapMesh(object, *mesh, bound->second.mesh);
+            frame.meshes.push_back({resolved.mesh, object.GetTransform(),parent, ResolveMaterial(mesh->Material()), resolved.lit});
         }
         if (const auto* env = object.GetBehavior<zengine::Environment>(); env && env->Enabled() && !frame.environment)
             frame.environment = MakeEnvironment(*env);
@@ -1266,7 +1269,7 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     inspectorPanel_->Bind(nullptr);
     ++sceneGeneration_;
     std::erase_if(assetJobs_,[](const AssetJob& job) { return job.loadMesh; });
-    meshBindings_.clear(); meshRevisions_.clear(); materialCache_.clear();
+    meshBindings_.clear(); meshRevisions_.clear(); materialCache_.clear(); lightmapBindings_.clear();
     prefabLinks_.clear(); for (const auto& object:authored.objects) if (!object.prefab.empty()) {prefabLinks_[object.id]=object;if(auto* g=zengine::As3D(next.objects.Find(object.id)))prefabLinks_[object.id].transform=g->GetTransform();}
     prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects); scriptHost_.SetObjectStore(&objects_); ConfigureScriptOutput();
@@ -1497,6 +1500,104 @@ MaterialHandle EditorShell::ResolveMaterial(const std::string& materialAsset) co
     catch (...) { handle = {}; }
     materialCache_[materialAsset] = handle;
     return handle;
+}
+EditorShell::ResolvedMesh EditorShell::ResolveLightmapMesh(const zengine::GameObject& object,
+                                                          const zengine::MeshRenderer& mesh, MeshHandle fallback) const
+{
+    if (!mesh.Static() || mesh.Lightmap().empty() || !renderer_) return {fallback, true};
+    const auto it = lightmapBindings_.find(object.Id());
+    if (it != lightmapBindings_.end() && it->second.lightmap == mesh.Lightmap())
+        return it->second.mesh ? ResolvedMesh{it->second.mesh, false} : ResolvedMesh{fallback, true};
+    MeshHandle handle;
+    try
+    {
+        const auto file = zengine::lightmap::Resolve(assetsDirectory_, std::filesystem::u8path(mesh.Lightmap()));
+        const auto doc = zengine::lightmap::Load(file);
+        const auto* entry = doc.Find(object.Id());
+        if (entry)
+        {
+            ModelData base = mesh.Asset() == zengine::MeshRenderer::CubeAsset
+                ? UnitCubeModel()
+                : FbxImporter::Load(ResolveModel(std::filesystem::path(WideText(mesh.Asset()))), true);
+            if (entry->colors.size() == base.vertices.size())
+            {
+                std::vector<std::string> warnings;
+                handle = renderer_->UploadModel(zengine::lightmap::Apply(std::move(base), *entry), warnings);
+            }
+        }
+    }
+    catch (...) { handle = {}; }
+    lightmapBindings_[object.Id()] = {mesh.Lightmap(), handle};
+    return handle ? ResolvedMesh{handle, false} : ResolvedMesh{fallback, true};
+}
+void EditorShell::BakeLightmaps()
+{
+    if (Playing()) { status_ = L"Stop Play before baking lightmaps."; InvalidateRect(window_, &statusBar_, FALSE); return; }
+    if (!renderer_ || !sceneOpen_ || assetsDirectory_.empty()) return;
+    if (scenePath_.empty()) { status_ = L"Save the scene before baking lightmaps."; InvalidateRect(window_, &statusBar_, FALSE); return; }
+
+    std::vector<zengine::lightmap::BakeMesh> bakeMeshes;
+    std::vector<zengine::lightmap::BakeLight> bakeLights;
+    for (std::size_t i = 0; i < objects_.Size(); ++i)
+    {
+        const auto* object3d = zengine::As3D(&objects_.At(i)); if (!object3d) continue;
+        const auto& object = *object3d;
+        if (const auto* light = object.GetBehavior<zengine::Light>(); light && light->Enabled() && light->Static())
+        {
+            const LightData ld = MakeLight(*light, object.GetTransform(), ParentMatrix(objects_, object));
+            bakeLights.push_back({ld.type, {ld.position.x, ld.position.y, ld.position.z},
+                                  {ld.direction.x, ld.direction.y, ld.direction.z},
+                                  {ld.color.x, ld.color.y, ld.color.z}, ld.intensity, ld.range, ld.falloff,
+                                  ld.spotCosInner, ld.spotCosOuter});
+        }
+        const auto* mesh = object.GetBehavior<zengine::MeshRenderer>();
+        if (!mesh || !mesh->Enabled() || !mesh->Static() || mesh->Asset().empty()) continue;
+        ModelData model;
+        try
+        {
+            model = mesh->Asset() == zengine::MeshRenderer::CubeAsset
+                ? UnitCubeModel()
+                : FbxImporter::Load(ResolveModel(std::filesystem::path(WideText(mesh->Asset()))), true);
+        }
+        catch (const std::exception& e) { status_ = L"Bake failed: " + WideText(e.what()); InvalidateRect(window_, &statusBar_, FALSE); return; }
+
+        const DirectX::XMMATRIX world = TransformMatrix(object.GetTransform()) * ParentMatrix(objects_, object);
+        zengine::lightmap::BakeMesh bm;
+        bm.object = object.Id();
+        bm.positions.reserve(model.vertices.size());
+        bm.normals.reserve(model.vertices.size());
+        for (const auto& v : model.vertices)
+        {
+            DirectX::XMFLOAT3 p, n;
+            DirectX::XMStoreFloat3(&p, DirectX::XMVector3TransformCoord(
+                DirectX::XMVectorSet(v.position.x, v.position.y, v.position.z, 1), world));
+            DirectX::XMStoreFloat3(&n, DirectX::XMVector3Normalize(DirectX::XMVector3TransformNormal(
+                DirectX::XMVectorSet(v.normal.x, v.normal.y, v.normal.z, 0), world)));
+            bm.positions.push_back({p.x, p.y, p.z});
+            bm.normals.push_back({n.x, n.y, n.z});
+        }
+        bm.indices = model.indices;
+        bakeMeshes.push_back(std::move(bm));
+    }
+    if (bakeMeshes.empty()) { status_ = L"Bake: no enabled static meshes in the scene."; InvalidateRect(window_, &statusBar_, FALSE); return; }
+
+    const auto doc = zengine::lightmap::Bake(bakeMeshes, bakeLights);
+    auto lightmapPath = scenePath_; lightmapPath.replace_extension(L".lightmap");
+    try { zengine::lightmap::Save(assetsDirectory_, zengine::lightmap::Resolve(assetsDirectory_, lightmapPath), doc); }
+    catch (const std::exception& e) { status_ = L"Bake failed: " + WideText(e.what()); InvalidateRect(window_, &statusBar_, FALSE); return; }
+
+    const auto relative = std::filesystem::relative(lightmapPath, assetsDirectory_).generic_u8string();
+    const std::string relativeStr(reinterpret_cast<const char*>(relative.data()), relative.size());
+    for (const auto& bm : bakeMeshes)
+        if (auto* object = objects_.Find(bm.object))
+            if (auto* mesh = object->GetBehavior<zengine::MeshRenderer>()) mesh->SetLightmap(relativeStr);
+
+    lightmapBindings_.clear();
+    if (selectedObject_) inspectorPanel_->RefreshBehaviors();
+    OnObjectChanged();
+    RefreshAssets();
+    status_ = L"Baked lighting for " + std::to_wstring(bakeMeshes.size()) + L" static mesh(es).";
+    InvalidateRect(window_, nullptr, FALSE);
 }
 bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::path& path)
 {
@@ -1859,6 +1960,16 @@ LRESULT EditorShell::HandleMessage(
         if(LOWORD(wParam)==UnparentCommand){if(selectedObject_)SetObjectParent(selectedObject_,0);return 0;}
         if(LOWORD(wParam)==RevertPrefabTransformCommand){if(selectedObject_)RevertPrefabTransform(selectedObject_);return 0;}
         if(LOWORD(wParam)==BuildProjectCommand){ChooseBuildFolder();return 0;}
+        if(LOWORD(wParam)==BakeLightmapsCommand){BakeLightmaps();return 0;}
+        if(LOWORD(wParam)==ToggleStaticMeshCommand){
+            if(auto* o=selectedObject_?objects_.Find(selectedObject_):nullptr)
+                if(auto* mr=o->GetBehavior<zengine::MeshRenderer>()){
+                    const bool on=!mr->Static();mr->SetStatic(on);if(!on)mr->SetLightmap({});
+                    lightmapBindings_.erase(selectedObject_);OnObjectChanged();
+                    status_=on?L"Marked static for lightmapping.":L"Cleared static flag.";
+                }
+            return 0;
+        }
         if(LOWORD(wParam)==NewFolderCommand){NewAssetFolderDialog();return 0;}
         if(LOWORD(wParam)==UpFolderCommand){if(AssetFolder()!=assetsDirectory_)OpenAssetFolder(AssetFolder().parent_path());return 0;}
         if (LOWORD(wParam)==SavePrefabCommand) { SavePrefab(); return 0; }
@@ -1900,6 +2011,12 @@ LRESULT EditorShell::HandleMessage(
             AppendMenuW(menu,MF_SEPARATOR,0,nullptr);const UINT transformFlags=MF_STRING|((Playing()||!target||!CanEdit(target,true))?MF_GRAYED:0);
             AppendMenuW(menu,transformFlags,UnparentCommand,L"Move to Scene Root");
             AppendMenuW(menu,transformFlags|(!prefabLinks_.contains(target)?MF_GRAYED:0),RevertPrefabTransformCommand,L"Revert Prefab Transform Overrides");
+            if(const auto* t=target?zengine::As3D(objects_.Find(target)):nullptr){
+                if(const auto* mr=t->GetBehavior<zengine::MeshRenderer>()){
+                    AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+                    AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0)|(mr->Static()?MF_CHECKED:0),ToggleStaticMeshCommand,L"Static (Lightmapped Mesh)");
+                }
+            }
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,screen.x,screen.y,0,window_,nullptr);DestroyMenu(menu);if(command)SendMessageW(window_,WM_COMMAND,command,0);return 0;
         }
         if (!PtInRect(&mediaLibrary_, point)) break;
@@ -2000,6 +2117,7 @@ LRESULT EditorShell::HandleMessage(
             AppendMenuW(menu,saveFlags,SaveSceneCommand,L"Save Scene\tCtrl+S"); AppendMenuW(menu,saveFlags,SaveSceneAsCommand,L"Save Scene As...\tCtrl+Shift+S");
             AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
             AppendMenuW(menu,saveFlags|((Building()||!editingPrefab_.empty())?MF_GRAYED:0),BuildProjectCommand,L"Build Standalone Game...");
+            AppendMenuW(menu,saveFlags|((Playing()||!editingPrefab_.empty())?MF_GRAYED:0),BakeLightmapsCommand,L"Bake Static Lightmaps");
             if (!editingPrefab_.empty()) { AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,SavePrefabCommand,L"Save Prefab\tCtrl+S"); AppendMenuW(menu,MF_STRING,ClosePrefabCommand,L"Close Prefab / Return to Scene"); }
             POINT at{44,optionsBar_.bottom}; ClientToScreen(window_,&at);
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,at.x,at.y,0,window_,nullptr); DestroyMenu(menu);

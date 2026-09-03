@@ -13,6 +13,8 @@
 #include "core/Light.h"
 #include "core/Environment.h"
 #include "SceneLights.h"
+#include "LightmapAssets.h"
+#include "CubeModel.h"
 #include "input/InputAssets.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -111,6 +113,31 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                 materialCache[asset]=handle;
                 return handle;
             };
+            // ZE-113: a static + lightmapped mesh renders unlit from a cloned vertex
+            // buffer carrying the baked lighting term. Keyed by object id.
+            std::map<zengine::GameObjectId,std::pair<std::string,MeshHandle>> lightmapMeshes;
+            std::map<std::string,zengine::lightmap::LightmapDoc> lightmapDocs;
+            const auto resolveLightmapMesh=[&](const zengine::ObjectCore& object,const zengine::MeshRenderer& mr,MeshHandle base)->std::pair<MeshHandle,bool>{
+                if(!mr.Static()||mr.Lightmap().empty())return {base,true};
+                if(const auto it=lightmapMeshes.find(object.Id());it!=lightmapMeshes.end()&&it->second.first==mr.Lightmap())
+                    return it->second.second?std::pair<MeshHandle,bool>{it->second.second,false}:std::pair<MeshHandle,bool>{base,true};
+                MeshHandle handle;
+                try{
+                    if(!lightmapDocs.contains(mr.Lightmap()))
+                        lightmapDocs[mr.Lightmap()]=zengine::lightmap::Load(assetLibrary::Resolve(assetsRoot,std::filesystem::u8path(mr.Lightmap())));
+                    const auto* entry=lightmapDocs.at(mr.Lightmap()).Find(object.Id());
+                    if(entry){
+                        ModelData model=mr.Asset()==zengine::MeshRenderer::CubeAsset?UnitCubeModel()
+                            :FbxImporter::Load(session.Models().at(object.Id()),true);
+                        if(entry->colors.size()==model.vertices.size()){
+                            std::vector<std::string> warnings;
+                            handle=renderer.UploadModel(zengine::lightmap::Apply(std::move(model),*entry),warnings);
+                        }
+                    }
+                }catch(...){handle={};}
+                lightmapMeshes[object.Id()]={mr.Lightmap(),handle};
+                return handle?std::pair<MeshHandle,bool>{handle,false}:std::pair<MeshHandle,bool>{base,true};
+            };
             while(!state.closed && (!automated||rendered<frames)) {
                 MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){if(message.message==WM_QUIT)state.closed=true;TranslateMessage(&message);DispatchMessageW(&message);}
                 if(state.closed)break;
@@ -156,13 +183,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                     const auto hardware=uiTookKeyboard?zengine::input::Hardware{}:zengine::input::PollWindows(focused);
                     accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,hardware,gameMouse);accumulated-=1.0/60.0;}
                 }
-                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();uiAssets.Invalidate();}
+                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();lightmapMeshes.clear();lightmapDocs.clear();uiAssets.Invalidate();}
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
                 for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(object.Is2D())continue;
                     if(const auto* env=object.GetBehavior<zengine::Environment>();env&&env->Enabled()&&!frame.environment)frame.environment=MakeEnvironment(*env);
                     if(const auto* light=object.GetBehavior<zengine::Light>();light&&light->Enabled()&&frame.lights.size()<8){DirectX::XMFLOAT4X4 lp;DirectX::XMStoreFloat4x4(&lp,ParentMatrix(session.Objects(),object));frame.lights.push_back(MakeLight(*light,zengine::As3D(object).GetTransform(),DirectX::XMLoadFloat4x4(&lp)));}
-                    if(!visible(object.Id()))continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));const auto* mr=object.GetBehavior<zengine::MeshRenderer>();frame.meshes.push_back({meshes.at(object.Id()),t3d,parent,mr?resolveMeshMaterial(mr->Material()):MaterialHandle{}});}
+                    if(!visible(object.Id()))continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));const auto* mr=object.GetBehavior<zengine::MeshRenderer>();
+                    auto lm=mr?resolveLightmapMesh(object,*mr,meshes.at(object.Id())):std::pair<MeshHandle,bool>{meshes.at(object.Id()),true};
+                    frame.meshes.push_back({lm.first,t3d,parent,mr?resolveMeshMaterial(mr->Material()):MaterialHandle{},lm.second});}
                 ui.Build(session.Objects(),{static_cast<float>(width),static_cast<float>(height)},uiContext);
                 ui.Emit(frame.sprites,frame.texts);
                 renderer.Render(frame);++rendered;
