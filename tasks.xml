@@ -72,7 +72,7 @@ What "done" means: build a scripted, interactive menu (buttons that change state
     <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
-    <blockedBy>ZE-65</blockedBy>
+    <blockedBy></blockedBy>
     <dateStarted></dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
