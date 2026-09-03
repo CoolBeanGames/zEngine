@@ -302,7 +302,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, Scene, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -452,6 +452,7 @@ class BytecodeCompiler {
             if (t.text == "Input") { Emit(Op::Input,t); return "InputService"; }
             if (t.text == "Physics") { Emit(Op::Physics,t); return "PhysicsService"; }
             if (t.text == "Mathf") { Emit(Op::Math,t); return "Mathf"; }
+            if (t.text == "Scene") { Emit(Op::Scene,t); return "SceneService"; }
             if (t.text == "this") { Emit(Op::Self, t); return owner.name; }
             auto local = Local(t.text);
             if (local != std::numeric_limits<std::size_t>::max()) { Emit(Op::LoadLocal, t, local); return function.locals[local]; }
@@ -474,7 +475,7 @@ class BytecodeCompiler {
                 Emit(Op::MakeVector, t, e.children.size() - 1, "Vector2"); return "Vector2";
             }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
-                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "Mouse" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "Timer" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
+                Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "Mouse" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "SceneService" && callee.token.text != "Timer" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
             }
@@ -715,6 +716,12 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     {Function f;f.params={"Vector3","Vector3"};f.result="float";math.methods.emplace("dot",std::move(f));}
     {Function f;f.params={"Vector3","Vector3"};f.result="Vector3";math.methods.emplace("cross",std::move(f));}
     program.classes.emplace(math.name,std::move(math));
+    // Scene: host-owned scene management. Scene.load("<name>") switches the running
+    // scene; Scene.current() returns the active scene's name.
+    Class sceneService;sceneService.name="SceneService";
+    {Function f;f.params={"string"};f.result="void";sceneService.methods.emplace("load",std::move(f));}
+    {Function f;f.result="string";sceneService.methods.emplace("current",std::move(f));}
+    program.classes.emplace(sceneService.name,std::move(sceneService));
     Class physicsBody;physicsBody.name="PhysicsBody";
     physicsBody.fields={{{Token::Identifier,"velocity"},"Vector3"},{{Token::Identifier,"angular_velocity"},"Vector3"}};
     physicsBody.signals={"collision_entered","collision_stayed","collision_exited","area_entered","area_stayed","area_exited"};
@@ -819,7 +826,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
-            if(c.base=="InputService" || c.base=="InputAction" || c.base=="Mouse" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="Timer" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
+            if(c.base=="InputService" || c.base=="InputAction" || c.base=="Mouse" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="SceneService" || c.base=="Timer" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -926,6 +933,7 @@ struct Runtime::Impl {
     ObjectRef inputService;
     ObjectRef physicsService;
     ObjectRef mathService;
+    ObjectRef sceneService;
     ObjectRef mouseService;
     InputFrame inputFrame;
     MouseFrame mouseFrame;
@@ -941,6 +949,8 @@ struct Runtime::Impl {
     Runtime::PhysicsCastCall physicsCastCall;
     Runtime::PrefabSpawnCall prefabSpawnCall;
     Runtime::PrintCallback printCallback;
+    std::function<void(std::string_view)> sceneLoadCall;
+    std::function<std::string()> sceneCurrentCall;
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
     [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
@@ -1305,6 +1315,19 @@ struct Runtime::Impl {
             const auto hits=physicsCastCall(from,to,mask);if(name=="cast")return hits.empty()?Value{ObjectRef{}}:Value{hits.front()};
             std::vector<Value> values;values.reserve(hits.size());for(auto hit:hits)values.push_back(hit);return MakeArray(std::move(values),t);
         }
+        if(object.type->name=="SceneService") {
+            if(name=="load") {
+                if(args.size()!=1)Error(t,"Scene.load takes one scene name");
+                const auto sceneName=std::get<std::string>(Coerce(args[0],"string",t));
+                if(!sceneLoadCall)Error(t,"Scene loading is not available in this runtime");
+                sceneLoadCall(sceneName);return {};
+            }
+            if(name=="current") {
+                if(!args.empty())Error(t,"Scene.current takes no arguments");
+                return sceneCurrentCall?sceneCurrentCall():std::string{};
+            }
+            Error(t,"Unknown Scene method");
+        }
         if(object.type->name=="Mathf") {
             auto number=[&](std::size_t index){return Number(Coerce(args[index],"float",t));};
             if(name=="lerp") {
@@ -1451,6 +1474,7 @@ struct Runtime::Impl {
                 stack.push_back(inputService);break;
             case Op::Physics: if(!physicsService.id)physicsService=Create("PhysicsService",t);stack.push_back(physicsService);break;
             case Op::Math: if(!mathService.id)mathService=Create("Mathf",t);stack.push_back(mathService);break;
+            case Op::Scene: if(!sceneService.id)sceneService=Create("SceneService",t);stack.push_back(sceneService);break;
             case Op::LoadLocal: stack.push_back(locals[ins.a]); break;
             case Op::StoreLocal: locals[ins.a] = Coerce(pop(), f.locals[ins.a], t); break;
                         case Op::LoadField: {
@@ -1630,6 +1654,7 @@ void Runtime::SetPhysicsCallbacks(PhysicsBodyCall bodyCall,PhysicsCastCall castC
 void Runtime::BindNativeBehavior(ObjectRef owner,std::string_view behaviorType){impl_->Reset();impl_->BindNativeBehavior(owner,std::string(behaviorType));}
 void Runtime::SetPrefabSpawnCallback(PrefabSpawnCall callback){impl_->prefabSpawnCall=std::move(callback);}
 void Runtime::SetPrintCallback(PrintCallback callback){impl_->printCallback=std::move(callback);}
+void Runtime::SetSceneCallbacks(std::function<void(std::string_view)> load,std::function<std::string()> current){impl_->sceneLoadCall=std::move(load);impl_->sceneCurrentCall=std::move(current);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}

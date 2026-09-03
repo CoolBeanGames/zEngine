@@ -421,6 +421,26 @@ void PrefabReferences() {
     runtime.Start(spawner);Check(requested=="Props/Crate.zprefab" && std::get<ObjectRef>(runtime.Call(spawner,"result"))==spawned,"Prefab spawn did not return the created GameObject");
     Error([&]{Compile("class Invalid { prefab p=prefab(); }");},"supplied by the host");
 }
+void SceneService() {
+    auto program=Compile(R"(class Switcher : gameObject {
+        string went = "";
+        func start(){ went = Scene.current(); Scene.load("Level2"); }
+        func loaded():string { return went; }
+    })");
+    Runtime runtime(program);
+    const auto s=runtime.Create("Switcher");
+    std::string requested, current="Level1";
+    runtime.SetSceneCallbacks([&](std::string_view name){requested=name;}, [&]{return current;});
+    runtime.Start(s);
+    Check(requested=="Level2","Scene.load did not reach the host callback");
+    Check(std::get<std::string>(runtime.Call(s,"loaded"))=="Level1","Scene.current did not return the host name");
+    // Missing callback -> a clear runtime fault, not a crash.
+    Runtime bare(program);
+    Error([&]{bare.Start(bare.Create("Switcher"));},"Scene loading is not available");
+    // Scene is a host service, not constructible / inheritable.
+    Error([&]{Compile("class Bad : SceneService { }");},"Cannot inherit native service types");
+    Error([&]{Compile("class Bad { func f(){ SceneService x = SceneService(); } }");},"supplied by the host");
+}
 void MathfFunctions() {
     auto program=Compile(R"(class MathTest {
         func scalar():bool {
@@ -671,7 +691,7 @@ void MouseInput() {
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"UI control classes", UiControlClasses}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
-        {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
+        {"native type aliases",NativeTypeAliases},{"timers",Timers},{"Mathf functions",MathfFunctions},{"Scene service",SceneService},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},

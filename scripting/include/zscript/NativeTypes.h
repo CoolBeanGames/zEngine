@@ -62,6 +62,7 @@ inline const std::vector<NativeType>& NativeTypes() {
         {"InputAction",    "",            "",               false, false, true },
         {"Mouse",          "",            "",               false, false, true },
         {"PhysicsService", "",            "",               false, false, true },
+        {"SceneService",   "",            "",               false, false, true },
         {"Mathf",          "",            "",               false, false, true },
         {"Vector3",        "",            "",               false, false, false},
         {"Vector2",        "",            "",               false, false, false},

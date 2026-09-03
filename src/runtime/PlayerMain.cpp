@@ -76,6 +76,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             const auto visible=[&](zengine::GameObjectId id){const auto* object=session.Objects().Find(id);const auto* mesh=object?object->GetBehavior<zengine::MeshRenderer>():nullptr;return mesh&&mesh->Enabled()&&meshes.contains(id);};
             auto previous=std::chrono::steady_clock::now(),fpsSample=previous;double accumulated=0;unsigned rendered=0,fpsFrames=0,currentFps=0;
             bool mousePrev[3]={};
+            unsigned sceneGeneration=session.SceneGeneration();
             zengine::ui::UiSystem ui;
             zengine::ui::UiContext uiContext;
             uiContext.measureText=[&](std::string_view s,float h){return renderer.MeasureText(s,h);};
@@ -126,6 +127,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                     }
                     accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,zengine::input::PollWindows(focused),mouse);accumulated-=1.0/60.0;}
                 }
+                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();}
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
                 for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id())||object.Is2D())continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));frame.meshes.push_back({meshes.at(object.Id()),t3d,parent});}

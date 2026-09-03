@@ -392,6 +392,13 @@ bool EditorShell::Play()
     auto authored=zengine::scenes::Capture(objects_,scriptHost_);playObjects_.clear();for(std::size_t i=0;i<objects_.Size();++i)playObjects_.insert(objects_.At(i).Id());
     physicsWorld_=std::make_unique<zengine::physics::World>();try{physicsWorld_->Build(objects_);}catch(const std::exception& e){physicsWorld_.reset();status_=L"Physics: "+WideText(e.what());InvalidateRect(window_,nullptr,FALSE);return false;}
     scriptHost_.SetPrefabSpawner([this](std::string_view asset){return SpawnPrefab(asset);});
+    // Scene.load in the editor's Play preview reports rather than switching - the
+    // live scene document is what is being previewed. It applies in a built game.
+    scriptHost_.SetSceneName(sceneOpen_ ? Utf8Text(SceneName()) : std::string{});
+    scriptHost_.SetSceneLoader([this](std::string_view name){
+        status_=L"Scene.load(\""+WideText(std::string(name))+L"\") switches scenes only in a built game";
+        InvalidateRect(window_,&statusBar_,FALSE);
+    });
     // The console docks into the bottom of the Game tab, not a separate window.
     consoleWindow_=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_CHILD|ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL,0,0,1,1,window_,nullptr,instance_,nullptr);
     if(consoleWindow_)SendMessageW(consoleWindow_,WM_SETFONT,reinterpret_cast<WPARAM>(uiFont_),TRUE);

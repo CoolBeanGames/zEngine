@@ -669,6 +669,19 @@ void BuildTests() {
     {zengine::game::Session session(project,"Assets/First.zscene");session.Start();zengine::input::Hardware hardware;hardware.keys[VK_SPACE]=true;session.Tick(1.0f/60,hardware);session.Tick(1.0f/60,hardware);
         Require(zengine::As3D(session.Objects().At(0)).GetTransform().Position().y==3 && session.Objects().At(0).Parent()==2 && session.Objects().Size()==3 && zengine::As3D(session.Objects().At(2)).GetTransform().Position().x==9,"Standalone runtime input, parenting, or prefab spawning failed");
         Require(zengine::As3D(session.Objects().At(0)).GetTransform().Position().x!=888,"Standalone build did not bind an exported scene-tree object reference");}
+    {   // ZE-63: Scene.load("<name>") switches the running scene at the end of the tick.
+        const auto switcherScript=zengine::scripts::Create(assets/L"Scripts","Switcher");const auto switcherOrig=zengine::scripts::Load(switcherScript);
+        zengine::scripts::Save(assets,switcherScript,"class Switcher : gameObject { func start(){ Scene.load(\"Second\"); } func update(float dt){} }",&switcherOrig);
+        zengine::scenes::Document sw;zengine::scenes::ObjectData so;so.id=1;so.name="Switcher";
+        zengine::scenes::BehaviorData sb;sb.kind=zengine::scenes::BehaviorData::Kind::Script;sb.asset="Scripts/Switcher.zsh";so.behaviors.push_back(sb);sw.objects.push_back(so);
+        const auto switcherScene=assets/L"Switcher.zscene";zengine::scenes::Save(assets,switcherScene,zengine::scenes::Encode(sw));
+        zengine::projects::TrackScene(project,switcherScene);zengine::projects::Save(project);
+        zengine::game::Session s(project,"Assets/Switcher.zscene");s.Start();
+        const auto before=s.SceneGeneration();
+        s.Tick(1.0f/60,{});
+        Require(s.Scene()=="Assets/Second.zscene" && s.SceneGeneration()!=before,"Scene.load did not switch the running scene by name");
+        Require(s.Objects().Size()>=2 && s.Objects().At(0).Name()=="Second Actor","Scene.load did not instantiate the target scene objects");
+    }
     unsigned progress=0;const auto executable=zengine::game::Export(project,first,{},output,zengine::game::ExecutableDirectory(),[&](unsigned value,const std::string&){Require(value>=progress,"Build progress regressed");progress=value;});
     Require(progress==100 && std::filesystem::exists(executable) && !std::filesystem::exists(executable.parent_path()/L"zEngine.exe"),"Export did not produce an editor-independent executable");
     Require(std::filesystem::exists(executable.parent_path()/L"Data"/L"Assets"/std::filesystem::relative(model,assets)),"Packaged model missing");

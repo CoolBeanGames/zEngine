@@ -6,21 +6,58 @@
 #include "input/InputAssets.h"
 #include "core/MeshRenderer.h"
 
+#include <iostream>
+
 namespace zengine::game {
-Session::Session(const projects::Project& project,const std::string& scene):reference_(scene.empty()?project.config.lastScene:scene) {
-    if(reference_.empty() || std::find(project.config.scenes.begin(),project.config.scenes.end(),reference_)==project.config.scenes.end())throw std::runtime_error("Startup scene must be in the project scene list.");
+Session::Session(const projects::Project& project,const std::string& scene):project_(&project) {
     assets_=projects::Assets(project);
     input_.Configure(input::Decode(input::Load(assets_)));
-    const auto document=scenes::Decode(scenes::Load(projects::ScenePath(project,reference_)));
+    LoadScene(scene.empty()?project.config.lastScene:scene);
+}
+void Session::LoadScene(const std::string& reference) {
+    const auto& list=project_->config.scenes;
+    if(reference.empty() || std::find(list.begin(),list.end(),reference)==list.end())
+        throw std::runtime_error("Startup scene must be in the project scene list.");
+    reference_=reference;
+    models_.clear();
+    const auto document=scenes::Decode(scenes::Load(projects::ScenePath(*project_,reference_)));
     scene_=scenes::Instantiate(prefabs::ResolveScene(assets_,document).scene);
     // Scripts resolve their exported scene-tree references (e.g. an assigned rigidbody)
     // against this store; without it Prepare aborts the standalone build.
     scene_.scripts.SetObjectStore(&scene_.objects);
+    scene_.scripts.SetSceneName(reference_);
+    scene_.scripts.SetSceneLoader([this](std::string_view name){ ChangeScene(std::string(name)); });
     script::InputFrame initial;for(const auto& [name,state]:input_.Current())initial.emplace(name,script::InputState{});scene_.scripts.SetInput(std::move(initial));
     for(std::size_t i=0;i<scene_.objects.Size();++i) {
         PrepareObject(scene_.objects.At(i));
     }
     scene_.scripts.SetPrefabSpawner([this](std::string_view asset){return SpawnPrefab(asset);});
+}
+std::string Session::ResolveSceneReference(const std::string& name) const {
+    const auto& list=project_->config.scenes;
+    if(std::find(list.begin(),list.end(),name)!=list.end())return name; // exact project reference
+    const auto wanted=std::filesystem::path(name).stem();
+    std::vector<std::string> matches;
+    for(const auto& ref:list)if(std::filesystem::path(ref).stem()==wanted)matches.push_back(ref);
+    if(matches.empty())throw std::runtime_error("Scene.load: no scene named '"+name+"' in the project.");
+    if(matches.size()>1)
+        std::cerr<<"Scene.load(\""<<name<<"\"): "<<matches.size()
+                 <<" scenes share that name; loading the first ("<<matches.front()<<").\n";
+    return matches.front();
+}
+void Session::ChangeScene(const std::string& scene) {
+    try { pendingScene_=ResolveSceneReference(scene); }
+    catch(const std::exception& error) { std::cerr<<error.what()<<"\nScene switch ignored.\n"; }
+}
+void Session::ApplyPendingSceneChange() {
+    if(pendingScene_.empty())return;
+    const auto target=pendingScene_;
+    pendingScene_.clear();
+    if(scene_.scripts.Playing())scene_.scripts.Stop(scene_.objects);
+    physics_.reset();
+    LoadScene(target);
+    ++generation_;
+    Start();
 }
 Session::~Session(){if(scene_.scripts.Playing())scene_.scripts.Stop(scene_.objects);physics_.reset();}
 void Session::CheckErrors() const {
@@ -33,6 +70,7 @@ void Session::Start(){physics_=std::make_unique<physics::World>();physics_->Buil
 void Session::Tick(float delta,const input::Hardware& hardware,const script::MouseFrame& mouse) {
     script::InputFrame frame;for(const auto& [name,s]:input_.Tick(hardware))frame.emplace(name,script::InputState{s.x,s.y,s.pressed,s.justPressed,s.justReleased});
     scene_.scripts.SetInput(std::move(frame));scene_.scripts.SetMouse(mouse);scene_.scripts.Tick(scene_.objects,delta);scene_.scripts.PhysicsTick(scene_.objects,delta);physics_->Step(scene_.objects,delta);scene_.scripts.DispatchPhysicsEvents(physics_->DrainEvents());CheckErrors();
+    ApplyPendingSceneChange(); // a Scene.load() during this tick swaps scenes now, before the next tick
 }
 void Session::Draw(const std::function<bool(GameObjectId)>& visible){scene_.scripts.Draw(scene_.objects,visible);CheckErrors();}
 void Session::PrepareObject(ObjectCore& object) {

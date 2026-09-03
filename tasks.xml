@@ -973,7 +973,7 @@ a Breakpoint has been reached
     <prompt>a Base class Scene with methods to load new scenes by passing the stringName of the scene, resolve same names by warning and just picking the first.</prompt>
     <requirements></requirements>
     <inProgress>false</inProgress>
-    <done>false</done>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
@@ -981,14 +981,14 @@ a Breakpoint has been reached
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-02 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>false</commit>
     <build>false</build>
     <release>false</release>
     <tags>scene managment</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Added a script-facing `Scene` service (like Input / Physics / Mathf). Scripting VM: `Scene` keyword -&gt; Op::Scene -&gt; a `SceneService` object with `load(string)` and `current():string`; NativeTypes row + BuildDeclarations class + host callbacks `Runtime::SetSceneCallbacks(load,current)`. ScriptHost threads a `SceneLoader` + scene name into every BoundScript (`SetSceneLoader` / `SetSceneName`). GameSession: ctor split into a reusable `LoadScene(reference)`; `ChangeScene(name)` resolves the name (exact project reference, else by filename stem; multiple matches -&gt; std::cerr warning + first) and queues it; `Session::Tick` applies the swap at the end of the tick (Stop scripts, reset physics, LoadScene, ++generation, Start) so a `Scene.load()` mid-script never pulls the rug. `Session::SceneGeneration()` lets hosts drop per-scene caches: PlayerMain clears its uploaded-mesh map on a generation bump. Editor Play preview sets a loader that reports "only applied in a built game" to the status bar rather than switching the live document. Tests: ScriptTests "Scene service" (load reaches host, current returns name, missing callback faults cleanly, not inheritable/constructible); AssetTests StandaloneGameBuild adds a Switcher scene whose start() calls Scene.load("Second") and asserts the running Session swaps by name + advances the generation. Full ctest 35/35.</notes>
+    <filesChanged>scripting/src/Script.cpp; scripting/include/zscript/Script.h; scripting/include/zscript/NativeTypes.h; scripting/tests/ScriptTests.cpp; src/ScriptHost.h; src/ScriptHost.cpp; src/runtime/GameSession.h; src/runtime/GameSession.cpp; src/runtime/PlayerMain.cpp; src/EditorShell.cpp; tests/AssetTests.cpp; tasks.xml</filesChanged>
     <image></image>
   </task>
   <task id="ZE-65">

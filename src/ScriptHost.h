@@ -56,6 +56,11 @@ namespace zengine
         using PrefabSpawner=std::function<GameObjectId(std::string_view)>;
         void SetPrefabSpawner(PrefabSpawner spawner) { if(playing_)throw std::logic_error("Stop before changing the prefab spawner.");prefabSpawner_=std::move(spawner); }
         void SetPrintHandler(std::function<void(std::string_view)> handler) { if(playing_)throw std::logic_error("Stop before changing the print handler.");printHandler_=std::move(handler); }
+        // Backs the script `Scene` service. `loader` switches the running scene by
+        // name; `name` is what Scene.current() returns.
+        using SceneLoader=std::function<void(std::string_view)>;
+        void SetSceneLoader(SceneLoader loader) { if(playing_)throw std::logic_error("Stop before changing the scene loader.");sceneLoader_=std::move(loader); }
+        void SetSceneName(std::string name) { sceneName_=std::move(name); }
         void DispatchPhysicsEvents(const std::vector<physics::ContactEvent>&);
         // Emits a bare signal (e.g. "clicked" from the UI system) on the running
         // script that owns `owner`, if any. No-op outside Play.
@@ -94,6 +99,8 @@ namespace zengine
         script::MouseFrame mouse_;
         PrefabSpawner prefabSpawner_;
         std::function<void(std::string_view)> printHandler_;
+        SceneLoader sceneLoader_;
+        std::string sceneName_;
         ObjectStore* playingObjects_=nullptr;
         physics::World* playingPhysics_=nullptr;
     };
