@@ -975,6 +975,7 @@ struct Runtime::Impl {
     struct Object {
         ObjectRef transformOwner;
         ObjectRef physicsOwner;
+        ObjectRef nativeOwner; // ZE-116: owner proxy of a bound non-physics native component (audioPlayer/lightSource/...)
         std::string prefabAsset;
         const Class* type = nullptr;
         std::vector<Value> fields;
@@ -1242,6 +1243,7 @@ struct Runtime::Impl {
         if(!native||!native->component)Error(t,"Unknown native behavior type '"+type+"'");
         ObjectRef behavior=program->Assignable(type,owner.type->name)?ownerRef:Create(type,t);
         if(native->physicsBody){Resolve(behavior,t).physicsOwner=ownerRef;Set(ownerRef,"physics",behavior,t,false);}
+        else if(behavior!=ownerRef)Resolve(behavior,t).nativeOwner=ownerRef; // ZE-116: back-reference for callbacks
         Set(ownerRef,std::string(native->accessor),behavior,t,false);
     }
     static double Number(const Value& v) { if (auto i = std::get_if<std::int64_t>(&v)) return static_cast<double>(*i); return std::get<double>(v); }
@@ -1373,7 +1375,7 @@ struct Runtime::Impl {
         if((name=="play"||name=="stop") && program->Assignable("audioPlayer",object.type->name)
            && program->Method(object.type->name,name)==&program->classes.at("audioPlayer").methods.at(name)) {
             Tick(t); if(!args.empty())Error(t,"audio "+name+" takes no arguments");
-            if(audioCallback)audioCallback(ref,name);
+            if(audioCallback)audioCallback(object.nativeOwner.id?object.nativeOwner:ref,name);
             return {};
         }
         if((name=="enable"||name=="disable"||name=="set_reverb") && program->Assignable("audioArea",object.type->name)
@@ -1382,7 +1384,7 @@ struct Runtime::Impl {
             double a=0,b=0;
             if(name=="set_reverb"){ if(args.size()!=2)Error(t,"set_reverb takes decay and wet mix"); a=Number(Coerce(args[0],"float",t)); b=Number(Coerce(args[1],"float",t)); }
             else if(!args.empty())Error(t,"audioArea "+name+" takes no arguments");
-            if(audioAreaCallback)audioAreaCallback(ref,name,static_cast<float>(a),static_cast<float>(b));
+            if(audioAreaCallback)audioAreaCallback(object.nativeOwner.id?object.nativeOwner:ref,name,static_cast<float>(a),static_cast<float>(b));
             return {};
         }
         if((name=="enable"||name=="disable"||name=="set_color"||name=="set_intensity"||name=="set_fog_scatter") && program->Assignable("lightSource",object.type->name)
@@ -1392,7 +1394,7 @@ struct Runtime::Impl {
             if(name=="set_color"){ if(args.size()!=3)Error(t,"set_color takes r, g and b"); a=Number(Coerce(args[0],"float",t)); b=Number(Coerce(args[1],"float",t)); c=Number(Coerce(args[2],"float",t)); }
             else if(name=="set_intensity"||name=="set_fog_scatter"){ if(args.size()!=1)Error(t,name+" takes one number"); a=Number(Coerce(args[0],"float",t)); }
             else if(!args.empty())Error(t,"lightSource "+name+" takes no arguments");
-            if(lightCallback)lightCallback(ref,name,static_cast<float>(a),static_cast<float>(b),static_cast<float>(c));
+            if(lightCallback)lightCallback(object.nativeOwner.id?object.nativeOwner:ref,name,static_cast<float>(a),static_cast<float>(b),static_cast<float>(c));
             return {};
         }
         if((name=="enable"||name=="disable"||name=="set_tint"||name=="set_opacity") && program->Assignable("decalProjector",object.type->name)
@@ -1402,7 +1404,7 @@ struct Runtime::Impl {
             if(name=="set_tint"){ if(args.size()!=3)Error(t,"set_tint takes r, g and b"); a=Number(Coerce(args[0],"float",t)); b=Number(Coerce(args[1],"float",t)); c=Number(Coerce(args[2],"float",t)); }
             else if(name=="set_opacity"){ if(args.size()!=1)Error(t,"set_opacity takes one number"); a=Number(Coerce(args[0],"float",t)); }
             else if(!args.empty())Error(t,"decalProjector "+name+" takes no arguments");
-            if(decalCallback)decalCallback(ref,name,static_cast<float>(a),static_cast<float>(b),static_cast<float>(c));
+            if(decalCallback)decalCallback(object.nativeOwner.id?object.nativeOwner:ref,name,static_cast<float>(a),static_cast<float>(b),static_cast<float>(c));
             return {};
         }
         if(program->Assignable("PhysicsBody",object.type->name) && (name=="add_force"||name=="add_impulse"||name=="add_torque"||name=="add_angular_impulse")) {

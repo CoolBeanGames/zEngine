@@ -1,5 +1,7 @@
 #include "ScriptHost.h"
 #include "ui/UiControl.h"
+#include "audio/AudioSource.h"
+#include "core/Light.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -135,17 +137,28 @@ int main()
         ObjectStore references; ScriptHost referenceHost; referenceHost.SetObjectStore(&references);
         auto& referenceOwner=references.Create("Reference Owner"); auto& referenceTarget=references.Create("Reference Target");
         referenceTarget.AddBehavior<physics::Collider>(); referenceTarget.AddBehavior<physics::RigidBody>();
+        referenceTarget.AddBehavior<zengine::audio::AudioSource>(); referenceTarget.AddBehavior<zengine::Light>(); // ZE-116
         auto& referenceBehavior=referenceOwner.AddBehavior<ScriptBehavior>("References.zsh");
         const std::string referenceSource=R"(class References : gameObject {
             export RigidBody body;
             export Collider shape;
             export GameObject object;
-            func start() { body = body; shape = shape; object = object; }
+            export audioPlayer speaker;
+            export lightSource lamp;
+            func start() { body = body; shape = shape; object = object; speaker.stop(); lamp.disable(); }
         })";
         Check(referenceHost.Prepare(referenceBehavior,referenceSource,"References"),"Native reference fixture compile");
         referenceHost.SetObjectReference(referenceBehavior,"body",referenceTarget.Id());
         referenceHost.SetObjectReference(referenceBehavior,"shape",referenceTarget.Id());
         referenceHost.SetObjectReference(referenceBehavior,"object",referenceTarget.Id());
+        // ZE-116: an object with an AudioSource / Light satisfies an "export audioPlayer" / "export lightSource".
+        Check(zengine::ScriptHost::ObjectMatchesReferenceType(referenceTarget,"audioPlayer") &&
+              zengine::ScriptHost::ObjectMatchesReferenceType(referenceTarget,"lightSource"),"audio/light object not accepted for its component reference type");
+        Check(!zengine::ScriptHost::ObjectMatchesReferenceType(referenceOwner,"audioPlayer"),"object without an AudioSource wrongly accepted");
+        referenceHost.SetObjectReference(referenceBehavior,"speaker",referenceTarget.Id());
+        referenceHost.SetObjectReference(referenceBehavior,"lamp",referenceTarget.Id());
+        Check(Value(referenceHost,referenceBehavior,"speaker")=="Reference Target (audioPlayer)","audioPlayer reference was not assigned");
+        Check(Value(referenceHost,referenceBehavior,"lamp")=="Reference Target (lightSource)","lightSource reference was not assigned");
         Check(Value(referenceHost,referenceBehavior,"body")=="Reference Target (RigidBody)","RigidBody reference was not assigned");
         Check(Value(referenceHost,referenceBehavior,"shape")=="Reference Target (Collider)","Collider reference was not assigned");
         Check(Value(referenceHost,referenceBehavior,"object")=="Reference Target (gameObject)","GameObject reference was not assigned");

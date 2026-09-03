@@ -57,10 +57,13 @@ inline const std::vector<NativeType>& NativeTypes() {
         {"Collider",       "Behavior",    "collider",       true,  false, true },
         {"Camera",         "Behavior",    "camera",         true,  false, true },
         {"Timer",          "gameObject",  "",               false, false, true },
-        {"audioPlayer",    "gameObject",  "",               false, false, true },
-        {"audioArea",      "gameObject",  "",               false, false, true },
-        {"lightSource",    "gameObject",  "",               false, false, true },
-        {"decalProjector", "gameObject",  "",               false, false, true },
+        // ZE-116: also attachable/drag-assignable components - an "export audioPlayer x"
+        // binds any object that has the matching behavior (AudioSource / Light / Decal /
+        // AudioEffect), resolving through the accessor field.
+        {"audioPlayer",    "gameObject",  "audio_player",    true,  false, true },
+        {"audioArea",      "gameObject",  "audio_area",      true,  false, true },
+        {"lightSource",    "gameObject",  "light_source",    true,  false, true },
+        {"decalProjector", "gameObject",  "decal_projector", true,  false, true },
         {"prefab",         "",            "",               false, false, true },
         {"InputService",   "",            "",               false, false, true },
         {"InputAction",    "",            "",               false, false, true },

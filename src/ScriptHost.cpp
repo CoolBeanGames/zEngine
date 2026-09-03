@@ -189,6 +189,11 @@ namespace
             {"Area",          "area",           [](const ObjectCore& o){ return o.GetBehavior<physics::Area>()!=nullptr; }},
             {"Collider",      "collider",       [](const ObjectCore& o){ return o.GetBehavior<physics::Collider>()!=nullptr; }},
             {"Camera",        "camera",         [](const ObjectCore& o){ return o.GetBehavior<Camera>()!=nullptr; }},
+            // ZE-116: audio / light / decal components are drag-assignable references too.
+            {"audioPlayer",    "audio_player",    [](const ObjectCore& o){ return o.GetBehavior<audio::AudioSource>()!=nullptr; }},
+            {"audioArea",      "audio_area",      [](const ObjectCore& o){ return o.GetBehavior<audio::AudioEffect>()!=nullptr; }},
+            {"lightSource",    "light_source",    [](const ObjectCore& o){ return o.GetBehavior<Light>()!=nullptr; }},
+            {"decalProjector", "decal_projector", [](const ObjectCore& o){ return o.GetBehavior<Decal>()!=nullptr; }},
         };
         return table;
     }
@@ -688,6 +693,7 @@ const std::vector<std::string>& ScriptHost::ArrayElementTypes()
     static const std::vector<std::string> types = {
         "int","float","bool","string","char","Vector3","Vector2","prefab",
         "gameObject","Transform","RigidBody","KinematicBody","StaticBody","Area","Collider","Camera","PhysicsBody","Behavior",
+        "audioPlayer","audioArea","lightSource","decalProjector",
     };
     return types;
 }
