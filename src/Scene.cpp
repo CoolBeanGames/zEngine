@@ -84,7 +84,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
         {
             const auto& behavior=object.BehaviorAt(j);
             BehaviorData b; b.enabled=behavior.Enabled(); b.priority=behavior.Priority();
-            if (const auto* mesh=dynamic_cast<const MeshRenderer*>(&behavior)) b.asset=mesh->Asset();
+            if (const auto* mesh=dynamic_cast<const MeshRenderer*>(&behavior)) { b.asset=mesh->Asset(); b.meshMaterial=mesh->Material(); }
             else if (const auto* script=dynamic_cast<const ScriptBehavior*>(&behavior))
             { b.kind=BehaviorData::Kind::Script; b.asset=script->Asset(); b.variables=scripts.AuthoredValues(*script); b.objectReferences=scripts.AuthoredReferences(*script); b.arrays=scripts.AuthoredArrays(*script); }
             else if(const auto* collider=dynamic_cast<const physics::Collider*>(&behavior)){b.kind=BehaviorData::Kind::Collider;b.shape=collider->Shape();b.colliderOffset=collider->Offset();b.colliderSize=collider->Size();}
@@ -108,7 +108,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
 std::string Encode(const Document& scene)
 {
     std::ostringstream out; out.imbue(std::locale::classic()); out<<std::setprecision(17);
-    out<<"ZENGINE_SCENE 9\nobjects "<<scene.objects.size()<<'\n';
+    out<<"ZENGINE_SCENE 10\nobjects "<<scene.objects.size()<<'\n';
     for (const auto& object:scene.objects)
     {
         out<<"object "<<object.id<<' '<<std::quoted(object.name)<<"\ntags "<<object.tags.size();
@@ -124,6 +124,7 @@ std::string Encode(const Document& scene)
         for (const auto& b:object.behaviors)
         {
             out<<KindName(b.kind)<<' '<<(b.enabled?1:0)<<' '<<b.priority<<' '<<std::quoted(b.asset)<<'\n';
+            if(b.kind==BehaviorData::Kind::Mesh)out<<"mesh_material "<<std::quoted(b.meshMaterial)<<'\n'; // scene v10
             if(b.kind==BehaviorData::Kind::Collider)out<<"collider_shape "<<static_cast<unsigned>(b.shape)<<' '<<b.colliderOffset.x<<' '<<b.colliderOffset.y<<' '<<b.colliderOffset.z<<' '<<b.colliderSize.x<<' '<<b.colliderSize.y<<' '<<b.colliderSize.z<<'\n';
             else if(b.kind==BehaviorData::Kind::Camera)out<<"camera "<<b.cameraFov<<' '<<b.cameraNear<<' '<<b.cameraFar<<'\n';
             else if(b.kind==BehaviorData::Kind::Ui) {
@@ -177,7 +178,7 @@ Document Decode(std::string_view text)
 {
     Require(text.size()<=MaxSceneBytes,"Scene exceeds the 8 MiB limit.");
     std::istringstream in{std::string(text)}; in.imbue(std::locale::classic());
-    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,9); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
+    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,10); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
     Document scene; const auto count=Count(in,10000); std::set<GameObjectId> ids;
     for (std::size_t i=0;i<count;++i)
     {
@@ -216,6 +217,7 @@ Document Decode(std::string_view text)
             else if(type=="script")b.kind=BehaviorData::Kind::Script;else if(type=="collider")b.kind=BehaviorData::Kind::Collider;else if(type=="camera")b.kind=BehaviorData::Kind::Camera;else if(type=="ui")b.kind=BehaviorData::Kind::Ui;else if(type=="rigid_body")b.kind=BehaviorData::Kind::RigidBody;else if(type=="kinematic_body")b.kind=BehaviorData::Kind::KinematicBody;else if(type=="static_body")b.kind=BehaviorData::Kind::StaticBody;else b.kind=BehaviorData::Kind::Area;
             if(type=="collider"){Require(!collider,"Duplicate Collider.");collider=true;}else if(type=="camera"){Require(!camera,"Duplicate Camera.");camera=true;}else if(type=="rigid_body"||type=="kinematic_body"||type=="static_body"||type=="area"){Require(!body,"Duplicate physics body type.");body=true;}
             b.enabled=Boolean(in); b.priority=Float(in); b.asset=Text(in);if(type=="mesh"||type=="script")Asset(b.asset,type=="mesh");else Require(b.asset.empty(),"Native behaviors cannot reference assets.");
+            if(type=="mesh"&&version>=10){Token(in,"mesh_material");b.meshMaterial=Text(in);if(!b.meshMaterial.empty()){Asset(b.meshMaterial,false);Require(b.meshMaterial.ends_with(".material"),"Expected a .material reference.");}}
             if(type=="collider"){Token(in,"collider_shape");b.shape=static_cast<physics::ColliderShape>(Count(in,2));if(version>=5){b.colliderOffset=Vector(in);b.colliderSize=Vector(in);Require(b.colliderSize.x>0&&b.colliderSize.y>0&&b.colliderSize.z>0,"Invalid collider size.");}}
             else if(type=="camera"){Token(in,"camera");b.cameraFov=Float(in);b.cameraNear=Float(in);b.cameraFar=Float(in);Require(b.cameraFov>0&&b.cameraFov<180&&b.cameraNear>0&&b.cameraFar>b.cameraNear,"Invalid camera settings.");}
             else if(type=="ui"){Token(in,"ui");b.uiType=Text(in);Require(ui::IsUiControlType(b.uiType),"Unknown UI control type.");Require(object.is2D,"UI controls require a 2D object.");const auto props=Count(in,256);for(std::size_t k=0;k<props;++k){Token(in,"ui_prop");auto key=Text(in);Require(!key.empty() && key.size()<=64,"Invalid UI property key.");auto value=Text(in);Require(value.size()<=4096,"Invalid UI property value.");b.uiProps.emplace_back(std::move(key),std::move(value));}}
@@ -301,7 +303,7 @@ Instance Instantiate(const Document& scene)
         for (const auto& b:data.behaviors)
         {
             Behavior* behavior=nullptr;
-            if (b.kind==BehaviorData::Kind::Mesh) behavior=&object.AddBehavior<MeshRenderer>(b.asset);
+            if (b.kind==BehaviorData::Kind::Mesh) { auto& m=object.AddBehavior<MeshRenderer>(b.asset); m.SetMaterial(b.meshMaterial); behavior=&m; }
             else if(b.kind==BehaviorData::Kind::Script) { auto& script=object.AddBehavior<ScriptBehavior>(b.asset); instance.scripts.RestoreValues(script,b.variables); instance.scripts.RestoreReferences(script,b.objectReferences); instance.scripts.RestoreArrays(script,b.arrays); behavior=&script; }
             else if(b.kind==BehaviorData::Kind::Collider){auto* existing=object.GetBehavior<physics::Collider>();auto& v=existing?*existing:object.AddBehavior<physics::Collider>();v.SetShape(b.shape);v.SetOffset(b.colliderOffset);v.SetSize(b.colliderSize);behavior=&v;}
             else if(b.kind==BehaviorData::Kind::Camera){auto& v=object.AddBehavior<Camera>();v.SetFieldOfView(b.cameraFov);v.SetNearPlane(b.cameraNear);v.SetFarPlane(b.cameraFar);behavior=&v;}
@@ -334,7 +336,7 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
         for(const auto& b:data.behaviors)
         {
             Behavior* behavior=nullptr;
-            if(b.kind==BehaviorData::Kind::Mesh)behavior=&object.AddBehavior<MeshRenderer>(b.asset);
+            if(b.kind==BehaviorData::Kind::Mesh){auto& m=object.AddBehavior<MeshRenderer>(b.asset);m.SetMaterial(b.meshMaterial);behavior=&m;}
             else if(b.kind==BehaviorData::Kind::Script){auto& value=object.AddBehavior<ScriptBehavior>(b.asset);scripts.RestoreValues(value,b.variables);pendingReferences.emplace_back(&value,&b.objectReferences);pendingArrays.emplace_back(&value,&b.arrays);behavior=&value;}
             else if(b.kind==BehaviorData::Kind::Collider){auto* existing=object.GetBehavior<physics::Collider>();auto& value=existing?*existing:object.AddBehavior<physics::Collider>();value.SetShape(b.shape);value.SetOffset(b.colliderOffset);value.SetSize(b.colliderSize);behavior=&value;}
             else if(b.kind==BehaviorData::Kind::Camera){auto& value=object.AddBehavior<Camera>();value.SetFieldOfView(b.cameraFov);value.SetNearPlane(b.cameraNear);value.SetFarPlane(b.cameraFar);behavior=&value;}

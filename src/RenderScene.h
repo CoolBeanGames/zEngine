@@ -10,11 +10,16 @@
 
 struct RenderMesh;
 using MeshHandle = std::shared_ptr<const RenderMesh>;
+// ZE-65: a resolved Material Instance. `albedo` overrides the model's imported
+// texture; `tint` multiplies the albedo. Null handle = the model's own material.
+struct RenderMaterial;
+using MaterialHandle = std::shared_ptr<const RenderMaterial>;
 struct MeshDraw
 {
     MeshHandle mesh;
     zengine::Transform transform;
     std::optional<DirectX::XMFLOAT4X4> parentMatrix;
+    MaterialHandle material;
 };
 struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; };
 // A Camera GameObject: its frustum is drawn as an editor guide, and the main one

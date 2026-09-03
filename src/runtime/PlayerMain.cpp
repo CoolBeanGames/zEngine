@@ -5,6 +5,8 @@
 #include "ui/UiSystem.h"
 #include "ui/VideoClip.h"
 #include "AssetLibrary.h"
+#include "MaterialAssets.h"
+#include "ShaderAssets.h"
 #include "FbxImporter.h"
 #include "core/MeshRenderer.h"
 #include "input/InputAssets.h"
@@ -103,6 +105,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                     cached={frame,renderer.UploadTexture(static_cast<std::uint32_t>(clip.Width()),static_cast<std::uint32_t>(clip.Height()),clip.Frame(frame))};
                 return cached.second;
             };
+            std::map<std::string,MaterialHandle> materialCache;
+            const auto resolveMeshMaterial=[&](const std::string& asset)->MaterialHandle{
+                if(asset.empty())return {};
+                if(const auto it=materialCache.find(asset);it!=materialCache.end())return it->second;
+                MaterialHandle handle;
+                try{
+                    const auto doc=zengine::materials::Load(assetLibrary::Resolve(assetsRoot,std::filesystem::u8path(asset)));
+                    const auto effective=zengine::materials::Resolve(doc,[&](const std::string& shaderPath){
+                        return zengine::shaders::Load(assetLibrary::Resolve(assetsRoot,std::filesystem::u8path(shaderPath)));
+                    });
+                    const auto tint=effective.Numbers("tint",{{1,1,1,1}});
+                    TextureHandle albedo;
+                    if(const auto texture=effective.Texture("albedo");!texture.empty())
+                        try{albedo=renderer.UploadImage(assetLibrary::Resolve(assetsRoot,std::filesystem::u8path(texture)));}catch(...){}
+                    handle=renderer.UploadMaterial(albedo,Float4{tint[0],tint[1],tint[2],tint[3]});
+                }catch(...){handle={};}
+                materialCache[asset]=handle;
+                return handle;
+            };
             while(!state.closed && (!automated||rendered<frames)) {
                 MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){if(message.message==WM_QUIT)state.closed=true;TranslateMessage(&message);DispatchMessageW(&message);}
                 if(state.closed)break;
@@ -127,10 +148,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                     }
                     accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,zengine::input::PollWindows(focused),mouse);accumulated-=1.0/60.0;}
                 }
-                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();}
+                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();}
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
-                for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id())||object.Is2D())continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));frame.meshes.push_back({meshes.at(object.Id()),t3d,parent});}
+                for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id())||object.Is2D())continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));const auto* mr=object.GetBehavior<zengine::MeshRenderer>();frame.meshes.push_back({meshes.at(object.Id()),t3d,parent,mr?resolveMeshMaterial(mr->Material()):MaterialHandle{}});}
                 ui.Build(session.Objects(),{static_cast<float>(width),static_cast<float>(height)},uiContext,static_cast<float>(elapsed));
                 if(!automated){const float px=static_cast<float>((mouse.x+1.0)*0.5*width),py=static_cast<float>((1.0-mouse.y)*0.5*height);const float wheel=state.wheel;state.wheel=0;const auto uiClicks=ui.Interact(zengine::Vec2{px,py},mouse.buttons[0].pressed,{},wheel);for(const auto id:ui.Presses())session.UiPressed(id);for(const auto id:ui.Releases())session.UiReleased(id);for(const auto clickedId:uiClicks)session.UiClicked(clickedId);}
                 ui.Emit(frame.sprites,frame.texts);

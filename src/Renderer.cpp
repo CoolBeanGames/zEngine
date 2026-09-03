@@ -8,7 +8,9 @@
 
 #include <array>
 #include <cstddef>
+#include <fstream>
 #include <random>
+#include <vector>
 #include <stdexcept>
 #include <string>
 #include <algorithm>
@@ -34,6 +36,12 @@ struct RenderTexture
     ComPtr<ID3D11ShaderResourceView> view;
     std::uint32_t width = 0, height = 0;
     ID3D11Device* device = nullptr;
+};
+
+struct RenderMaterial
+{
+    TextureHandle albedo;             // null -> fall back to the model's imported texture
+    Float4 tint{1, 1, 1, 1};
 };
 
 namespace
@@ -82,6 +90,7 @@ struct Renderer::SceneConstants
     XMFLOAT4X4 worldViewProjection;
     XMFLOAT4X4 normalWorld;
     XMFLOAT4 lightDirection;
+    XMFLOAT4 materialTint{1, 1, 1, 1}; // ZE-65: material instance tint (albedo multiplier)
 };
 
 struct Renderer::SpriteConstants
@@ -434,6 +443,55 @@ TextureHandle Renderer::WhiteTexture()
     return whiteHandle_;
 }
 
+TextureHandle Renderer::UploadImage(const std::filesystem::path& file)
+{
+    if (!device_) throw std::runtime_error("Initialize the renderer before uploading images.");
+    const auto size = std::filesystem::file_size(file);
+    if (size == 0 || size > 64u * 1024 * 1024) throw std::runtime_error("Image file is empty or too large.");
+    std::vector<BYTE> bytes(static_cast<std::size_t>(size));
+    {
+        std::ifstream in(file, std::ios::binary);
+        if (!in || !in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size)))
+            throw std::runtime_error("Cannot read image file: " + file.string());
+    }
+    ComPtr<IWICImagingFactory> factory;
+    ThrowIfFailed(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)),
+                  "Create image decoder");
+    ComPtr<IWICStream> stream;
+    ThrowIfFailed(factory->CreateStream(&stream), "Create image stream");
+    ThrowIfFailed(stream->InitializeFromMemory(bytes.data(), static_cast<DWORD>(bytes.size())), "Open image bytes");
+    ComPtr<IWICBitmapDecoder> decoder;
+    ThrowIfFailed(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder),
+                  "Decode image (PNG, JPEG, BMP, TIFF or GIF)");
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ThrowIfFailed(decoder->GetFrame(0, &frame), "Read image frame");
+    UINT width = 0, height = 0;
+    ThrowIfFailed(frame->GetSize(&width, &height), "Read image size");
+    if (!width || !height || width > 32768 || height > 32768) throw std::runtime_error("Invalid image dimensions.");
+    const double scale = std::min(1.0, 2048.0 / std::max(width, height));
+    width = std::max(1u, static_cast<UINT>(width * scale));
+    height = std::max(1u, static_cast<UINT>(height * scale));
+    ComPtr<IWICBitmapScaler> scaler;
+    ThrowIfFailed(factory->CreateBitmapScaler(&scaler), "Create image scaler");
+    ThrowIfFailed(scaler->Initialize(frame.Get(), width, height, WICBitmapInterpolationModeLinear), "Scale image");
+    ComPtr<IWICFormatConverter> converter;
+    ThrowIfFailed(factory->CreateFormatConverter(&converter), "Create image converter");
+    ThrowIfFailed(converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr,
+                                        0.0, WICBitmapPaletteTypeCustom), "Convert image to RGBA");
+    std::vector<BYTE> pixels(static_cast<std::size_t>(width) * height * 4);
+    ThrowIfFailed(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size()), pixels.data()),
+                  "Read image pixels");
+    return UploadTexture(width, height, pixels.data());
+}
+
+MaterialHandle Renderer::UploadMaterial(TextureHandle albedo, Float4 tint)
+{
+    auto material = std::make_shared<RenderMaterial>();
+    material->albedo = std::move(albedo);
+    material->tint = tint;
+    return material;
+}
+
 zengine::Vec2 Renderer::MeasureText(std::string_view text, float pixelHeight)
 {
     if (!fontAtlas_.Valid())
@@ -669,7 +727,7 @@ void Renderer::Render(const ViewportFrame& frame)
                                             std::max(0.001f,gv.nearZ),std::max(gv.nearZ+0.01f,gv.farZ));
     }
 
-    const auto setConstants = [&](const XMMATRIX& matrix, bool unlit) {
+    const auto setConstants = [&](const XMMATRIX& matrix, bool unlit, Float4 tint = {1, 1, 1, 1}) {
         SceneConstants constants{};
         XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(matrix * view * projection));
         const float determinant = XMVectorGetX(XMMatrixDeterminant(matrix));
@@ -677,6 +735,7 @@ void Renderer::Render(const ViewportFrame& frame)
             ? XMMatrixTranspose(XMMatrixInverse(nullptr, matrix)) : XMMatrixIdentity();
         XMStoreFloat4x4(&constants.normalWorld, XMMatrixTranspose(normals));
         constants.lightDirection = XMFLOAT4{-0.4f, -0.8f, 0.5f, unlit ? 1.0f : 0.0f};
+        constants.materialTint = XMFLOAT4{tint.x, tint.y, tint.z, tint.w};
         D3D11_MAPPED_SUBRESOURCE mapped{};
         ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map scene constants");
         *static_cast<SceneConstants*>(mapped.pData) = constants;
@@ -698,6 +757,7 @@ void Renderer::Render(const ViewportFrame& frame)
     context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
     context_->VSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf());
     context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
+    context_->PSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf()); // ZE-65: material tint read in PSMain
     context_->PSSetSamplers(0, 1, albedoSampler_.GetAddressOf());
     const auto drawLines = [&](ID3D11Buffer* buffer, UINT count, const XMMATRIX& matrix) {
         setConstants(matrix, true);
@@ -713,13 +773,17 @@ void Renderer::Render(const ViewportFrame& frame)
         if (!draw.mesh) continue;
         const auto& mesh = *draw.mesh;
         if (mesh.device != device_.Get()) throw std::runtime_error("Mesh belongs to another render device.");
-        setConstants(TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity()), false);
+        const RenderMaterial* material = draw.material.get();
+        const Float4 tint = material ? material->tint : Float4{1, 1, 1, 1};
+        setConstants(TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity()), false, tint);
         context_->IASetVertexBuffers(0, 1, mesh.vertices.GetAddressOf(), &stride, &offset);
         context_->IASetIndexBuffer(mesh.indices.Get(), mesh.indexFormat, 0);
         for (const auto& part : mesh.parts)
         {
-            ID3D11ShaderResourceView* texture = part.material < mesh.textures.size() && mesh.textures[part.material]
-                ? mesh.textures[part.material].Get() : whiteTexture_.Get();
+            ID3D11ShaderResourceView* texture =
+                material && material->albedo ? material->albedo->view.Get()
+              : part.material < mesh.textures.size() && mesh.textures[part.material] ? mesh.textures[part.material].Get()
+              : whiteTexture_.Get();
             context_->PSSetShaderResources(0, 1, &texture);
             context_->DrawIndexed(part.indexCount, part.firstIndex, 0);
         }

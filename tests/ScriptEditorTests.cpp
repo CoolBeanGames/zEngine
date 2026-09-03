@@ -1,5 +1,6 @@
 #include "ScriptAssets.h"
 #include "ShaderAssets.h"
+#include "MaterialAssets.h"
 #include "ScriptEditor.h"
 #include "ScriptTyping.h"
 #include "ScriptCompletion.h"
@@ -251,10 +252,46 @@ int main(int argc, char**)
             SendMessageW(shaderEditor.Window(), WM_COMMAND, ScriptEditor::SaveCommand, 0);
             Check(sh::Load(shaderA).find("float4(1,0,0,1)") != std::string::npos, "Shader editor save failed");
             Check(shaderEditor.ConfirmClose(), "Saved shader editor should close without prompting");
+
+            // ZE-65: Material Instance (.material) assets.
+            namespace mt = zengine::materials;
+            const auto matA = mt::Create(root), matB = mt::Create(root);
+            Check(matA != matB && matA.extension() == ".material", "Unique .material creation failed");
+            auto doc = mt::Load(matA);
+            Check(doc.shader.empty() && doc.values.size() == 2, "Material template should be the built-in Standard with tint + albedo");
+
+            // Round-trip via encode/decode and via the disk save path.
+            Check(mt::Decode(mt::Encode(doc)) == doc, "Material encode/decode round trip changed the document");
+            doc.values[0].numbers = {{0.2f, 0.4f, 0.6f, 1.0f}};   // tint
+            doc.values[1].texture = "Textures/wood.png";          // albedo
+            const auto snapshot = mt::Load(matA);
+            mt::Save(root, matA, doc, &snapshot);
+            Check(mt::Load(matA) == doc, "Material save did not persist edited values");
+            bool rejectedMat = false;
+            try { mt::Save(root, matA, doc, &snapshot); } catch (...) { rejectedMat = true; }
+            Check(rejectedMat, "Material save ignored a stale expected snapshot");
+
+            // Built-in Standard resolves without a shader; a custom shader is compiled.
+            const auto stdEff = mt::Resolve(doc, [](const std::string&) -> std::string { throw std::runtime_error("no shader"); });
+            Check(stdEff.builtin && stdEff.ok && stdEff.Numbers("tint")[2] == 0.6f && stdEff.Texture("albedo") == "Textures/wood.png",
+                  "Built-in material did not merge pinned values");
+            mt::MaterialDoc custom; custom.shader = "Shaders/Fancy.shader";
+            custom.values.push_back(mt::Value{"albedo", zengine::shaders::ParamType::Float4, {{1, 0, 0, 1}}, ""});
+            const auto customEff = mt::Resolve(custom, [](const std::string&) {
+                return std::string("cbuffer Parameters { float4 albedo; };\nfloat4 PSMain() : SV_TARGET { return albedo; }");
+            });
+            Check(customEff.ok && !customEff.builtin && customEff.Numbers("albedo")[0] == 1.0f && customEff.Numbers("albedo")[1] == 0.0f,
+                  "Custom-shader material did not compile / merge");
+            const auto brokenEff = mt::Resolve(custom, [](const std::string&) { return std::string("not hlsl at all"); });
+            Check(!brokenEff.ok && !brokenEff.error.empty(), "Broken custom shader was not reported by the material resolver");
+
+            bool rejectedResolve = false;
+            try { mt::Resolve(root, root / "x.txt"); } catch (...) { rejectedResolve = true; }
+            Check(rejectedResolve, "Material extension check failed");
         }
         CoUninitialize();
         std::filesystem::remove_all(root);
-        std::cout << "PASS: script assets, safe saves, diagnostics, behavior references, native editor save/load/undo, HLSL shaders\n";
+        std::cout << "PASS: script assets, safe saves, diagnostics, behavior references, native editor save/load/undo, HLSL shaders, material instances\n";
         return 0;
     }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; std::filesystem::remove_all(root); return 1; }

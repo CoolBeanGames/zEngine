@@ -14,6 +14,7 @@ namespace zengine::scenes
         Kind kind=Kind::Mesh;
         std::string uiType; // when kind==Ui: ui::UiControl::TypeName()
         std::vector<std::pair<std::string,std::string>> uiProps; // ordered key/value
+        std::string meshMaterial; // when kind==Mesh: project-relative ".material" (ZE-65), empty = default
         bool enabled=true;
         float priority=0;
         std::string asset;

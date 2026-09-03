@@ -3,6 +3,7 @@ cbuffer SceneConstants : register(b0)
     float4x4 WorldViewProjection;
     float4x4 NormalWorld;
     float4 LightDirection;
+    float4 MaterialTint; // ZE-65: material instance albedo multiplier (rgb); a = 1 default
 };
 
 Texture2D Albedo : register(t0);
@@ -39,5 +40,5 @@ PixelInput VSMain(VertexInput input)
 
 float4 PSMain(PixelInput input) : SV_TARGET
 {
-    return float4(input.color * Albedo.Sample(AlbedoSampler, input.uv).rgb, 1.0f);
+    return float4(input.color * Albedo.Sample(AlbedoSampler, input.uv).rgb * MaterialTint.rgb, 1.0f);
 }

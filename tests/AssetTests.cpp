@@ -280,6 +280,32 @@ namespace
             editor.InitializeRenderer();
             const auto cubeId = editor.SelectedGameObject()->Id();
             Require(editor.BuildSceneFrame().meshes.size() == 1,"Default cube needs an actual Mesh Renderer");
+            {
+                // ZE-65: create a Material Instance, assign it to the cube via the Inspector,
+                // edit a parameter, and confirm it persists + reaches the render submission.
+                const auto materialPath = editor.CreateMaterialAsset(); // cube stays selected
+                const auto rel = std::filesystem::relative(materialPath, editor.AssetsDirectory()).generic_u8string();
+                const std::string relative(reinterpret_cast<const char*>(rel.data()), rel.size());
+                const HWND inspector0 = FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
+                const HWND materialField = GetDlgItem(inspector0, InspectorPanel::FirstBehaviorField + 2); // header, priority, material
+                Require(materialField != nullptr, "Inspector has no Material row for a Mesh Renderer");
+                SetWindowTextW(materialField, std::wstring(relative.begin(), relative.end()).c_str()); // relative path is ASCII
+                SendMessageW(inspector0, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(materialField), EN_CHANGE), reinterpret_cast<LPARAM>(materialField));
+                Require(editor.GameObjects().Find(cubeId)->GetBehavior<zengine::MeshRenderer>()->Material() == relative,
+                        "Inspector did not assign the .material to the Mesh Renderer");
+                // tint parameter rows now exist: material(2), tint x/y/z/w (3..6).
+                const HWND tintBlue = GetDlgItem(inspector0, InspectorPanel::FirstBehaviorField + 5);
+                Require(tintBlue != nullptr, "Inspector has no tint parameter row");
+                SetWindowTextW(tintBlue, L"0.5");
+                SendMessageW(inspector0, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(tintBlue), EN_CHANGE), reinterpret_cast<LPARAM>(tintBlue));
+                const auto savedDoc = zengine::materials::Load(materialPath);
+                const auto* tint = savedDoc.values.empty() ? nullptr : &savedDoc.values.front();
+                Require(tint && tint->name == "tint" && std::abs(tint->numbers[2] - 0.5f) < 0.001f,
+                        "Inspector edit did not persist to the .material file");
+                const auto materialFrame = editor.BuildSceneFrame();
+                Require(!materialFrame.meshes.empty() && materialFrame.meshes[0].material != nullptr,
+                        "Assigned material did not reach the render submission");
+            }
             auto& first = editor.CreateEmptyGameObject();
             const auto inspector = FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
             Require(GetDlgItem(inspector,InspectorPanel::AddBehaviorButton)!=nullptr,"Add Behavior button missing");
@@ -341,7 +367,7 @@ namespace
             Require(editor.BuildSceneFrame().meshes.size()==4,"Multiple instantiated models missing from scene");
         }
         CoUninitialize();
-        std::cout << "PASS: Mesh Renderer component, Inspector add/enable/clear, independent transforms, shared GPU meshes, captured async targets, scene instantiation\n";
+        std::cout << "PASS: Mesh Renderer component, Inspector add/enable/clear, independent transforms, shared GPU meshes, captured async targets, scene instantiation, material instances\n";
     }
 
     void GameObjectEditorTests()
@@ -476,14 +502,14 @@ void ScriptIntegrationEditorTests(bool capture)
         Require(editor.AttachScript(cube,path),"Attach script to cube failed");
         const auto inspector=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
         const auto field=[&](int row) { return GetDlgItem(inspector,InspectorPanel::FirstBehaviorField+row); };
-        // Mesh title/priority, script title/priority, Movement label, then variables.
-        Require(field(3) && field(5) && field(6) && field(7),"Dynamic priority/variable controls missing");
-        SetWindowTextW(field(3),L"1.5"); SetWindowTextW(field(5),L"6");
-        SetWindowTextW(field(6),L"2");SetWindowTextW(field(7),L"0");SetWindowTextW(field(8),L"0");
-        RECT vx{},vy{},vz{};GetWindowRect(field(6),&vx);GetWindowRect(field(7),&vy);GetWindowRect(field(8),&vz);
+        // Mesh title/priority/material (ZE-65), script title/priority, Movement label, then variables.
+        Require(field(4) && field(6) && field(7) && field(8),"Dynamic priority/variable controls missing");
+        SetWindowTextW(field(4),L"1.5"); SetWindowTextW(field(6),L"6");
+        SetWindowTextW(field(7),L"2");SetWindowTextW(field(8),L"0");SetWindowTextW(field(9),L"0");
+        RECT vx{},vy{},vz{};GetWindowRect(field(7),&vx);GetWindowRect(field(8),&vy);GetWindowRect(field(9),&vz);
         Require(vx.top==vy.top && vy.top==vz.top && vx.right<vy.left && vy.right<vz.left,"Vector3 fields are not three distinct boxes");
-        SetWindowTextW(field(5),L"nan"); SendMessageW(field(5),WM_KEYDOWN,VK_RETURN,0);
-        wchar_t text[64]{}; GetWindowTextW(field(5),text,64);
+        SetWindowTextW(field(6),L"nan"); SendMessageW(field(6),WM_KEYDOWN,VK_RETURN,0);
+        wchar_t text[64]{}; GetWindowTextW(field(6),text,64);
         Require(std::wstring(text)==L"6","Invalid exported input did not revert");
         Require(editor.SelectedGameObject()->BehaviorAt(1).Priority()==1.5f,"Priority control did not edit behavior");
         auto& empty=editor.CreateEmptyGameObject(); const auto emptyId=empty.Id();
@@ -502,9 +528,9 @@ void ScriptIntegrationEditorTests(bool capture)
         SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(50,140));
         SetWindowTextW(source,(std::wstring(code)+L"\n// saved change").c_str());
         SendMessageW(scriptWindow,WM_COMMAND,ScriptEditor::SaveCommand,0);
-        GetWindowTextW(field(5),text,64); Require(std::wstring(text)==L"6","Save/reload lost Inspector override");
-        SetFocus(field(5)); SetWindowTextW(field(5),L"9"); SendMessageW(field(5),WM_KEYDOWN,VK_ESCAPE,0);
-        GetWindowTextW(field(5),text,64); Require(std::wstring(text)==L"6","Escape failed to restore exported value");
+        GetWindowTextW(field(6),text,64); Require(std::wstring(text)==L"6","Save/reload lost Inspector override");
+        SetFocus(field(6)); SetWindowTextW(field(6),L"9"); SendMessageW(field(6),WM_KEYDOWN,VK_ESCAPE,0);
+        GetWindowTextW(field(6),text,64); Require(std::wstring(text)==L"6","Escape failed to restore exported value");
         if (capture)
         {
             SendMessageW(inspector,WM_VSCROLL,SB_PAGEDOWN,0);
@@ -559,8 +585,8 @@ void SceneEditorTests(bool capture)
         const auto script=editor.CreateScriptAsset();
         zengine::scripts::Save(assets,script,"class NewBehavior : gameObject { label(\"Movement\"); export float speed=2; func update(float dt) { transform.position.x+=speed*dt; } }");
         Require(editor.AttachScript(1,script),"Scene script attach failed");
-        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+3),L"1.5");
-        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+5),L"6");
+        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+4),L"1.5"); // +3 material row (ZE-65) -> script priority is +4
+        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+6),L"6");
         auto& empty=editor.CreateEmptyGameObject(); const auto emptyId=empty.Id();
         SetWindowTextW(field(InspectorPanel::NameField),L"Scene A Empty");
         sceneA=assets/L"A.zscene"; Require(editor.SaveScene(sceneA) && !editor.SceneDirty(),"Save Scene failed");
@@ -580,12 +606,12 @@ void SceneEditorTests(bool capture)
         Require(editor.GameObjects().Find(emptyId)!=nullptr,"Scene empty object identity lost");
         Require(editor.GameObjects().Find(emptyId)->Name()=="Scene A Empty",("Scene empty name changed to: "+editor.GameObjects().Find(emptyId)->Name()).c_str());
         Require(zengine::As3D(cube)->GetTransform().Position().x==1.25f && cube->BehaviorAt(1).Priority()==1.5f,"Transform or behavior priority lost");
-        wchar_t value[64]{}; GetWindowTextW(field(InspectorPanel::FirstBehaviorField+5),value,64);
+        wchar_t value[64]{}; GetWindowTextW(field(InspectorPanel::FirstBehaviorField+6),value,64);
         Require(std::wstring(value)==L"6" && editor.BuildSceneFrame().meshes.size()==1,"Script variable or mesh binding lost");
         Require(editor.Play(),"Current scene did not play"); editor.SetPaused(true); editor.Step(); editor.Render();
         Require(std::abs(zengine::As3D(cube)->GetTransform().Position().x-1.35f)<0.0001f,"Wrong scene/variable was played");
         SetWindowTextW(field(InspectorPanel::NameField),L"Temporary play name");
-        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+3),L"99");
+        SetWindowTextW(field(InspectorPanel::FirstBehaviorField+4),L"99");
         SendMessageW(field(InspectorPanel::MeshEnabled),BM_SETCHECK,BST_UNCHECKED,0);
         SendMessageW(inspector,WM_COMMAND,MAKEWPARAM(InspectorPanel::MeshEnabled,BN_CLICKED),reinterpret_cast<LPARAM>(field(InspectorPanel::MeshEnabled)));
         bool rejected=false; try { editor.SaveScene(); } catch (...) { rejected=true; }
@@ -1229,19 +1255,19 @@ void ArrayInspectorTests(bool capture)
         const auto field = [&](int row) { return GetDlgItem(inspector, InspectorPanel::FirstBehaviorField + row); };
         const auto arrayButton = [&](int i) { return GetDlgItem(inspector, InspectorPanel::FirstBehaviorBit + i); };
         const auto text = [&](HWND h) { wchar_t b[64]{}; GetWindowTextW(h, b, 64); return std::wstring(b); };
-        // Mesh header/priority, script header/priority, numbers[header], numbers[0], numbers[1], refs[header]
-        Require(field(5) && field(6), "Array initializer did not surface element edit fields");
-        Require(text(field(5)) == L"10" && text(field(6)) == L"20", "Array element fields show the wrong initializer values");
+        // Mesh header/priority/material (ZE-65), script header/priority, numbers[header], numbers[0], numbers[1], refs[header]
+        Require(field(6) && field(7), "Array initializer did not surface element edit fields");
+        Require(text(field(6)) == L"10" && text(field(7)) == L"20", "Array element fields show the wrong initializer values");
         Require(arrayButton(0) && arrayButton(1) && arrayButton(2) && arrayButton(3), "Array add/remove buttons were not created");
         // Edit an element.
-        SetWindowTextW(field(6), L"99");
-        SendMessageW(inspector, WM_COMMAND, MAKEWPARAM(InspectorPanel::FirstBehaviorField + 6, EN_KILLFOCUS), reinterpret_cast<LPARAM>(field(6)));
+        SetWindowTextW(field(7), L"99");
+        SendMessageW(inspector, WM_COMMAND, MAKEWPARAM(InspectorPanel::FirstBehaviorField + 7, EN_KILLFOCUS), reinterpret_cast<LPARAM>(field(7)));
         // Remove numbers[0] via its "x" button (id FirstBehaviorBit+1).
         SendMessageW(inspector, WM_COMMAND, MAKEWPARAM(InspectorPanel::FirstBehaviorBit + 1, BN_CLICKED), reinterpret_cast<LPARAM>(arrayButton(1)));
         const HWND inspector2 = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
         const auto field2 = [&](int row) { return GetDlgItem(inspector2, InspectorPanel::FirstBehaviorField + row); };
-        Require(field2(5) && !field2(6), "Removing an array element did not drop the trailing row");
-        { wchar_t b[64]{}; GetWindowTextW(field2(5), b, 64); Require(std::wstring(b) == L"99", "Array element edit or removal kept the wrong value"); }
+        Require(field2(6) && !field2(7), "Removing an array element did not drop the trailing row");
+        { wchar_t b[64]{}; GetWindowTextW(field2(6), b, 64); Require(std::wstring(b) == L"99", "Array element edit or removal kept the wrong value"); }
         // Dropping a scene object onto the "refs" array (empty) appends an auto-typed slot.
         // The InspectorPanel geometric hit-test routes an over-row drop to the array.
         for (int i = 0; i < 24; ++i) SendMessageW(inspector2, WM_VSCROLL, MAKEWPARAM(SB_LINEDOWN, 0), 0);

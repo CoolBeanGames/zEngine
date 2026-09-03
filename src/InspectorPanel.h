@@ -4,6 +4,7 @@
 #include "ScriptHost.h"
 #include "physics/PhysicsBehavior.h"
 #include "ui/UiSerialize.h"
+#include "MaterialAssets.h"
 #include <windows.h>
 #include <commctrl.h>
 #include <array>
@@ -46,6 +47,11 @@ public:
     // reference type. Returns the picked GameObjectId (0 clears, nullopt cancels).
     void SetObjectPicker(std::function<std::optional<zengine::GameObjectId>(const std::string& referenceType, zengine::GameObjectId current, RECT anchorScreen)> handler)
     { pickObject_ = std::move(handler); }
+    // ZE-65: resolve a MeshRenderer's ".material" to its effective parameters, and
+    // write one edited parameter value back to the .material asset.
+    void SetMaterialHandlers(std::function<zengine::materials::Effective(const std::string&)> resolve,
+                             std::function<void(const std::string&, zengine::materials::Value)> setValue)
+    { resolveMaterial_ = std::move(resolve); setMaterialValue_ = std::move(setValue); }
     bool AssignPrefabAt(POINT screenPoint,const std::string& asset);
     bool AssignObjectReferenceAt(POINT screenPoint, zengine::GameObjectId target);
     HWND Window() const noexcept { return window_; }
@@ -94,6 +100,11 @@ private:
         bool uiControl = false;
         zengine::ui::UiPropertyKind uiKind = zengine::ui::UiPropertyKind::Line;
         std::vector<std::wstring> comboItems; // generic combo choices (bool / anchor)
+        // ZE-65: a MeshRenderer material row. `materialPath` = the ".material" path
+        // field itself; `materialParam` = one parameter of the resolved material.
+        bool materialPath = false;
+        bool materialParam = false;
+        zengine::shaders::ParamType materialType = zengine::shaders::ParamType::Float4;
     };
     std::wstring BehaviorValue(std::size_t index);
     void ChangeBehaviorField(std::size_t index);
@@ -133,6 +144,8 @@ private:
     std::function<void(MeshAction)> meshAction_;
     std::function<std::optional<std::string>(const std::string&)> choosePrefab_;
     std::function<std::optional<zengine::GameObjectId>(const std::string&, zengine::GameObjectId, RECT)> pickObject_;
+    std::function<zengine::materials::Effective(const std::string&)> resolveMaterial_;
+    std::function<void(const std::string&, zengine::materials::Value)> setMaterialValue_;
     bool updating_ = false;
     int scroll_ = 0;
     int wheelRemainder_ = 0;

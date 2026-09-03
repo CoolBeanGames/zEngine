@@ -226,6 +226,30 @@ void InspectorPanel::RefreshBehaviors()
             dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
         add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
+        if(auto* meshRenderer=dynamic_cast<zengine::MeshRenderer*>(&behavior))
+        {
+            add(&behavior,"__material",L"Material (.material asset)",false,true,true);
+            behaviorFields_.back().materialPath=true;
+            if(resolveMaterial_ && !meshRenderer->Material().empty())
+            {
+                zengine::materials::Effective effective;
+                try { effective=resolveMaterial_(meshRenderer->Material()); } catch(...) { effective.ok=false; effective.error="Cannot load material."; }
+                using PT=zengine::shaders::ParamType;
+                for(const auto& parameter:effective.parameters)
+                {
+                    const int axes = parameter.type==PT::Float4?4 : parameter.type==PT::Float3?3 : parameter.type==PT::Float2?2 : parameter.type==PT::Texture2D?1 : 1;
+                    for(int a=0;a<axes;++a)
+                    {
+                        add(&behavior,parameter.name,Wide(parameter.name+(parameter.type==PT::Texture2D?" (texture)":"")),false,true,true);
+                        auto& e=behaviorFields_.back();
+                        e.materialParam=true; e.materialType=parameter.type;
+                        if(parameter.type!=PT::Texture2D && axes>1){e.axis=a;e.axisCount=axes;}
+                    }
+                }
+                if(!effective.ok && !effective.error.empty())
+                    add(&behavior,{},L"Material: "+Wide(effective.error),false,false,false,BehaviorField::Style::ScriptLabel);
+            }
+        }
         if(dynamic_cast<zengine::Camera*>(&behavior))
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"fov",L"Field of view (degrees)"},{"near",L"Near plane"},{"far",L"Far plane"}})add(&behavior,key,label,false,true,true);
         if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior)){
@@ -354,6 +378,23 @@ bool InspectorPanel::IsBehaviorCollapsed(const BehaviorField& entry) const
 std::wstring InspectorPanel::BehaviorValue(std::size_t index)
 {
     const auto& entry=behaviorFields_.at(index);
+    if (entry.materialPath)
+    {
+        auto* mr=dynamic_cast<zengine::MeshRenderer*>(entry.behavior);
+        return mr ? Wide(mr->Material()) : std::wstring{};
+    }
+    if (entry.materialParam)
+    {
+        auto* mr=dynamic_cast<zengine::MeshRenderer*>(entry.behavior);
+        if(!mr || !resolveMaterial_) return {};
+        zengine::materials::Effective effective;
+        try { effective=resolveMaterial_(mr->Material()); } catch(...) { return {}; }
+        const auto* value=effective.Find(entry.name);
+        if(!value) return {};
+        if(value->type==zengine::shaders::ParamType::Texture2D) return Wide(value->texture);
+        const int axis=entry.axis<0?0:entry.axis;
+        std::wostringstream out;out<<std::setprecision(9)<<value->numbers[static_cast<std::size_t>(axis)];return out.str();
+    }
     if (entry.uiControl)
     {
         auto* uiCtl=dynamic_cast<zengine::ui::UiControl*>(entry.behavior);
@@ -397,6 +438,38 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
 {
     if (updating_ || !editData_) return;
     auto& entry=behaviorFields_.at(index);
+    if (entry.materialPath)
+    {
+        if(auto* mr=dynamic_cast<zengine::MeshRenderer*>(entry.behavior))
+        { mr->SetMaterial(Utf8(ReadText(entry.field.window))); entry.field.valid=true; if(changed_)changed_(); RefreshBehaviors(); }
+        return;
+    }
+    if (entry.materialParam)
+    {
+        auto* mr=dynamic_cast<zengine::MeshRenderer*>(entry.behavior);
+        if(!mr || !setMaterialValue_ || !resolveMaterial_) return;
+        try
+        {
+            zengine::materials::Value value; value.name=entry.name; value.type=entry.materialType;
+            if(entry.materialType==zengine::shaders::ParamType::Texture2D)
+                value.texture=Utf8(ReadText(entry.field.window));
+            else
+            {
+                const int axes=entry.axisCount>0&&entry.axis>=0?entry.axisCount:1;
+                const auto current=resolveMaterial_(mr->Material()).Numbers(entry.name,{{0,0,0,0}});
+                value.numbers=current;
+                const int axis=entry.axis<0?0:entry.axis;
+                float parsed; if(!ParseNumber(ReadText(entry.field.window),parsed)) throw std::invalid_argument("bad number");
+                value.numbers[static_cast<std::size_t>(axis)]=parsed;
+                (void)axes;
+            }
+            setMaterialValue_(mr->Material(),value);
+            entry.field.valid=true; if(changed_)changed_();
+        }
+        catch(const std::exception&){ entry.field.valid=false; }
+        InvalidateRect(entry.field.window,nullptr,FALSE);
+        return;
+    }
     if (entry.uiControl)
     {
         auto* uiCtl=dynamic_cast<zengine::ui::UiControl*>(entry.behavior);

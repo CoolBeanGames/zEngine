@@ -55,7 +55,7 @@ target_include_directories(zEngineUi PUBLIC src)
 target_compile_definitions(zEngineUi PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(zEngineUi PUBLIC zEngineCore)
 
-add_library(zEngineScriptTools STATIC src/ScriptAssets.cpp src/ScriptEditor.cpp src/ScriptCompletion.cpp src/ShaderAssets.cpp)
+add_library(zEngineScriptTools STATIC src/ScriptAssets.cpp src/ScriptEditor.cpp src/ScriptCompletion.cpp src/ShaderAssets.cpp src/MaterialAssets.cpp)
 target_compile_features(zEngineScriptTools PUBLIC cxx_std_20)
 target_include_directories(zEngineScriptTools PUBLIC src)
 target_compile_definitions(zEngineScriptTools PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

@@ -18,6 +18,7 @@
 #include "ScriptHost.h"
 #include "Scene.h"
 #include "Project.h"
+#include "MaterialAssets.h"
 #include "Prefab.h"
 #include "input/InputMap.h"
 #include "ObjectPicker.h"
@@ -100,6 +101,8 @@ public:
     // ZE-64: HLSL material shader assets (.shader).
     std::filesystem::path CreateShaderAsset();
     void OpenShader(const std::filesystem::path& path);
+    // ZE-65: material instance assets (.material).
+    std::filesystem::path CreateMaterialAsset();
     bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);
     // Routes a completed object drag onto the Inspector (screen point + dragged object).
     // Same effect as releasing a scene-tree drag over the Inspector; used by tests.
@@ -296,6 +299,11 @@ private:
     zengine::GameObjectId selectedObject_ = 0;
     struct MeshBinding { std::string asset; MeshHandle mesh; };
     std::map<zengine::GameObjectId, MeshBinding> meshBindings_;
+    // ZE-65: resolved Material Instances, keyed by project-relative ".material" path.
+    mutable std::map<std::string, MaterialHandle> materialCache_;
+    MaterialHandle ResolveMaterial(const std::string& materialAsset) const;
+    zengine::materials::Effective ResolveMaterialEffective(const std::string& materialAsset) const;
+    void ApplyMaterialValue(const std::string& materialAsset, zengine::materials::Value value);
     std::map<std::filesystem::path, std::weak_ptr<const RenderMesh>> meshCache_;
     std::map<zengine::GameObjectId, std::uint64_t> meshRevisions_;
     int firstObject_ = 0;

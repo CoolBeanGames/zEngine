@@ -54,6 +54,7 @@ namespace
         case assetLibrary::Kind::Image: return L"Image";
         case assetLibrary::Kind::Model: return L"Model";
         case assetLibrary::Kind::Shader: return L"Material Shader";
+        case assetLibrary::Kind::Material: return L"Material";
         case assetLibrary::Kind::Folder: return L"Folder";
         default: return L"File";
         }
@@ -245,6 +246,12 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
         try{return PickSceneObject(referenceType,current,anchorScreen);}
         catch(const std::exception& error){status_=L"Cannot pick object: "+WideText(error.what());InvalidateRect(window_,&statusBar_,FALSE);return std::optional<zengine::GameObjectId>{};}
     });
+    inspectorPanel_->SetMaterialHandlers(
+        [this](const std::string& asset){ return ResolveMaterialEffective(asset); },
+        [this](const std::string& asset, zengine::materials::Value value){
+            try { ApplyMaterialValue(asset, std::move(value)); }
+            catch(const std::exception& error){ status_=L"Cannot save material: "+WideText(error.what()); InvalidateRect(window_,&statusBar_,FALSE); }
+        });
     // Explicit directories support embedding/legacy projects; normal startup uses the recent-project config.
     if (!projectDirectory.empty())
     {
@@ -483,7 +490,7 @@ ViewportFrame EditorShell::BuildSceneFrame() const
         if (mesh && mesh->Enabled() && !mesh->Asset().empty() && bound != meshBindings_.end() && bound->second.asset == mesh->Asset())
         {
             DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
-            frame.meshes.push_back({bound->second.mesh, object.GetTransform(),parent});
+            frame.meshes.push_back({bound->second.mesh, object.GetTransform(),parent, ResolveMaterial(mesh->Material())});
         }
     }
     if (const auto* object = SelectedGameObject(); object && CanEdit(object->Id(),true))
@@ -1166,7 +1173,7 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     inspectorPanel_->Bind(nullptr);
     ++sceneGeneration_;
     std::erase_if(assetJobs_,[](const AssetJob& job) { return job.loadMesh; });
-    meshBindings_.clear(); meshRevisions_.clear();
+    meshBindings_.clear(); meshRevisions_.clear(); materialCache_.clear();
     prefabLinks_.clear(); for (const auto& object:authored.objects) if (!object.prefab.empty()) {prefabLinks_[object.id]=object;if(auto* g=zengine::As3D(next.objects.Find(object.id)))prefabLinks_[object.id].transform=g->GetTransform();}
     prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects); scriptHost_.SetObjectStore(&objects_); ConfigureScriptOutput();
@@ -1256,6 +1263,58 @@ void EditorShell::OpenShader(const std::filesystem::path& path)
     const auto resolved = zengine::shaders::Resolve(assetsDirectory_, path);
     OpenInlineScript(resolved); // the inline editor detects the .shader extension and switches to HLSL mode
     SetViewTab(ViewTab::Script);
+}
+std::filesystem::path EditorShell::CreateMaterialAsset()
+{
+    RequireProject();
+    const auto path = zengine::materials::Create(AssetFolder());
+    RefreshAssets();
+    selectedAsset_ = static_cast<int>(std::find(assets_.begin(),assets_.end(),path)-assets_.begin());
+    const auto list=AssetListRectangle();const int visible=std::max(1,static_cast<int>(list.bottom-list.top)/84)*AssetColumns();firstAsset_=std::max(0,(selectedAsset_-visible+AssetColumns())/AssetColumns()*AssetColumns());
+    status_ = L"Created " + path.filename().wstring() + L" - assign it to a Model's Mesh Renderer, then tweak its values in the Inspector";
+    InvalidateRect(window_, nullptr, FALSE);
+    BeginAssetRename(path);
+    return path;
+}
+zengine::materials::Effective EditorShell::ResolveMaterialEffective(const std::string& materialAsset) const
+{
+    if (materialAsset.empty()) return {};
+    const auto file = zengine::materials::Resolve(assetsDirectory_, std::filesystem::u8path(materialAsset));
+    const auto doc = zengine::materials::Load(file);
+    return zengine::materials::Resolve(doc, [&](const std::string& shaderPath) {
+        return zengine::shaders::Load(zengine::shaders::Resolve(assetsDirectory_, std::filesystem::u8path(shaderPath)));
+    });
+}
+void EditorShell::ApplyMaterialValue(const std::string& materialAsset, zengine::materials::Value value)
+{
+    if (materialAsset.empty()) return;
+    const auto file = zengine::materials::Resolve(assetsDirectory_, std::filesystem::u8path(materialAsset));
+    auto doc = zengine::materials::Load(file);
+    const auto it = std::find_if(doc.values.begin(), doc.values.end(),
+        [&](const zengine::materials::Value& v) { return v.name == value.name; });
+    if (it != doc.values.end()) *it = std::move(value); else doc.values.push_back(std::move(value));
+    zengine::materials::Save(assetsDirectory_, file, doc);
+    materialCache_.erase(materialAsset);
+    InvalidateRect(window_, nullptr, FALSE);
+}
+MaterialHandle EditorShell::ResolveMaterial(const std::string& materialAsset) const
+{
+    if (materialAsset.empty() || !renderer_) return {};
+    if (const auto it = materialCache_.find(materialAsset); it != materialCache_.end()) return it->second;
+    MaterialHandle handle;
+    try
+    {
+        const auto effective = ResolveMaterialEffective(materialAsset);
+        const auto tint = effective.Numbers("tint", {{1, 1, 1, 1}});
+        TextureHandle albedo;
+        if (const auto texture = effective.Texture("albedo"); !texture.empty())
+            try { albedo = renderer_->UploadImage(assetLibrary::Resolve(assetsDirectory_, std::filesystem::u8path(texture))); }
+            catch (...) {}
+        handle = renderer_->UploadMaterial(albedo, Float4{tint[0], tint[1], tint[2], tint[3]});
+    }
+    catch (...) { handle = {}; }
+    materialCache_[materialAsset] = handle;
+    return handle;
 }
 bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::path& path)
 {
@@ -1654,6 +1713,7 @@ LRESULT EditorShell::HandleMessage(
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
         AppendMenuW(menu, MF_STRING, 3, L"Create Material Shader (.shader)");
+        AppendMenuW(menu, MF_STRING, 4, L"Create Material (.material)");
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
         AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),NewFolderCommand,L"New Folder...");
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0),NewSceneCommand,L"Create Scene (.zscene)");
@@ -1662,6 +1722,7 @@ LRESULT EditorShell::HandleMessage(
         DestroyMenu(menu);
         if (command == 1) CreateScriptAsset();
         if (command == 3) CreateShaderAsset();
+        if (command == 4) CreateMaterialAsset();
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
         if (command==NewSceneCommand) NewScene();
         if(command==NewFolderCommand)NewAssetFolderDialog();
