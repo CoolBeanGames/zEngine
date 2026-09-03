@@ -258,7 +258,7 @@ int main(int argc, char**)
             const auto matA = mt::Create(root), matB = mt::Create(root);
             Check(matA != matB && matA.extension() == ".material", "Unique .material creation failed");
             auto doc = mt::Load(matA);
-            Check(doc.shader.empty() && doc.values.size() == 2, "Material template should be the built-in Standard with tint + albedo");
+            Check(doc.shader.empty() && doc.values.size() == 4, "Material template should be the built-in Standard (tint, albedo, roughness, specular)");
 
             // Round-trip via encode/decode and via the disk save path.
             Check(mt::Decode(mt::Encode(doc)) == doc, "Material encode/decode round trip changed the document");

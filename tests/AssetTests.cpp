@@ -10,6 +10,7 @@
 #include "audio/AudioSource.h"
 #include "audio/AudioEffect.h"
 #include "core/Light.h"
+#include "core/Environment.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
 #include "ScriptAssets.h"
@@ -463,6 +464,29 @@ namespace
                     && std::abs(b.lightIntensity - 2.0f) < 0.001f && std::abs(b.lightRange - 12.0f) < 0.001f)
                     foundLight = true;
             Require(foundLight, "the Light did not serialize into the scene (v13)");
+
+            // ZE-75: an Environment behaviour adds fog to the frame + serializes (v14).
+            Require(!editor.BuildSceneFrame().environment.has_value(), "no Environment => no fog");
+            auto& env = lamp.AddBehavior<zengine::Environment>();
+            env.SetFog(zengine::Environment::FogMode::Linear);
+            env.SetFogColor({0.4f, 0.45f, 0.6f});
+            env.SetFogNear(2); env.SetFogFar(30);
+            env.SetVolumetric(true);
+            lightBehaviour.SetFogScatter(0.6f);
+            const auto fogFrame = editor.BuildSceneFrame();
+            Require(fogFrame.environment.has_value() && fogFrame.environment->fogMode == 1
+                    && std::abs(fogFrame.environment->fogFar - 30.0f) < 0.001f
+                    && fogFrame.environment->volumetric == 1
+                    && std::abs(fogFrame.lights[0].fogScatter - 0.6f) < 0.001f,
+                    "Environment / fogScatter did not reach the render frame");
+            const auto fogScenePath = editor.AssetsDirectory() / L"FogScene.zscene";
+            Require(editor.SaveScene(fogScenePath), "could not save the foggy scene");
+            const auto fogDoc = zengine::scenes::Decode(zengine::scenes::Load(fogScenePath));
+            bool foundEnv = false;
+            for (const auto& o : fogDoc.objects) for (const auto& b : o.behaviors)
+                if (b.kind == zengine::scenes::BehaviorData::Kind::Environment && b.envFogMode == 1) foundEnv = true;
+            Require(foundEnv, "the Environment did not serialize into the scene (v14)");
+
             if (capture) { for (int i = 0; i < 3; ++i) editor.Render(); CaptureWindow(window, L"lighting-qa.bmp"); }
         }
         CoUninitialize();

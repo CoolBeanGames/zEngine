@@ -4,6 +4,7 @@
 #include "audio/AudioSource.h"
 #include "audio/AudioEffect.h"
 #include "core/Light.h"
+#include "core/Environment.h"
 #include "physics/PhysicsBehavior.h"
 #include <windows.h>
 #include <cmath>
@@ -60,7 +61,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 14\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 15\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});
@@ -222,6 +223,26 @@ int main()
                   && std::abs(rl->Intensity()-2.5f)<0.001f && std::abs(rl->Range()-18.0f)<0.001f
                   && std::abs(rl->Color().x-0.9f)<0.001f && std::abs(rl->SpotOuter()-40.0f)<0.001f,
                   "Light props lost on restore");
+        }
+        // ZE-75: Environment (fog) + Light.fogScatter round-trip through scene v14.
+        {
+            ObjectStore s; ScriptHost h;
+            auto& air=s.Create("Air");
+            auto& env=air.AddBehavior<Environment>();
+            env.SetFog(Environment::FogMode::Exp2); env.SetFogColor({0.3f,0.35f,0.5f}); env.SetFogDensity(0.08f);
+            env.SetHeightBase(2); env.SetHeightFalloff(5); env.SetHeightStrength(1.5f);
+            env.SetVolumetric(true); env.SetVolumetricSteps(10);
+            auto& lamp=air.AddBehavior<Light>(); lamp.SetLightType(Light::Type::Spot); lamp.SetFogScatter(0.7f);
+            const auto enc=scenes::Encode(scenes::Capture(s,h));
+            Check(enc.find("environment ")!=std::string::npos,"Environment was not serialized");
+            auto copy=scenes::Instantiate(scenes::Decode(enc));
+            Check(scenes::Encode(scenes::Capture(copy.objects,copy.scripts))==enc,"Environment scene round trip changed authored data");
+            auto* re=copy.objects.Find(copy.objects.At(0).Id())->GetBehavior<Environment>();
+            auto* rlamp=copy.objects.Find(copy.objects.At(0).Id())->GetBehavior<Light>();
+            Check(re && re->Fog()==Environment::FogMode::Exp2 && re->Volumetric() && re->VolumetricSteps()==10
+                  && std::abs(re->FogDensity()-0.08f)<0.001f && std::abs(re->HeightStrength()-1.5f)<0.001f,
+                  "Environment props lost on restore");
+            Check(rlamp && std::abs(rlamp->FogScatter()-0.7f)<0.001f,"Light.fogScatter lost on restore");
         }
         // ZE-66: the new scroll / button / video / html controls round-trip too.
         {

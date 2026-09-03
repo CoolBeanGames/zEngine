@@ -848,6 +848,8 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         ls.methods.emplace("set_color", std::move(setColor));
         Function setIntensity; setIntensity.result="void"; setIntensity.params={"float"};
         ls.methods.emplace("set_intensity", std::move(setIntensity));
+        Function setScatter; setScatter.result="void"; setScatter.params={"float"};
+        ls.methods.emplace("set_fog_scatter", std::move(setScatter));
         program.classes.emplace("lightSource", std::move(ls));
     }
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
@@ -1369,12 +1371,12 @@ struct Runtime::Impl {
             if(audioAreaCallback)audioAreaCallback(ref,name,static_cast<float>(a),static_cast<float>(b));
             return {};
         }
-        if((name=="enable"||name=="disable"||name=="set_color"||name=="set_intensity") && program->Assignable("lightSource",object.type->name)
+        if((name=="enable"||name=="disable"||name=="set_color"||name=="set_intensity"||name=="set_fog_scatter") && program->Assignable("lightSource",object.type->name)
            && program->Method(object.type->name,name)==&program->classes.at("lightSource").methods.at(name)) {
             Tick(t);
             double a=0,b=0,c=0;
             if(name=="set_color"){ if(args.size()!=3)Error(t,"set_color takes r, g and b"); a=Number(Coerce(args[0],"float",t)); b=Number(Coerce(args[1],"float",t)); c=Number(Coerce(args[2],"float",t)); }
-            else if(name=="set_intensity"){ if(args.size()!=1)Error(t,"set_intensity takes one number"); a=Number(Coerce(args[0],"float",t)); }
+            else if(name=="set_intensity"||name=="set_fog_scatter"){ if(args.size()!=1)Error(t,name+" takes one number"); a=Number(Coerce(args[0],"float",t)); }
             else if(!args.empty())Error(t,"lightSource "+name+" takes no arguments");
             if(lightCallback)lightCallback(ref,name,static_cast<float>(a),static_cast<float>(b),static_cast<float>(c));
             return {};

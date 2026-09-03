@@ -298,6 +298,7 @@ namespace
                 else if(method=="disable")light->SetEnabled(false);
                 else if(method=="set_color")light->SetColor({a,b,c});
                 else if(method=="set_intensity")light->SetIntensity(a);
+                else if(method=="set_fog_scatter")light->SetFogScatter(a);
             });
             runtime.SetSceneCallbacks(
                 sceneLoader ? std::function<void(std::string_view)>([sceneLoader](std::string_view scene){sceneLoader(scene);}) : std::function<void(std::string_view)>{},

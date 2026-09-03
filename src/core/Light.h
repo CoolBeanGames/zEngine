@@ -46,6 +46,10 @@ namespace zengine
         bool Static() const noexcept { return static_; }
         void SetStatic(bool value) noexcept { static_ = value; }
 
+        // ZE-75: how strongly this light scatters into volumetric fog (0 = not at all).
+        float FogScatter() const noexcept { return fogScatter_; }
+        void SetFogScatter(float value) noexcept { fogScatter_ = std::clamp(value, 0.0f, 1.0f); }
+
     private:
         Type type_ = Type::Directional;
         Vec3 color_{1, 1, 1};
@@ -55,6 +59,7 @@ namespace zengine
         float spotInner_ = 20.0f;
         float spotOuter_ = 35.0f;
         bool static_ = false;
+        float fogScatter_ = 0.0f;
     };
 
     inline const char* LightTypeName(Light::Type t)

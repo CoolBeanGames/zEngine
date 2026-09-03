@@ -43,6 +43,8 @@ struct RenderMaterial
     TextureHandle albedo;             // null -> fall back to the model's imported texture
     Float4 tint{1, 1, 1, 1};
     bool lit = true;                  // ZE-74: false -> mesh ignores scene lights
+    float roughness = 0.5f;           // ZE-75
+    float specular = 0.0f;
 };
 
 namespace
@@ -94,6 +96,11 @@ struct Renderer::SceneConstants
     XMFLOAT4 materialTint{1, 1, 1, 1}; // ZE-65: material instance tint (albedo multiplier)
     XMFLOAT4 ambient{0.10f, 0.10f, 0.12f, 0.0f}; // ZE-74: rgb ambient; w = 1 apply lights, 0 = full bright
     XMFLOAT4 lightParams{0, 0, 0, 0};  // x = active light count
+    XMFLOAT4 cameraPos{0, 0, 0, 0};                // ZE-75
+    XMFLOAT4 fogColorMode{0.55f, 0.60f, 0.68f, 0}; // rgb + mode
+    XMFLOAT4 fogParams{8, 60, 0.03f, 6};           // near, far, density, volumetric steps
+    XMFLOAT4 heightFog{0, 6, 0, 0};                // base, falloff, strength, volumetric on
+    XMFLOAT4 materialSpec{0.5f, 0, 0, 0};          // roughness, specular
 };
 struct Renderer::LightConstants
 {
@@ -524,12 +531,14 @@ std::vector<std::uint8_t> DecodeImageFileRGBA(const std::wstring& file, unsigned
     return pixels;
 }
 
-MaterialHandle Renderer::UploadMaterial(TextureHandle albedo, Float4 tint, bool lit)
+MaterialHandle Renderer::UploadMaterial(TextureHandle albedo, Float4 tint, bool lit, float roughness, float specular)
 {
     auto material = std::make_shared<RenderMaterial>();
     material->albedo = std::move(albedo);
     material->tint = tint;
     material->lit = lit;
+    material->roughness = roughness;
+    material->specular = specular;
     return material;
 }
 
@@ -780,7 +789,7 @@ void Renderer::Render(const ViewportFrame& frame)
             lc.lights[i].posType = {l.position.x, l.position.y, l.position.z, static_cast<float>(l.type)};
             lc.lights[i].dirRange = {l.direction.x * inv, l.direction.y * inv, l.direction.z * inv, std::max(0.01f, l.range)};
             lc.lights[i].colorIntensity = {l.color.x * l.intensity, l.color.y * l.intensity, l.color.z * l.intensity, 0};
-            lc.lights[i].spot = {l.spotCosInner, l.spotCosOuter, std::max(0.1f, l.falloff), 0};
+            lc.lights[i].spot = {l.spotCosInner, l.spotCosOuter, std::max(0.1f, l.falloff), l.fogScatter};
         }
         D3D11_MAPPED_SUBRESOURCE m{};
         ThrowIfFailed(context_->Map(lightConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m), "Map light constants");
@@ -788,7 +797,12 @@ void Renderer::Render(const ViewportFrame& frame)
         context_->Unmap(lightConstantBuffer_.Get(), 0);
     }
 
-    const auto setConstants = [&](const XMMATRIX& matrix, bool lit, Float4 tint = {1, 1, 1, 1}) {
+    // ZE-75: world camera position + the scene's Environment (fog) for the pixel shader.
+    XMFLOAT3 cameraWorld{0, 0, 0};
+    XMStoreFloat3(&cameraWorld, XMMatrixInverse(nullptr, view).r[3]);
+    const EnvironmentData env = frame.environment.value_or(EnvironmentData{});
+
+    const auto setConstants = [&](const XMMATRIX& matrix, bool lit, Float4 tint = {1, 1, 1, 1}, Float2 spec = {0.5f, 0.0f}) {
         SceneConstants constants{};
         XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(matrix * view * projection));
         XMStoreFloat4x4(&constants.world, XMMatrixTranspose(matrix));
@@ -799,6 +813,11 @@ void Renderer::Render(const ViewportFrame& frame)
         constants.materialTint = XMFLOAT4{tint.x, tint.y, tint.z, tint.w};
         constants.ambient = XMFLOAT4{0.10f, 0.10f, 0.12f, (lit && lightCount > 0) ? 1.0f : 0.0f};
         constants.lightParams = XMFLOAT4{static_cast<float>((lit && lightCount > 0) ? lightCount : 0), 0, 0, 0};
+        constants.cameraPos = XMFLOAT4{cameraWorld.x, cameraWorld.y, cameraWorld.z, 0};
+        constants.fogColorMode = XMFLOAT4{env.fogColor.x, env.fogColor.y, env.fogColor.z, static_cast<float>(env.fogMode)};
+        constants.fogParams = XMFLOAT4{env.fogNear, env.fogFar, env.fogDensity, static_cast<float>(env.volumetricSteps)};
+        constants.heightFog = XMFLOAT4{env.heightBase, env.heightFalloff, env.heightStrength, env.volumetric ? 1.0f : 0.0f};
+        constants.materialSpec = XMFLOAT4{spec.x, spec.y, 0, 0};
         D3D11_MAPPED_SUBRESOURCE mapped{};
         ThrowIfFailed(context_->Map(sceneConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map scene constants");
         *static_cast<SceneConstants*>(mapped.pData) = constants;
@@ -822,6 +841,7 @@ void Renderer::Render(const ViewportFrame& frame)
     context_->VSSetConstantBuffers(1, 1, lightConstantBuffer_.GetAddressOf()); // ZE-74 lights
     context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
     context_->PSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf()); // ZE-65: material tint read in PSMain
+    context_->PSSetConstantBuffers(1, 1, lightConstantBuffer_.GetAddressOf()); // ZE-75: volumetric fog reads the lights
     context_->PSSetSamplers(0, 1, albedoSampler_.GetAddressOf());
     const auto drawLines = [&](ID3D11Buffer* buffer, UINT count, const XMMATRIX& matrix) {
         setConstants(matrix, false); // editor guides are always unlit
@@ -840,7 +860,8 @@ void Renderer::Render(const ViewportFrame& frame)
         const RenderMaterial* material = draw.material.get();
         const Float4 tint = material ? material->tint : Float4{1, 1, 1, 1};
         const bool meshLit = draw.lit && (!material || material->lit);
-        setConstants(TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity()), meshLit, tint);
+        const Float2 spec = material ? Float2{material->roughness, material->specular} : Float2{0.5f, 0.0f};
+        setConstants(TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity()), meshLit, tint, spec);
         context_->IASetVertexBuffers(0, 1, mesh.vertices.GetAddressOf(), &stride, &offset);
         context_->IASetIndexBuffer(mesh.indices.Get(), mesh.indexFormat, 0);
         for (const auto& part : mesh.parts)

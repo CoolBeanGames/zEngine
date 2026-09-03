@@ -29,7 +29,7 @@ public:
     static constexpr int AddBehaviorButton = 1121, MeshEnabled = 1122, ChooseMeshButton = 1123,
         CubeMeshButton = 1124, ClearMeshButton = 1125, AddMeshCommand = 1126, AddScriptCommand = 1127,
         AddColliderCommand=1128,AddRigidBodyCommand=1129,AddKinematicBodyCommand=1130,AddStaticBodyCommand=1131,AddAreaCommand=1132,AddCameraCommand=1134,
-        AddAudioSourceCommand=1135,AddAudioEffectCommand=1136,AddLightCommand=1137;
+        AddAudioSourceCommand=1135,AddAudioEffectCommand=1136,AddLightCommand=1137,AddEnvironmentCommand=1138;
     static constexpr int RemoveBehaviorCommand = 1133;
     enum class MeshAction { Add, Choose, Cube, Clear };
     ~InspectorPanel();

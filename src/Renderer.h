@@ -38,7 +38,7 @@ public:
     // ZE-65: decode an image file (PNG/JPEG/BMP/TIFF/GIF) to a sampleable texture,
     // and bundle a resolved Material Instance (albedo texture + tint).
     TextureHandle UploadImage(const std::filesystem::path& file);
-    MaterialHandle UploadMaterial(TextureHandle albedo, Float4 tint, bool lit = true);
+    MaterialHandle UploadMaterial(TextureHandle albedo, Float4 tint, bool lit = true, float roughness = 0.5f, float specular = 0.0f);
     std::size_t LastSpriteCount() const noexcept { return lastSpriteCount_; }
     // Text extent in screen pixels, using the shared UI font atlas (built on first use).
     zengine::Vec2 MeasureText(std::string_view text, float pixelHeight);

@@ -216,8 +216,10 @@ namespace zengine::materials
     const std::vector<Value>& StandardParameters()
     {
         static const std::vector<Value> params = {
-            Value{"tint",   shaders::ParamType::Float4, {{1, 1, 1, 1}}, ""},
-            Value{"albedo", shaders::ParamType::Texture2D, {{0, 0, 0, 0}}, ""},
+            Value{"tint",      shaders::ParamType::Float4, {{1, 1, 1, 1}}, ""},
+            Value{"albedo",    shaders::ParamType::Texture2D, {{0, 0, 0, 0}}, ""},
+            Value{"roughness", shaders::ParamType::Float, {{0.5f, 0, 0, 0}}, ""}, // ZE-75
+            Value{"specular",  shaders::ParamType::Float, {{0.0f, 0, 0, 0}}, ""},
         };
         return params;
     }

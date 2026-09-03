@@ -36,6 +36,16 @@ struct LightData
     float falloff = 2;
     float spotCosInner = 0.94f;
     float spotCosOuter = 0.82f;
+    float fogScatter = 0; // ZE-75
+};
+// ZE-75: scene atmosphere. fogMode 0 off / 1 linear / 2 exp2.
+struct EnvironmentData
+{
+    int fogMode = 0;
+    Float3 fogColor{0.55f, 0.60f, 0.68f};
+    float fogNear = 8, fogFar = 60, fogDensity = 0.03f;
+    float heightBase = 0, heightFalloff = 6, heightStrength = 0;
+    int volumetric = 0, volumetricSteps = 6;
 };
 struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; bool audioZone=false; };
 // ZE-111: audible range of a 3D AudioSource - inner (full volume) + outer (silent)
@@ -58,6 +68,7 @@ struct ViewportFrame
 {
     std::vector<MeshDraw> meshes;
     std::vector<LightData> lights; // ZE-74: empty => the scene renders unlit
+    std::optional<EnvironmentData> environment; // ZE-75: fog / atmosphere
     std::vector<ColliderDraw> colliders;
     std::vector<AudioRange> audioRanges;
     std::vector<LightGizmo> lightGizmos;

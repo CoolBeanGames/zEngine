@@ -6,6 +6,7 @@
 #include "RenderScene.h"
 #include "RenderTransform.h"
 #include "core/Light.h"
+#include "core/Environment.h"
 
 #include <cmath>
 
@@ -29,5 +30,22 @@ inline LightData MakeLight(const zengine::Light& light, const zengine::Transform
     DirectX::XMStoreFloat3(&fwd, DirectX::XMVector3Normalize(
         DirectX::XMVector3TransformNormal(DirectX::XMVectorSet(0, 0, 1, 0), world)));
     d.direction = {fwd.x, fwd.y, fwd.z};
+    d.fogScatter = light.FogScatter();
+    return d;
+}
+
+inline EnvironmentData MakeEnvironment(const zengine::Environment& e)
+{
+    EnvironmentData d;
+    d.fogMode = static_cast<int>(e.Fog());
+    d.fogColor = {e.FogColor().x, e.FogColor().y, e.FogColor().z};
+    d.fogNear = e.FogNear();
+    d.fogFar = e.FogFar();
+    d.fogDensity = e.FogDensity();
+    d.heightBase = e.HeightBase();
+    d.heightFalloff = e.HeightFalloff();
+    d.heightStrength = e.HeightStrength();
+    d.volumetric = e.Volumetric() ? 1 : 0;
+    d.volumetricSteps = e.VolumetricSteps();
     return d;
 }

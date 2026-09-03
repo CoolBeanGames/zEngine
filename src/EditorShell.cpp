@@ -17,6 +17,7 @@
 #include "core/MeshRenderer.h"
 #include "core/Camera.h"
 #include "core/Light.h"
+#include "core/Environment.h"
 #include "SceneLights.h"
 #include "ui/UiSerialize.h"
 #include "ui/VideoClip.h"
@@ -554,6 +555,8 @@ ViewportFrame EditorShell::BuildSceneFrame() const
             DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
             frame.meshes.push_back({bound->second.mesh, object.GetTransform(),parent, ResolveMaterial(mesh->Material())});
         }
+        if (const auto* env = object.GetBehavior<zengine::Environment>(); env && env->Enabled() && !frame.environment)
+            frame.environment = MakeEnvironment(*env);
         if (const auto* light = object.GetBehavior<zengine::Light>(); light && light->Enabled())
         {
             const LightData ld = MakeLight(*light, object.GetTransform(), ParentMatrix(objects_, object));
@@ -1488,7 +1491,8 @@ MaterialHandle EditorShell::ResolveMaterial(const std::string& materialAsset) co
         if (const auto texture = effective.Texture("albedo"); !texture.empty())
             try { albedo = renderer_->UploadImage(assetLibrary::Resolve(assetsDirectory_, std::filesystem::u8path(texture))); }
             catch (...) {}
-        handle = renderer_->UploadMaterial(albedo, Float4{tint[0], tint[1], tint[2], tint[3]}, effective.lit);
+        handle = renderer_->UploadMaterial(albedo, Float4{tint[0], tint[1], tint[2], tint[3]}, effective.lit,
+                                           effective.Numbers("roughness", {{0.5f,0,0,0}})[0], effective.Numbers("specular", {{0,0,0,0}})[0]);
     }
     catch (...) { handle = {}; }
     materialCache_[materialAsset] = handle;
