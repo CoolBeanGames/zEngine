@@ -837,6 +837,10 @@ void InspectorPanel::Layout()
             if (collapsed) { y+=rowHeight; continue; }
             if(entry.axis>=0) {const int cell=std::max(30,(width-36)/entry.axisCount);place(entry.field.window,12+entry.axis*(cell+6),y+40,cell,24);}
             else if(entry.arrayIndex>=0) place(entry.field.window,12,y+21,std::max(30,width-52),24);
+            // A COMBOBOX's height argument is the height of the DROPPED-DOWN control,
+            // so it must be tall enough to show the list; the closed combo still
+            // paints at one row and does not eat clicks below it.
+            else if(entry.combo) place(entry.field.window,12,y+21,std::max(30,width-24),220);
             else place(entry.field.window,12,y+21,std::max(30,width-24),entry.multiline?84:24);
         }
         y+=rowHeight;

@@ -1076,6 +1076,10 @@ void UiEditorTests(bool capture)
             Require(centre>=0,"anchor combo is missing 'center'");
             SendMessageW(anchorField,CB_SETCURSEL,centre,0); commit(anchorField,CBN_SELCHANGE);
             Require(pb->GetAnchor()==zengine::ui::Anchor::Center,"Inspector combo did not set the anchor");
+            // ZE-101: the combo must have room for its drop-down list (the dropped
+            // control rect is far taller than one closed row).
+            { RECT cb{}; SendMessageW(anchorField,CB_GETDROPPEDCONTROLRECT,0,reinterpret_cast<LPARAM>(&cb));
+              Require((cb.bottom-cb.top)>100,"anchor combo has no room for its drop-down list"); }
 
             // 2D transform: rotation occupies the Z slot; the unused axes are disabled.
             const HWND rotation=GetDlgItem(inspector,InspectorPanel::FirstTransformField+5); // component 1 (Rotation), Z slot
