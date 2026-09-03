@@ -1071,6 +1071,16 @@ void EditorShell::FinishAssetDrag(POINT point)
         return;
     }
     if (zengine::scenes::IsScene(path)) { status_=L"Double-click a scene asset to open it."; InvalidateRect(window_,&statusBar_,FALSE); return; }
+    if (zengine::materials::IsMaterial(path))
+    {
+        const auto relative=std::filesystem::relative(path,assetsDirectory_).generic_u8string();
+        const std::string asset(reinterpret_cast<const char*>(relative.data()),relative.size());
+        // A scene-tree model row, or the selected object when dropped on the Inspector.
+        if (!AssignMaterialToObject(ScriptDropTarget(point),asset))
+            status_=L"Drop a material onto a model's scene-tree row (or select the model and drop on its Inspector).";
+        InvalidateRect(window_,nullptr,FALSE);
+        return;
+    }
     {
         const auto kind=assetLibrary::Type(path);
         if(kind==assetLibrary::Kind::Image || path.extension()==L".zvid")
@@ -1347,6 +1357,19 @@ HWND EditorShell::OpenMaterialEditor(const std::filesystem::path& path)
 {
     try { OpenMaterial(path); } catch (const std::exception&) { return nullptr; }
     return materialEditor_ ? materialEditor_->Window() : nullptr;
+}
+bool EditorShell::AssignMaterialToObject(zengine::GameObjectId id, const std::string& materialAsset)
+{
+    if (Playing()) return false;
+    auto* object = id ? objects_.Find(id) : nullptr;
+    auto* mesh = object ? object->GetBehavior<zengine::MeshRenderer>() : nullptr;
+    if (!mesh) return false;
+    mesh->SetMaterial(materialAsset);
+    materialCache_.erase(materialAsset);
+    SelectGameObject(id);
+    if (sceneOpen_) { sceneDirty_ = true; UpdateSceneTitle(); }
+    status_ = L"Assigned material to " + WideText(object->Name());
+    return true;
 }
 std::filesystem::path EditorShell::BuildVideoClipFromImages()
 {

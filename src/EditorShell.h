@@ -107,6 +107,10 @@ public:
     void OpenMaterial(const std::filesystem::path& path);
     // Test seam: open the material editor and return its window (nullptr on failure).
     HWND OpenMaterialEditor(const std::filesystem::path& path);
+    // ZE-103: assign a .material (project-relative path) to an object's Mesh
+    // Renderer; the drop of a .material from the library routes here. False if the
+    // object has no Mesh Renderer or Play is running.
+    bool AssignMaterialToObject(zengine::GameObjectId id, const std::string& materialAsset);
     // ZE-65: material instance assets (.material).
     std::filesystem::path CreateMaterialAsset();
     // ZE-97: encode the images in a folder (sorted by name) into a .zvid clip.

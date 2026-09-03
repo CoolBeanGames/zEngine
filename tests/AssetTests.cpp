@@ -319,6 +319,14 @@ namespace
                 for (const auto& v : editedDoc.values) if (v.name == "tint") editedTint = &v;
                 Require(editedTint && std::abs(editedTint->numbers[0] - 0.25f) < 0.001f,
                         "Material editor did not save the edited value to the .material file");
+
+                // ZE-103: the .material drop path assigns to a model's Mesh Renderer.
+                Require(editor.AssignMaterialToObject(cubeId, relative),
+                        "Dropping a .material onto a model did not assign it");
+                Require(editor.GameObjects().Find(cubeId)->GetBehavior<zengine::MeshRenderer>()->Material() == relative,
+                        "Material drop set the wrong path on the Mesh Renderer");
+                Require(!editor.AssignMaterialToObject(zengine::GameObjectId{999999}, relative),
+                        "Material drop onto a non-existent object should be rejected");
             }
             auto& first = editor.CreateEmptyGameObject();
             const auto inspector = FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
