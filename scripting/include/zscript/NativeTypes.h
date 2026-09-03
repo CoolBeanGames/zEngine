@@ -58,6 +58,7 @@ inline const std::vector<NativeType>& NativeTypes() {
         {"Camera",         "Behavior",    "camera",         true,  false, true },
         {"Timer",          "gameObject",  "",               false, false, true },
         {"audioPlayer",    "gameObject",  "",               false, false, true },
+        {"audioArea",      "gameObject",  "",               false, false, true },
         {"prefab",         "",            "",               false, false, true },
         {"InputService",   "",            "",               false, false, true },
         {"InputAction",    "",            "",               false, false, true },

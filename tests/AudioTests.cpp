@@ -1,5 +1,7 @@
 #include "audio/AudioClip.h"
 #include "audio/AudioSystem.h"
+#include "audio/AudioEffect.h"
+#include "physics/PhysicsBehavior.h"
 #include "core/GameObject.h"
 
 #include <windows.h>
@@ -162,7 +164,54 @@ int main()
             Check(audio.Started().empty() && audio.Looped().empty(), "StopAll left a voice running");
         }
 
-        std::cout << "PASS: decode (wav), distance attenuation, AudioSystem start/finish/restart, looping, StopAll\n";
+        // ----- ZE-109: reverb / effect zones on an Area -----
+        {
+            TempDir dir;
+            { std::ofstream(dir.path / "amb.wav", std::ios::binary) << MakeWav(8000, 8000); } // 1s
+
+            ObjectStore store;
+            // A 10x10x10 audio-effect area centred at the origin.
+            auto& zone = store.Create("Cave");
+            auto& col = zone.AddBehavior<zengine::physics::Collider>();
+            col.SetShape(zengine::physics::ColliderShape::Box);
+            col.SetSize({10, 10, 10});
+            zone.AddBehavior<zengine::physics::Area>();
+            auto& fx = zone.AddBehavior<AudioEffect>();
+            fx.SetWetMix(0.8f); fx.SetBlendDistance(2.0f);
+
+            auto& speaker = store.Create("Speaker");
+            auto& src = speaker.AddBehavior<AudioSource>();
+            src.SetClip("amb.wav"); src.SetSpatial(true); src.SetAutoplay(true); src.SetLoop(true);
+            speaker.GetTransform().SetPosition({0, 0, 0}); // deep inside
+
+            AudioSystem audio{false};
+            audio.SetClipLoader([&](const std::string& p) { return LoadFile(dir.path / p); });
+
+            audio.SetListener({0, 0, 0}); // listener inside too
+            audio.Update(store, 1.0f / 60);
+            Check(audio.ActiveEffectArea() == zone.Id(), "listener inside the zone did not activate its effect");
+            Check(Near(audio.ReverbSendOf(speaker.Id()), 0.8f, 0.01), "emitter deep inside should get the full wet mix");
+
+            // Emitter near the boundary (x = 4, box half-extent 5, blend band 2) -> ~half wet.
+            speaker.GetTransform().SetPosition({4, 0, 0});
+            audio.Update(store, 1.0f / 60);
+            Check(audio.ReverbSendOf(speaker.Id()) > 0.1f && audio.ReverbSendOf(speaker.Id()) < 0.75f,
+                  "emitter near the boundary should get a blended wet send");
+
+            // Listener leaves the zone -> no effect, everything dry.
+            audio.SetListener({20, 0, 0});
+            audio.Update(store, 1.0f / 60);
+            Check(audio.ActiveEffectArea() == 0 && audio.ReverbSendOf(speaker.Id()) == 0.0f,
+                  "leaving the zone did not return the audio to dry");
+
+            // A disabled effect is ignored.
+            audio.SetListener({0, 0, 0});
+            fx.SetEnabled(false);
+            audio.Update(store, 1.0f / 60);
+            Check(audio.ActiveEffectArea() == 0, "a disabled AudioEffect still routed audio");
+        }
+
+        std::cout << "PASS: decode (wav), distance attenuation, AudioSystem start/finish/restart, looping, StopAll, reverb zones\n";
         return 0;
     }
     catch (const std::exception& e)

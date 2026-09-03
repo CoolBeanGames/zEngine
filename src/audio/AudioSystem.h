@@ -3,6 +3,7 @@
 #include "audio/AudioClip.h"
 #include "audio/AudioEngine.h"
 #include "audio/AudioSource.h"
+#include "audio/AudioEffect.h"
 #include "core/GameObject.h"
 
 #include <functional>
@@ -41,6 +42,12 @@ namespace zengine::audio
         // Stop every voice and forget autoplay state (scene change / leaving Play).
         void StopAll();
 
+        // ZE-109 introspection (for tests / the editor). The audio-effect Area the
+        // listener is currently inside (0 = none), and the wet reverb send last
+        // computed for a given source's voice (0 = dry).
+        GameObjectId ActiveEffectArea() const noexcept { return activeEffectArea_; }
+        float ReverbSendOf(GameObjectId source) const;
+
     private:
         struct Playing
         {
@@ -61,6 +68,8 @@ namespace zengine::audio
         Vec3 listener_{};
         bool device_ = true;
         VoiceId nextLocalId_ = 1;
+        GameObjectId activeEffectArea_ = 0;
+        std::map<GameObjectId, float> reverbSends_;
         std::vector<GameObjectId> started_, looped_, finished_;
     };
 }

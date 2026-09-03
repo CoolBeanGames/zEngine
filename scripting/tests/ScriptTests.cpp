@@ -528,6 +528,22 @@ void AudioPlayerClass() {
     runtime.Emit({music, "looped"}, {});
     runtime.Emit({music, "finished"}, {});
     Check(Int(runtime.Call(music, "counts")) == 121, "audioPlayer signals did not reach their handlers");
+
+    // ZE-109: a script on an Area with an AudioEffect can toggle it and retune the reverb.
+    int enables = 0, disables = 0; float lastDecay = 0, lastWet = 0;
+    auto areaProgram = Compile(R"(class Cave : audioArea {
+        func start(){ set_reverb(4.0, 0.9); disable(); enable(); }
+    })");
+    Runtime areaRuntime(areaProgram);
+    areaRuntime.SetAudioAreaCallback([&](ObjectRef, std::string_view m, float a, float b) {
+        if (m == "enable") enables += 1;
+        else if (m == "disable") disables += 1;
+        else { lastDecay = a; lastWet = b; }
+    });
+    const auto cave = areaRuntime.Create("Cave");
+    areaRuntime.Start(cave);
+    Check(enables == 1 && disables == 1 && lastDecay == 4.0f && std::fabs(lastWet - 0.9f) < 1e-4f,
+          "audioArea methods did not route to the host");
 }
 void GetBehavior() {
     auto p=Compile(R"(class Player : rigidbody {

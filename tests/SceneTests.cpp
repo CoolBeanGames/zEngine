@@ -2,6 +2,8 @@
 #include "core/MeshRenderer.h"
 #include "ui/UiControl.h"
 #include "audio/AudioSource.h"
+#include "audio/AudioEffect.h"
+#include "physics/PhysicsBehavior.h"
 #include <windows.h>
 #include <cmath>
 #include <fstream>
@@ -57,7 +59,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 12\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 13\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});
@@ -186,6 +188,22 @@ int main()
                   && std::abs(rs->Volume()-0.6f)<0.001f && std::abs(rs->Pitch()-1.5f)<0.001f
                   && rs->AttenuationModel()==audio::Attenuation::Inverse && rs->MaxDistance()==40.0f,
                   "AudioSource props lost on restore");
+        }
+        // ZE-109: an AudioEffect on an Area round-trips through scene v12.
+        {
+            ObjectStore s; ScriptHost h;
+            auto& zone=s.Create("Cave");
+            zone.AddBehavior<physics::Collider>().SetSize({8,4,8});
+            zone.AddBehavior<physics::Area>();
+            auto& fx=zone.AddBehavior<audio::AudioEffect>();
+            fx.SetDecay(3.2f); fx.SetWetMix(0.75f); fx.SetBlendDistance(1.5f);
+            const auto enc=scenes::Encode(scenes::Capture(s,h));
+            Check(enc.find("audio_effect ")!=std::string::npos,"AudioEffect was not serialized");
+            auto copy=scenes::Instantiate(scenes::Decode(enc));
+            Check(scenes::Encode(scenes::Capture(copy.objects,copy.scripts))==enc,"AudioEffect scene round trip changed authored data");
+            auto* rfx=copy.objects.Find(copy.objects.At(0).Id())->GetBehavior<audio::AudioEffect>();
+            Check(rfx && std::abs(rfx->Decay()-3.2f)<0.001f && std::abs(rfx->WetMix()-0.75f)<0.001f && std::abs(rfx->BlendDistance()-1.5f)<0.001f,
+                  "AudioEffect props lost on restore");
         }
         // ZE-66: the new scroll / button / video / html controls round-trip too.
         {

@@ -1,7 +1,9 @@
 #include "audio/AudioSystem.h"
+#include "physics/PhysicsBehavior.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace zengine::audio
 {
@@ -11,6 +13,43 @@ namespace zengine::audio
         {
             const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
             return std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+
+    const char* EffectKindName(EffectKind) { return "reverb"; }
+    bool ParseEffectKind(std::string_view name, EffectKind& out)
+    {
+        if (name == "reverb") { out = EffectKind::Reverb; return true; }
+        return false;
+    }
+
+    namespace
+    {
+        // Penetration depth of `p` inside the (axis-aligned) collider on `area`:
+        // > 0 inside (distance to the nearest face), <= 0 outside. Rotation of the
+        // area object is ignored - audio zones are treated as AABBs / spheres.
+        float AreaDepth(Vec3 p, const ObjectCore& area)
+        {
+            const auto* col = area.GetBehavior<physics::Collider>();
+            const auto* g = As3D(&area);
+            if (!col || !g) return -1e9f;
+            const auto t = g->GetTransform();
+            const Vec3 s = t.Scale();
+            const Vec3 centre{
+                t.Position().x + col->Offset().x * s.x,
+                t.Position().y + col->Offset().y * s.y,
+                t.Position().z + col->Offset().z * s.z};
+            const Vec3 half{
+                std::abs(col->Size().x * s.x) * 0.5f,
+                std::abs(col->Size().y * s.y) * 0.5f,
+                std::abs(col->Size().z * s.z) * 0.5f};
+            const Vec3 d{p.x - centre.x, p.y - centre.y, p.z - centre.z};
+            if (col->Shape() == physics::ColliderShape::Sphere)
+            {
+                const float radius = std::max({half.x, half.y, half.z});
+                return radius - std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+            }
+            return std::min({half.x - std::abs(d.x), half.y - std::abs(d.y), half.z - std::abs(d.z)});
         }
     }
 
@@ -77,6 +116,9 @@ namespace zengine::audio
         playing_.clear();
         autoplayed_.clear();
         started_.clear(); looped_.clear(); finished_.clear();
+        reverbSends_.clear();
+        activeEffectArea_ = 0;
+        engine_.SetReverbEnabled(false);
     }
 
     void AudioSystem::Update(ObjectStore& objects, float dt)
@@ -163,6 +205,55 @@ namespace zengine::audio
             }
         }
 
+        // ZE-109: reverb / effect zones. The audio-effect Area the listener is
+        // deepest inside drives one reverb submix; each 3D voice's wet send fades
+        // with its own emitter's depth in that same area.
+        reverbSends_.clear();
+        activeEffectArea_ = 0;
+        const ObjectCore* active = nullptr;
+        float bestDepth = 0;
+        for (std::size_t i = 0; i < objects.Size(); ++i)
+        {
+            auto& obj = objects.At(i);
+            auto* fx = obj.GetBehavior<AudioEffect>();
+            if (!fx || !fx->Enabled() || !obj.GetBehavior<physics::Collider>()) continue;
+            const float depth = AreaDepth(listener_, obj);
+            if (depth > 0 && depth > bestDepth) { bestDepth = depth; active = &obj; activeEffectArea_ = obj.Id(); }
+        }
+        const AudioEffect* activeFx = active ? active->GetBehavior<AudioEffect>() : nullptr;
+        engine_.SetReverbEnabled(activeFx != nullptr);
+        if (activeFx) engine_.SetReverbParams(activeFx->Decay(), activeFx->WetMix());
+
+        for (auto& [id, p] : playing_)
+        {
+            float wet = 0;
+            if (activeFx)
+            {
+                auto* obj = objects.Find(id);
+                auto* src = obj ? obj->GetBehavior<AudioSource>() : nullptr;
+                if (src && src->Spatial())
+                {
+                    Vec3 pos{};
+                    if (auto* g = As3D(obj)) pos = g->GetTransform().Position();
+                    const float depth = AreaDepth(pos, *active);
+                    if (depth > 0)
+                    {
+                        const float band = activeFx->BlendDistance();
+                        const float blend = band <= 0.0001f ? 1.0f : std::clamp(depth / band, 0.0f, 1.0f);
+                        wet = activeFx->WetMix() * blend;
+                    }
+                }
+            }
+            reverbSends_[id] = wet;
+            engine_.SetReverbSend(p.engineVoice, wet);
+        }
+
         engine_.Pump();
+    }
+
+    float AudioSystem::ReverbSendOf(GameObjectId source) const
+    {
+        const auto it = reverbSends_.find(source);
+        return it == reverbSends_.end() ? 0.0f : it->second;
     }
 }

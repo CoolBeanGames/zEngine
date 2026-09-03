@@ -3,6 +3,7 @@
 #include "ui/UiControl.h"
 #include "ui/UiSerialize.h"
 #include "audio/AudioSource.h"
+#include "audio/AudioEffect.h"
 #include "zscript/Text.h"
 #include "zscript/NativeTypes.h"
 #include <algorithm>
@@ -279,6 +280,14 @@ namespace
                 auto* source=native?native->GetBehavior<audio::AudioSource>():nullptr;
                 if(!source)return;
                 if(method=="play")source->Play(); else if(method=="stop")source->Stop();
+            });
+            runtime.SetAudioAreaCallback([this](ObjectRef ref,std::string_view method,float a,float b){
+                const auto id=NativeId(ref); auto* native=id?scene.Find(id):nullptr;
+                auto* effect=native?native->GetBehavior<audio::AudioEffect>():nullptr;
+                if(!effect)return;
+                if(method=="enable")effect->SetEnabled(true);
+                else if(method=="disable")effect->SetEnabled(false);
+                else if(method=="set_reverb"){effect->SetDecay(a);effect->SetWetMix(b);}
             });
             runtime.SetSceneCallbacks(
                 sceneLoader ? std::function<void(std::string_view)>([sceneLoader](std::string_view scene){sceneLoader(scene);}) : std::function<void(std::string_view)>{},

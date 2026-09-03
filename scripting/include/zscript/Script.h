@@ -167,6 +167,8 @@ public:
     void SetPrintCallback(PrintCallback);
     // ZE-67: host handles audioPlayer.play() / .stop() for the given scene proxy.
     void SetAudioCallback(std::function<void(ObjectRef,std::string_view)> callback);
+    // ZE-109: host handles audioArea.enable() / .disable() / .set_reverb(decay, wet).
+    void SetAudioAreaCallback(std::function<void(ObjectRef,std::string_view,float,float)> callback);
     // Host-owned scene management for the `Scene` service: `load` switches the
     // running scene by name; `current` returns the active scene's name.
     void SetSceneCallbacks(std::function<void(std::string_view)> load, std::function<std::string()> current);

@@ -21,7 +21,7 @@ struct MeshDraw
     std::optional<DirectX::XMFLOAT4X4> parentMatrix;
     MaterialHandle material;
 };
-struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; };
+struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; bool audioZone=false; };
 // ZE-111: audible range of a 3D AudioSource - inner (full volume) + outer (silent)
 // wireframe spheres centred on the object. 2D / global sources emit no AudioRange.
 struct AudioRange { zengine::Transform transform; std::optional<DirectX::XMFLOAT4X4> parentMatrix; float minDistance=1, maxDistance=25; bool selected=false; };

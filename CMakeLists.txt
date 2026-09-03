@@ -61,7 +61,7 @@ add_library(zEngineAudio STATIC src/audio/AudioClip.cpp src/audio/AudioEngine.cp
 target_compile_features(zEngineAudio PUBLIC cxx_std_20)
 target_include_directories(zEngineAudio PUBLIC src)
 target_compile_definitions(zEngineAudio PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(zEngineAudio PUBLIC zEngineCore PRIVATE zEngineAudioCodecs)
+target_link_libraries(zEngineAudio PUBLIC zEngineCore zEnginePhysics PRIVATE zEngineAudioCodecs)
 
 add_library(zEngineUi STATIC src/ui/UiControl.cpp src/ui/UiSystem.cpp src/ui/UiSerialize.cpp src/ui/VideoClip.cpp)
 target_compile_features(zEngineUi PUBLIC cxx_std_20)

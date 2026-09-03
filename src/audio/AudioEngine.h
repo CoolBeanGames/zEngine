@@ -43,6 +43,13 @@ namespace zengine::audio
         // Reclaims finished one-shot voices. Call once per frame.
         void Pump();
 
+        // ZE-109: a single shared reverb submix (created lazily on first enable).
+        // Disabled = every voice is fully dry. `decay` is seconds, `wetMix` 0..1.
+        void SetReverbEnabled(bool enabled);
+        void SetReverbParams(float decay, float wetMix);
+        // Wet (reverberated) send level 0..1 for one voice. 0 = dry only.
+        void SetReverbSend(VoiceId voice, float wet);
+
     private:
         struct Impl;
         std::unique_ptr<Impl> impl_;

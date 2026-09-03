@@ -825,6 +825,18 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         ap.methods.emplace("stop", noArgs);
         program.classes.emplace("audioPlayer", std::move(ap));
     }
+    // ZE-109: a script on an Area with an AudioEffect - toggle the zone and retune
+    // its reverb at runtime.
+    {
+        Class aa; aa.name="audioArea"; aa.base="gameObject";
+        aa.fields=program.classes.at("gameObject").fields;
+        Function noArgs; noArgs.result="void";
+        aa.methods.emplace("enable", noArgs);
+        aa.methods.emplace("disable", noArgs);
+        Function reverb; reverb.result="void"; reverb.params={"float","float"};
+        aa.methods.emplace("set_reverb", std::move(reverb));
+        program.classes.emplace("audioArea", std::move(aa));
+    }
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
     auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());
     for(const auto& native:NativeTypes())if(native.physicsBody){Class body;body.name=std::string(native.name);body.base=std::string(native.base);body.fields=nativePhysics.fields;body.signals=nativePhysics.signals;program.classes.emplace(body.name,std::move(body));}
@@ -972,6 +984,7 @@ struct Runtime::Impl {
     Runtime::PrefabSpawnCall prefabSpawnCall;
     Runtime::PrintCallback printCallback;
     std::function<void(ObjectRef,std::string_view)> audioCallback; // audioPlayer.play() / .stop()
+    std::function<void(ObjectRef,std::string_view,float,float)> audioAreaCallback; // audioArea.enable/disable/set_reverb
     std::mt19937_64 rng{std::random_device{}()};                   // Mathf.random* (ZE-110)
     std::function<void(std::string_view)> sceneLoadCall;
     std::function<std::string()> sceneCurrentCall;
@@ -1331,6 +1344,15 @@ struct Runtime::Impl {
            && program->Method(object.type->name,name)==&program->classes.at("audioPlayer").methods.at(name)) {
             Tick(t); if(!args.empty())Error(t,"audio "+name+" takes no arguments");
             if(audioCallback)audioCallback(ref,name);
+            return {};
+        }
+        if((name=="enable"||name=="disable"||name=="set_reverb") && program->Assignable("audioArea",object.type->name)
+           && program->Method(object.type->name,name)==&program->classes.at("audioArea").methods.at(name)) {
+            Tick(t);
+            double a=0,b=0;
+            if(name=="set_reverb"){ if(args.size()!=2)Error(t,"set_reverb takes decay and wet mix"); a=Number(Coerce(args[0],"float",t)); b=Number(Coerce(args[1],"float",t)); }
+            else if(!args.empty())Error(t,"audioArea "+name+" takes no arguments");
+            if(audioAreaCallback)audioAreaCallback(ref,name,static_cast<float>(a),static_cast<float>(b));
             return {};
         }
         if(program->Assignable("PhysicsBody",object.type->name) && (name=="add_force"||name=="add_impulse"||name=="add_torque"||name=="add_angular_impulse")) {
@@ -1717,6 +1739,7 @@ void Runtime::BindNativeBehavior(ObjectRef owner,std::string_view behaviorType){
 void Runtime::SetPrefabSpawnCallback(PrefabSpawnCall callback){impl_->prefabSpawnCall=std::move(callback);}
 void Runtime::SetPrintCallback(PrintCallback callback){impl_->printCallback=std::move(callback);}
 void Runtime::SetAudioCallback(std::function<void(ObjectRef,std::string_view)> callback){impl_->audioCallback=std::move(callback);}
+void Runtime::SetAudioAreaCallback(std::function<void(ObjectRef,std::string_view,float,float)> callback){impl_->audioAreaCallback=std::move(callback);}
 void Runtime::SetSceneCallbacks(std::function<void(std::string_view)> load,std::function<std::string()> current){impl_->sceneLoadCall=std::move(load);impl_->sceneCurrentCall=std::move(current);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }

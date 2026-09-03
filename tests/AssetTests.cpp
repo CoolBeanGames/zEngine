@@ -8,6 +8,7 @@
 #include "InspectorPanel.h"
 #include "MaterialEditor.h"
 #include "audio/AudioSource.h"
+#include "audio/AudioEffect.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
 #include "ScriptAssets.h"
@@ -416,6 +417,24 @@ namespace
                     "selected 3D AudioSource did not produce an audible-range gizmo");
             src->SetSpatial(false);
             Require(editor.BuildSceneFrame().audioRanges.empty(), "a global (2D) AudioSource must show no range gizmo");
+
+            // ZE-109: an Audio Effect can be added (via the Inspector) to an object that has an Area.
+            ap.AddBehavior<zengine::physics::Collider>().SetSize({6, 6, 6});
+            ap.AddBehavior<zengine::physics::Area>();
+            const HWND ins = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+            SendMessageW(ins, WM_COMMAND, MAKEWPARAM(InspectorPanel::AddAudioEffectCommand, 0), 0);
+            auto* fx = ap.GetBehavior<zengine::audio::AudioEffect>();
+            Require(fx != nullptr, "Inspector Add > Audio Effect did not attach an AudioEffect");
+            fx->SetDecay(2.5f); fx->SetWetMix(0.7f); fx->SetBlendDistance(1.25f);
+            const auto fxScenePath = editor.AssetsDirectory() / L"FxScene.zscene";
+            Require(editor.SaveScene(fxScenePath), "could not save the audio-effect scene");
+            const auto fxDoc = zengine::scenes::Decode(zengine::scenes::Load(fxScenePath));
+            bool foundFx = false;
+            for (const auto& o : fxDoc.objects) for (const auto& b : o.behaviors)
+                if (b.kind == zengine::scenes::BehaviorData::Kind::AudioEffect
+                    && std::abs(b.audioEffectDecay - 2.5f) < 0.001f && std::abs(b.audioEffectWetMix - 0.7f) < 0.001f)
+                    foundFx = true;
+            Require(foundFx, "AudioEffect did not serialize into the scene (v12)");
         }
         CoUninitialize();
         std::cout << "PASS: Mesh Renderer component, Inspector add/enable/clear, independent transforms, shared GPU meshes, captured async targets, scene instantiation, material instances\n";

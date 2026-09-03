@@ -4,6 +4,7 @@
 #include "core/MeshRenderer.h"
 #include "core/Camera.h"
 #include "audio/AudioSource.h"
+#include "audio/AudioEffect.h"
 #include "physics/PhysicsBehavior.h"
 #include <windowsx.h>
 #include <algorithm>
@@ -224,7 +225,7 @@ void InspectorPanel::RefreshBehaviors()
         auto* uiCtl=dynamic_cast<zengine::ui::UiControl*>(&behavior);
         const auto name=script ? std::filesystem::path(Wide(script->Asset())).stem().wstring() :
             uiCtl ? L"UI — "+Wide(uiCtl->TypeName()) :
-            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::audio::AudioSource*>(&behavior)?L"Audio Player":dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
+            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::audio::AudioSource*>(&behavior)?L"Audio Player":dynamic_cast<zengine::audio::AudioEffect*>(&behavior)?L"Audio Effect":dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
         add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
         if(auto* meshRenderer=dynamic_cast<zengine::MeshRenderer*>(&behavior))
@@ -259,6 +260,11 @@ void InspectorPanel::RefreshBehaviors()
                 {"loop",L"Loop (0 or 1)"},{"volume",L"Volume (0 - 1)"},{"pitch",L"Pitch (0.05 - 4)"},
                 {"attenuation",L"Attenuation (none / linear / inverse)"},{"min_distance",L"Min distance (full volume)"},
                 {"max_distance",L"Max distance (silent)"}})
+                add(&behavior,key,label,false,true,true);
+        if(dynamic_cast<zengine::audio::AudioEffect*>(&behavior))
+            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{
+                {"effect",L"Effect (reverb)"},{"decay",L"Reverb decay (seconds)"},{"wet_mix",L"Wet mix (0 - 1)"},
+                {"blend_distance",L"Boundary blend (world units)"}})
                 add(&behavior,key,label,false,true,true);
         if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior)){
             addShape(collider);
@@ -433,6 +439,14 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
         else if(entry.name=="max_distance")out<<src->MaxDistance();
         return out.str();
     }
+    if (auto* fx=dynamic_cast<zengine::audio::AudioEffect*>(entry.behavior)) {
+        if(entry.name=="effect")return Wide(zengine::audio::EffectKindName(fx->Kind()));
+        std::wostringstream out; out<<std::setprecision(9);
+        if(entry.name=="decay")out<<fx->Decay();
+        else if(entry.name=="wet_mix")out<<fx->WetMix();
+        else if(entry.name=="blend_distance")out<<fx->BlendDistance();
+        return out.str();
+    }
     if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
         for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name
             && field.array==entry.arrayHeader && (entry.arrayIndex<0 ? field.arrayIndex<0 : field.arrayIndex==entry.arrayIndex)) {
@@ -585,6 +599,15 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
                 else if(entry.name=="pitch")src->SetPitch(value);
                 else if(entry.name=="min_distance")src->SetMinDistance(value);
                 else if(entry.name=="max_distance")src->SetMaxDistance(value);
+            }
+        }
+        else if(auto* fx=dynamic_cast<zengine::audio::AudioEffect*>(entry.behavior)) {
+            if(entry.name=="effect"){zengine::audio::EffectKind k;if(!zengine::audio::ParseEffectKind(Utf8(text),k))throw std::invalid_argument("Only 'reverb' is supported");fx->SetKind(k);}
+            else {
+                float value;if(!ParseNumber(text,value))throw std::invalid_argument("Invalid audio effect number");
+                if(entry.name=="decay")fx->SetDecay(value);
+                else if(entry.name=="wet_mix")fx->SetWetMix(value);
+                else if(entry.name=="blend_distance")fx->SetBlendDistance(value);
             }
         }
         else if(auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior)) {
@@ -987,7 +1010,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_CONTEXTMENU: ShowBehaviorMenu({GET_X_LPARAM(l),GET_Y_LPARAM(l)}); return 0;
     case WM_COMMAND:
     {
-        if (!editData_ && ((LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddCameraCommand) || (LOWORD(w)>=AddScriptSubFirst && LOWORD(w)<AddScriptSubFirst+400))) return 0;
+        if (!editData_ && ((LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddAudioEffectCommand) || (LOWORD(w)>=AddScriptSubFirst && LOWORD(w)<AddScriptSubFirst+400))) return 0;
         const int toggleIndex=LOWORD(w)-FirstBehaviorToggle;
         if (toggleIndex>=0 && toggleIndex<static_cast<int>(behaviorToggles_.size()) && HIWORD(w)==BN_CLICKED)
         {
@@ -1086,6 +1109,9 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             const bool hasBody=object_->GetBehavior<zengine::physics::RigidBody>()||object_->GetBehavior<zengine::physics::KinematicBody>()||object_->GetBehavior<zengine::physics::StaticBody>()||object_->GetBehavior<zengine::physics::Area>();const UINT bodyFlags=MF_STRING|only3D|(hasBody?MF_GRAYED:0);
             AppendMenuW(menu,bodyFlags,AddRigidBodyCommand,L"Rigid Body");AppendMenuW(menu,bodyFlags,AddKinematicBodyCommand,L"Kinematic Body");AppendMenuW(menu,bodyFlags,AddStaticBodyCommand,L"Static Body");AppendMenuW(menu,bodyFlags,AddAreaCommand,L"Area");
             AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|only3D|(object_->GetBehavior<zengine::Camera>()?MF_GRAYED:0),AddCameraCommand,L"Camera");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+            AppendMenuW(menu,MF_STRING|(object_->GetBehavior<zengine::audio::AudioSource>()?MF_GRAYED:0),AddAudioSourceCommand,L"Audio Player");
+            AppendMenuW(menu,MF_STRING|only3D|((!object_->GetBehavior<zengine::physics::Area>()||object_->GetBehavior<zengine::audio::AudioEffect>())?MF_GRAYED:0),AddAudioEffectCommand,L"Audio Effect (needs an Area)");
             RECT button{}; GetWindowRect(addBehaviorButton_,&button);
             const auto command = TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,button.left,button.bottom,0,window_,nullptr);
             DestroyMenu(menu);
@@ -1101,6 +1127,8 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
         }
         if(LOWORD(w)>=AddColliderCommand&&LOWORD(w)<=AddAreaCommand&&object_&&!object_->Is2D()){if(LOWORD(w)==AddColliderCommand)object_->AddBehavior<zengine::physics::Collider>();else if(LOWORD(w)==AddRigidBodyCommand)object_->AddBehavior<zengine::physics::RigidBody>();else if(LOWORD(w)==AddKinematicBodyCommand)object_->AddBehavior<zengine::physics::KinematicBody>();else if(LOWORD(w)==AddStaticBodyCommand)object_->AddBehavior<zengine::physics::StaticBody>();else object_->AddBehavior<zengine::physics::Area>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if(LOWORD(w)==AddCameraCommand&&object_&&!object_->Is2D()&&!object_->GetBehavior<zengine::Camera>()){object_->AddBehavior<zengine::Camera>();RefreshBehaviors();if(changed_)changed_();return 0;}
+        if(LOWORD(w)==AddAudioSourceCommand&&object_&&!object_->GetBehavior<zengine::audio::AudioSource>()){object_->AddBehavior<zengine::audio::AudioSource>();RefreshBehaviors();if(changed_)changed_();return 0;}
+        if(LOWORD(w)==AddAudioEffectCommand&&object_&&!object_->Is2D()&&object_->GetBehavior<zengine::physics::Area>()&&!object_->GetBehavior<zengine::audio::AudioEffect>()){object_->AddBehavior<zengine::audio::AudioEffect>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if (LOWORD(w) == AddMeshCommand || LOWORD(w) == ChooseMeshButton || LOWORD(w) == CubeMeshButton || LOWORD(w) == ClearMeshButton)
         {
             if (object_ && meshAction_) meshAction_(LOWORD(w) == AddMeshCommand ? MeshAction::Add : LOWORD(w) == ChooseMeshButton ? MeshAction::Choose : LOWORD(w) == CubeMeshButton ? MeshAction::Cube : MeshAction::Clear);
