@@ -934,6 +934,15 @@ void FolderTests(bool capture) {
         Require(GetDlgItem(window,3900)!=nullptr,"New script did not enter rename mode");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);
         Require(editor.NewScene() && editor.ScenePath().parent_path()==scripts,"Scene ignored current folder");
         Require(GetDlgItem(window,3900)!=nullptr,"New scene did not enter rename mode");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);
+        // ZE-114: renaming the freshly-created open scene must keep it open with a
+        // clean path (the bug produced "<file>.zscene/." -> name shown as ".").
+        {
+            editor.RenameAsset(editor.ScenePath(),L"RenamedLevel");
+            Require(editor.HasOpenScene(),"Renaming the open scene closed it");
+            Require(editor.ScenePath().filename()==L"RenamedLevel.zscene" && editor.ScenePath().stem()==L"RenamedLevel",
+                    "Open scene path was mangled by rename (name would show as '.')");
+            Require(std::filesystem::is_regular_file(editor.ScenePath()),"Renamed scene file missing at the new path");
+        }
         auto& object=editor.CreateEmptyGameObject();Require(GetDlgItem(window,3900)!=nullptr,"New GameObject did not enter rename mode");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);editor.AssignCube(object.Id());
         const auto prefab=editor.CreatePrefab(object.Id());Require(prefab.parent_path()==scripts,"Prefab ignored current folder");
         Require(GetDlgItem(window,3900)!=nullptr,"New prefab did not enter rename mode");SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_RETURN,0);Require(editor.SaveScene(),"Save nested scene failed");

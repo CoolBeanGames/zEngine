@@ -16,6 +16,13 @@ std::string RelativeAsset(const std::filesystem::path& path,const std::filesyste
 bool Rewrite(std::string& value,const std::string& from,const std::string& to){if(value==from){value=to;return true;}if(value.starts_with(from+"/")){value=to+value.substr(from.size());return true;}return false;}
 bool Rewrite(zengine::scenes::Document& document,const std::string& from,const std::string& to){bool changed=false;for(auto& object:document.objects){changed|=Rewrite(object.prefab,from,to);for(auto& behavior:object.behaviors){changed|=Rewrite(behavior.asset,from,to);for(auto& [name,value]:behavior.variables)if(auto* prefab=std::get_if<zengine::script::PrefabRef>(&value))changed|=Rewrite(prefab->asset,from,to);}}return changed;}
 bool Within(const std::filesystem::path& child,const std::filesystem::path& parent){const auto c=std::filesystem::weakly_canonical(child),p=std::filesystem::weakly_canonical(parent);auto ci=c.begin();for(auto pi=p.begin();pi!=p.end();++pi,++ci)if(ci==c.end()||_wcsicmp(pi->c_str(),ci->c_str()))return false;return true;}
+// ZE-114: remap `path` when `source` (a file or a folder that contains it) moves
+// to `destination`. std::filesystem::relative(path,source) is "." when path==source,
+// so `destination/relative(...)` would yield "<destination>/." - use `destination`.
+std::filesystem::path Remap(const std::filesystem::path& path,const std::filesystem::path& source,const std::filesystem::path& destination){
+    return _wcsicmp(std::filesystem::weakly_canonical(path).c_str(),std::filesystem::weakly_canonical(source).c_str())==0
+        ? destination : destination/std::filesystem::relative(path,source);
+}
 void ReplaceFile(const std::filesystem::path& path,std::string_view text){auto temp=path;temp+=L".move-save";{std::ofstream out(temp,std::ios::binary|std::ios::trunc);out.write(text.data(),static_cast<std::streamsize>(text.size()));out.flush();if(!out)throw std::runtime_error("Cannot update moved asset references.");}if(!MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){DeleteFileW(temp.c_str());throw std::runtime_error("Cannot replace an updated asset file.");}}
 }
 std::filesystem::path EditorShell::AssetFolder() const {return assetFolder_.empty()?assetsDirectory_:assetLibrary::Resolve(assetsDirectory_,assetFolder_);}
@@ -38,12 +45,12 @@ void EditorShell::RefreshOpenDocumentAfterAssetMove(const std::filesystem::path&
 {
     if(!sceneOpen_)return;
     auto live=CaptureDocument();Rewrite(live,from,to);const auto selected=selectedObject_;
-    if(Within(scenePath_,source))scenePath_=destination/std::filesystem::relative(scenePath_,source);
-    if(!editingPrefab_.empty()&&Within(editingPrefab_,source))editingPrefab_=destination/std::filesystem::relative(editingPrefab_,source);
+    if(Within(scenePath_,source))scenePath_=Remap(scenePath_,source,destination);
+    if(!editingPrefab_.empty()&&Within(editingPrefab_,source))editingPrefab_=Remap(editingPrefab_,source,destination);
     if(prefabReturn_)
     {
         Rewrite(prefabReturn_->document,from,to);
-        if(Within(prefabReturn_->path,source))prefabReturn_->path=destination/std::filesystem::relative(prefabReturn_->path,source);
+        if(Within(prefabReturn_->path,source))prefabReturn_->path=Remap(prefabReturn_->path,source,destination);
         prefabReturn_->source=zengine::scenes::Load(prefabReturn_->path);
         prefabReturn_->baseline=zengine::scenes::Encode(zengine::scenes::Decode(prefabReturn_->source));
     }
@@ -69,7 +76,7 @@ void EditorShell::MoveAsset(const std::filesystem::path& asset,const std::filesy
     }
     if(project_){const auto projectFrom="Assets/"+from,projectTo="Assets/"+to;for(auto& scene:project_->config.scenes)Rewrite(scene,projectFrom,projectTo);Rewrite(project_->config.lastScene,projectFrom,projectTo);zengine::projects::Save(*project_);}
     RefreshOpenDocumentAfterAssetMove(source,destination,from,to);
-    if(AssetFolder()==source || RelativeAsset(AssetFolder(),assetsDirectory_).starts_with(from+"/"))assetFolder_=destination/std::filesystem::relative(AssetFolder(),source);
+    if(AssetFolder()==source || RelativeAsset(AssetFolder(),assetsDirectory_).starts_with(from+"/"))assetFolder_=Remap(AssetFolder(),source,destination);
     RefreshAssets();status_=L"Moved asset to "+destinationFolder.filename().wstring();InvalidateRect(window_,nullptr,FALSE);
 }
 void EditorShell::RenameAsset(const std::filesystem::path& asset,const std::wstring& requested)
@@ -92,6 +99,6 @@ void EditorShell::RenameAsset(const std::filesystem::path& asset,const std::wstr
     }
     if(project_){const auto a="Assets/"+from,b="Assets/"+to;for(auto& scene:project_->config.scenes)Rewrite(scene,a,b);Rewrite(project_->config.lastScene,a,b);zengine::projects::Save(*project_);}
     RefreshOpenDocumentAfterAssetMove(source,destination,from,to);
-    if(Within(AssetFolder(),source))assetFolder_=destination/std::filesystem::relative(AssetFolder(),source);
+    if(Within(AssetFolder(),source))assetFolder_=Remap(AssetFolder(),source,destination);
     RefreshAssets();status_=L"Renamed asset to "+destination.filename().wstring();InvalidateRect(window_,nullptr,FALSE);
 }
