@@ -207,6 +207,14 @@ namespace zengine::ui
         const Rect inner = Inner(self);
         for (auto* child : children)
         {
+            // A child that asks to fill / stretch / take a half is honoured (same
+            // result Container gives); only genuinely point-anchored children are
+            // hard-centred at their desired size.
+            if (child->GetAnchor() >= Anchor::FillLeft)
+            {
+                child->SetLayoutRect(ResolveAnchor(inner, child->GetAnchor(), child->LocalOffset(), child->DesiredSize()));
+                continue;
+            }
             const Vec2 d = child->DesiredSize();
             child->SetLayoutRect({inner.x + (inner.width - d.x) * 0.5f, inner.y + (inner.height - d.y) * 0.5f, d.x, d.y});
         }

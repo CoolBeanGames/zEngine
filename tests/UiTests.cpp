@@ -125,6 +125,24 @@ void CenterAndMargin()
     ui.Build(store, {400, 300}, ctx);
     Check(RectNear(*ui.RectOf(child.Id()), 150, 125, 100, 50), "centre container centres child");
 
+    // ZE-100: a fill-anchored child of a CenterContainer fills instead of centring,
+    // and the fill cascades through nested containers to the innermost panel.
+    {
+        ObjectStore s;
+        auto& centre = s.Create2D("C"); auto& cc = centre.AddBehavior<CenterContainer>(); cc.SetAnchor(Anchor::Fill);
+        auto& mid = s.Create2D("M"); mid.SetParent(centre.Id());
+        auto& mc = mid.AddBehavior<MarginContainer>(); mc.SetAnchor(Anchor::Fill); mc.SetMargins(0, 0, 0, 0);
+        auto& panelObj = s.Create2D("P"); panelObj.SetParent(mid.Id());
+        auto& panel = panelObj.AddBehavior<PanelContainer>(); panel.SetAnchor(Anchor::Fill);
+        auto& dot = s.Create2D("Dot"); dot.SetParent(centre.Id());
+        auto& dr = dot.AddBehavior<ColorRect>(); dr.SetSize({20, 20}); dr.SetAnchor(Anchor::Center);
+
+        UiSystem u; u.Build(s, {640, 480}, ctx);
+        Check(RectNear(*u.RectOf(mid.Id()), 0, 0, 640, 480), "fill child of CenterContainer fills");
+        Check(RectNear(*u.RectOf(panelObj.Id()), 0, 0, 640, 480), "fill cascades to the nested panel");
+        Check(RectNear(*u.RectOf(dot.Id()), 310, 230, 20, 20), "point-anchored sibling is still centred");
+    }
+
     ObjectStore store2;
     auto& margin = store2.Create2D("Margin");
     auto& m = margin.AddBehavior<MarginContainer>();
