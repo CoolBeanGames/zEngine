@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="96">
+<tasks project="zEngine" nextIndex="98">
   <task id="ZE-95">
     <name>UI click detection breaks for the control with GameObject id 1</name>
     <prompt>UiSystem::Interact uses the literal GameObjectId{1} as a sentinel meaning "the primary button press began over empty space". When the top-most / first clickable UI control actually has id 1 (e.g. a Button created as the only object in a fresh ObjectStore), a press+release over it is discarded as an empty-space press, so no click / clicked signal is produced. Reproduce: create one GameObject2D with a Button behavior, Build, Interact(press) then Interact(release) over it - expect one click, get none.</prompt>
@@ -1046,6 +1046,91 @@ a Breakpoint has been reached
       <subtask done="true">use text editor for HLSL</subtask>
       <subtask done="true">call the extension .shader</subtask>
       <subtask done="true">only defines code and parameters, cannot be applied to objefcts</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-96">
+    <name>UI runtime + scripting - make the UI fully interactive and script-driven</name>
+    <prompt>The UI subsystem (ZE-61/66/81/95) can be authored in the editor and rendered, but it is not yet a usable interactive UI at runtime. Close every runtime gap so a real game menu / HUD can be built entirely from scripts and the editor, with nothing left for 1.0 except bug fixes and small tweaks.
+
+Current state to build on:
+- ui:: control classes exist (17 types), the GameObject2D tree is the UI tree, UiSystem lays out + batches + hit-tests + does press/release/click + TextEntry focus/typing at the engine level, and UiControl/UiSerialize expose every property. Scripts get native classes (uiControl..uiHtml) with clicked / pressed / released signals that DO dispatch to handlers in a running game.
+- The hard gap: ScriptHost::Synchronize / Invoke write-back is 3D-only (`As3D(native); if(!g) return;` at src/ScriptHost.cpp ~251 and the write-back loop ~270-279). A script attached to a UI control can LISTEN but cannot READ OR WRITE its own control's fields at runtime - `size = Vector2(...)`, `anchor = "center"`, `text = "Hi"`, `value = 0.5`, `visible = false`, `color = ...` etc. are all silently dropped. Transform2D position/rotation/scale is not synced either.
+- PlayerMain never pumps WM_CHAR into ui.Interact(..., typed), so TextEntry cannot be typed into in a built game. The editor Play preview does not route UI pointer or keyboard input at all.
+- Button and UiHtml only fire a bare "clicked" - a script cannot tell WHICH button or link inside an html block was activated.
+
+What "done" means: build a scripted, interactive menu (buttons that change state, a text field you can type into, a value the script drives, a panel the script shows/hides) that works both in the editor Play preview and in a standalone build, using only scripts + the scene tree.</prompt>
+    <requirements>A script class that inherits a ui:: type (e.g. class Menu : uiPanel) can read and write EVERY serialized property of its control at runtime (base: anchor, size, min_size, order, visible, clickable; and every per-type field - text, value, color/tint, texture names, padding, spacing, fill_cross, scroll_x/y, horizontal, playing, loop, speed, html, background, margins, slice, pixel_height, placeholder, region, vertical, fill_color, background_color, disabled, per-state button colours/textures). Transform2D position/rotation/scale on a 2D object round-trips through the script proxy like the 3D Transform does. TextEntry can be typed into (keyboard) and queried both in the editor Play preview and in a standalone build; Enter fires a `submitted` signal. Button / UiHtml report which element was activated (a script can identify the clicked button or link). Hover and focus signals (mouse_entered, mouse_exited, focus_entered, focus_exited) fire on controls. Tab / Shift-Tab move focus between focusable controls; Enter / Space activate the focused button; Esc blurs. A control (or panel subtree) under the pointer consumes the click so it does NOT also reach the 3D game input / raycast layer, and the game can query "did the UI take the pointer / keyboard this frame". The editor Play preview routes UI pointer + wheel + keyboard so UI can be tested without a build. Scripts can build and change the UI tree at runtime: get parent / children, find a descendant by name, add / remove / reparent ui controls, spawn a UI prefab and get its root. Full ctest green; editor + player build; the demo menu described in the prompt works end to end.</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-65</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>ui,scripting,input</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">ScriptHost: two-way field sync for ui:: control proxies - read the control's live values into the proxy before each lifecycle callback, and commit the script's writes back to the control after (every serialized property, per control type)</subtask>
+      <subtask done="false">Transform2D sync for 2D objects through the script proxy (position/rotation/scale + was_moved/was_rotated/was_scaled signals), matching the 3D path</subtask>
+      <subtask done="false">Scripts can manipulate the UI tree at runtime: parent/children accessors, find descendant by name, add/remove/reparent ui controls, spawn a UI prefab and get its root</subtask>
+      <subtask done="false">PlayerMain: pump WM_CHAR (and backspace/enter) into ui.Interact typed input; standalone TextEntry typing works</subtask>
+      <subtask done="false">Focus model in UiSystem: Tab / Shift-Tab cycle focusable controls, Enter/Space activate the focused button, Esc blurs; focusable flag per control</subtask>
+      <subtask done="false">Hover + focus signals: mouse_entered / mouse_exited / focus_entered / focus_exited on ui controls (engine detection + script signal dispatch)</subtask>
+      <subtask done="false">TextEntry `submitted` signal on Enter; Button and UiHtml report the activated element (button index / link href or id) so a script can branch on it</subtask>
+      <subtask done="false">Pointer/keyboard capture: a control under the pointer consumes the event; expose "UI took the pointer/keyboard this frame" so game input / raycasting can skip; a modal/blocking panel option</subtask>
+      <subtask done="false">Editor Play preview: route viewport pointer (incl. wheel) + keyboard into the editor's UiSystem so scripted UI is testable in the editor without a build</subtask>
+      <subtask done="false">Regression tests for all of the above (UiTests, ScriptHostTests, ScriptTests, AssetTests --ui) plus an end-to-end scripted-menu test</subtask>
+    </subtasks>
+  </task>
+  <task id="ZE-97">
+    <name>UI visuals + assets - real images, text layout, scaling, video, so nothing UI is left for 1.0</name>
+    <prompt>Finish the UI's visual + asset side using the texture/material infrastructure from ZE-64/65. After this task the UI system is considered feature-complete for 1.0 - only bug fixes and minor tweaks after here.
+
+Current gaps:
+- Images do not load. TextureRect, PanelContainer texture, Button per-state textures and <img> inside UiHtml all resolve to the 1x1 white texture (UiContext::resolveTexture returns renderer.WhiteTexture()). Nine-slice therefore has nothing real to sample.
+- Inspector texture fields (texture, normal/hover/pressed_texture, html <img> src) are plain text boxes - no asset picker, no drag-drop of an image asset onto the field.
+- Text controls are top-left only: no horizontal / vertical alignment, and LongText honours explicit newlines but does not word-wrap to its box width. A real HUD needs wrapped, aligned text.
+- No UI scaling: layout is in raw window pixels, so a UI authored at one window size looks wrong at another. Need a design/reference resolution + scale mode (keep aspect / stretch / fixed) so authored UI is resolution-independent.
+- Disabled state does not propagate: disabling a container/panel does not disable its children for input or dim them.
+- VideoTexture shows a white rect in the editor (no resolveVideoFrame wired in EditorShell) and there is no way to create a .zvid asset from the editor (VideoClip::Encode exists but is not exposed), so video is not usable end to end.
+- Confirm real font-atlas text rendering works for every text-bearing control at the final scale.</prompt>
+    <requirements>TextureRect, PanelContainer, Button (all states) and UiHtml &lt;img&gt; display real image files (png/jpg/bmp/tga/... from the asset library) via the renderer texture path; nine-slice samples the real texture correctly. The Inspector exposes a proper asset picker for every texture field (browse + drag an image asset from the library onto the field), and the field stores the project-relative asset path. Text and LongText support horizontal (left/center/right) and vertical (top/middle/bottom) alignment, and a word-wrap mode that wraps to the control's width; UiHtml lays out wrapped paragraphs. A UI reference/design resolution + scale mode (keep-aspect / stretch / fixed) makes authored UI look correct at any window size, in the editor and in a build. Disabling a container or panel disables input for and visually dims its whole subtree. VideoTexture previews real frames in the editor viewport, and a .zvid asset can be created from the editor (e.g. right-click -&gt; build .zvid from an image-sequence folder, or import); the player already plays it. All text-bearing controls render through the real font atlas at the active scale. Full ctest green; editor + player + a RELEASE build (zip the release build for GitHub); a visual QA capture of a populated UI.</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy>ZE-96</blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>true</release>
+    <tags>ui,rendering,assets</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">Real image loading for UI: TextureRect / PanelContainer / Button textures / UiHtml &lt;img&gt; load png/jpg/bmp/tga/etc from the asset library through the renderer texture path (shared cache); nine-slice samples the real texture</subtask>
+      <subtask done="false">Inspector asset picker for every texture field (browse dialog + drag an image asset from the library onto the field); fields store project-relative paths and round-trip in the scene</subtask>
+      <subtask done="false">Text / LongText: horizontal + vertical alignment and a word-wrap mode; UiHtml wraps paragraph text to width</subtask>
+      <subtask done="false">UI reference resolution + scale mode (keep-aspect / stretch / fixed) so authored UI is resolution-independent in the editor and the player</subtask>
+      <subtask done="false">Disabled-state propagation: disabling a container/panel disables input for and dims its entire subtree</subtask>
+      <subtask done="false">VideoTexture: editor viewport preview wired; create a .zvid asset from the editor (image-sequence folder -&gt; .zvid, or import), library right-click</subtask>
+      <subtask done="false">Verify real font-atlas rendering for every text control at the active scale; visual QA capture of a full UI</subtask>
+      <subtask done="false">Regression tests (UiTests, Render2DTests, SceneTests, AssetTests --ui) + release build zipped</subtask>
     </subtasks>
   </task>
   <task id="ZE-67">
