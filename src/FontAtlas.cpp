@@ -5,13 +5,27 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <vector>
 
 namespace
 {
-    constexpr char32_t kFirst = 32;  // space
-    constexpr char32_t kLast = 126;  // tilde
+    constexpr char32_t kFirst = 32;   // space
+    constexpr char32_t kLast = 0xFF;  // ZE-122: ASCII + Latin-1 Supplement
     constexpr int kAtlasWidth = 512;
     constexpr int kPadding = 1;
+
+    // ZE-122: common non-Latin-1 symbols used by the UI / editor chrome so they do
+    // not fall back to '?'. (Full dynamic coverage comes with TTF support, ZE-123.)
+    constexpr char32_t kExtraGlyphs[] = {
+        0x2010, 0x2011, 0x2012, 0x2013, 0x2014, // hyphen / dashes (– —)
+        0x2018, 0x2019, 0x201C, 0x201D,         // curly quotes
+        0x2022, 0x2026,                         // bullet, ellipsis (• …)
+        0x2190, 0x2191, 0x2192, 0x2193,         // arrows
+        0x25B8, 0x25BE, 0x25C0, 0x25B4,         // triangles (tree carets ▸ ▾)
+        0x2610, 0x2611, 0x2612,                 // ballot boxes (☐ ☑ ☒)
+        0x2713, 0x2717, 0x2716,                 // check / cross (✓ ✗ ✖)
+        0x00D7, 0x00F7,                         // × ÷  (also in Latin-1, harmless dup guard below)
+    };
 
     // Minimal UTF-8 decode; malformed bytes and non-BMP code points collapse to
     // U+FFFD, which the atlas maps to '?'.
@@ -68,7 +82,10 @@ FontAtlas FontAtlas::Build(int pixelHeight)
     struct Cell { char32_t cp; int x, y, w, h; float advance; };
     std::vector<Cell> cells;
     int penX = 0, penY = 0, rowHeight = cellHeight;
-    for (char32_t cp = kFirst; cp <= kLast; ++cp)
+    std::vector<char32_t> codepoints;
+    for (char32_t cp = kFirst; cp <= kLast; ++cp) codepoints.push_back(cp);
+    for (const char32_t cp : kExtraGlyphs) if (cp > kLast) codepoints.push_back(cp);
+    for (const char32_t cp : codepoints)
     {
         const wchar_t ch = static_cast<wchar_t>(cp);
         SIZE extent{};

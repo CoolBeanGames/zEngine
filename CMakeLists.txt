@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.24)
 project(zEngine VERSION 0.1.0 LANGUAGES C CXX)
 # Keep standalone games self-contained: no MSVC redistributable installation.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# ZE-122: the source is UTF-8; without /utf-8 MSVC reads non-ASCII string literals
+# (e.g. the FPS checkbox glyphs, em-dashes) in the system codepage -> mojibake.
+add_compile_options($<$<C_COMPILER_ID:MSVC>:/utf-8> $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT zEngine)
 include(CTest)
 add_subdirectory(scripting)

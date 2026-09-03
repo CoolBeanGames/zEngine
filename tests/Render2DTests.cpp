@@ -146,6 +146,11 @@ void FontAtlasBasics()
     Check(atlas.PixelHeight() == 24 && atlas.LineHeight() > 0, "Font atlas metrics missing");
     Check(atlas.Pixels().size() == static_cast<std::size_t>(atlas.Width()) * atlas.Height() * 4, "Atlas pixel buffer size mismatch");
     Check(atlas.Has(U'M') && atlas.Has(U' ') && atlas.Has(U'?'), "Atlas is missing printable ASCII");
+    // ZE-122: Latin-1 accents + common UI symbols must have real glyphs, not '?'.
+    Check(atlas.Has(U'é') && atlas.Has(U'ü') && atlas.Has(U'×'), "Atlas is missing Latin-1 Supplement");
+    Check(atlas.Has(U'—') && atlas.Has(U'…') && atlas.Has(U'☑') && atlas.Has(U'▾'), "Atlas is missing common UI symbols (— … ☑ ▾)");
+    // A UTF-8 string with a multi-byte glyph lays out one sprite per visible char.
+    Check(atlas.Layout("a\xE2\x80\x94""b", 0, 0, 24, Float4{1,1,1,1}, nullptr).size() == 3, "Multi-byte glyph did not render");
     Check(atlas.GlyphFor(U'M').advance > atlas.GlyphFor(U'i').advance, "Proportional font advances look wrong");
 
     bool anyCoverage = std::any_of(atlas.Pixels().begin(), atlas.Pixels().end(), [](std::uint8_t b) { return b != 0; });
