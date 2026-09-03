@@ -562,6 +562,23 @@ void AudioPlayerClass() {
     lightRuntime.Start(lamp);
     Check(lon == 1 && loff == 1 && lr == 1.0f && std::fabs(lg - 0.5f) < 1e-4f && li == 3.0f && std::fabs(lscatter - 0.8f) < 1e-4f,
           "lightSource methods did not route to the host");
+
+    // ZE-76: decalProjector - toggle and retune a Decal from script.
+    int don = 0, doff = 0; float dr = 0, dg = 0, db = 0, dop = 0;
+    auto decalProgram = Compile(R"(class Splat : decalProjector {
+        func start(){ disable(); enable(); set_tint(0.9, 0.2, 0.1); set_opacity(0.4); }
+    })");
+    Runtime decalRuntime(decalProgram);
+    decalRuntime.SetDecalCallback([&](ObjectRef, std::string_view m, float a, float b, float c) {
+        if (m == "enable") don += 1;
+        else if (m == "disable") doff += 1;
+        else if (m == "set_tint") { dr = a; dg = b; db = c; }
+        else if (m == "set_opacity") dop = a;
+    });
+    const auto splat = decalRuntime.Create("Splat");
+    decalRuntime.Start(splat);
+    Check(don == 1 && doff == 1 && dr == 0.9f && std::fabs(dg - 0.2f) < 1e-4f && std::fabs(dop - 0.4f) < 1e-4f,
+          "decalProjector methods did not route to the host");
 }
 void GetBehavior() {
     auto p=Compile(R"(class Player : rigidbody {

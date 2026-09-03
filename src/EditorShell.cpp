@@ -18,6 +18,7 @@
 #include "core/Camera.h"
 #include "core/Light.h"
 #include "core/Environment.h"
+#include "core/Decal.h"
 #include "SceneLights.h"
 #include "LightmapAssets.h"
 #include "CubeModel.h"
@@ -567,6 +568,21 @@ ViewportFrame EditorShell::BuildSceneFrame() const
             if (!Playing())
                 frame.lightGizmos.push_back({ld.type, ld.position, ld.direction, ld.color, ld.range,
                                              light->SpotOuter(), object.Id() == selectedObject_});
+        }
+        if (const auto* decal = object.GetBehavior<zengine::Decal>(); decal && decal->Enabled())
+        {
+            DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent, ParentMatrix(objects_, object));
+            DecalData dd;
+            dd.transform = object.GetTransform();
+            dd.parentMatrix = parent;
+            dd.texture = ResolveDecalTexture(decal->Texture());
+            dd.tint = {decal->Tint().x, decal->Tint().y, decal->Tint().z};
+            dd.opacity = decal->Opacity();
+            dd.angleFadeCos = std::cos(decal->AngleFade() * 3.14159265f / 180.0f);
+            frame.decals.push_back(dd);
+            if (!Playing())
+                frame.colliders.push_back({zengine::physics::ColliderShape::Box, object.GetTransform(),
+                                           {0, 0, 0}, {1, 1, 1}, parent, object.Id() == selectedObject_, false, true});
         }
     }
     if (const auto* object = SelectedGameObject(); object && CanEdit(object->Id(),true))
@@ -1269,7 +1285,7 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     inspectorPanel_->Bind(nullptr);
     ++sceneGeneration_;
     std::erase_if(assetJobs_,[](const AssetJob& job) { return job.loadMesh; });
-    meshBindings_.clear(); meshRevisions_.clear(); materialCache_.clear(); lightmapBindings_.clear();
+    meshBindings_.clear(); meshRevisions_.clear(); materialCache_.clear(); lightmapBindings_.clear(); decalTextureCache_.clear();
     prefabLinks_.clear(); for (const auto& object:authored.objects) if (!object.prefab.empty()) {prefabLinks_[object.id]=object;if(auto* g=zengine::As3D(next.objects.Find(object.id)))prefabLinks_[object.id].transform=g->GetTransform();}
     prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects); scriptHost_.SetObjectStore(&objects_); ConfigureScriptOutput();
@@ -1480,6 +1496,16 @@ void EditorShell::ApplyMaterialValue(const std::string& materialAsset, zengine::
     zengine::materials::Save(assetsDirectory_, file, doc);
     materialCache_.erase(materialAsset);
     InvalidateRect(window_, nullptr, FALSE);
+}
+TextureHandle EditorShell::ResolveDecalTexture(const std::string& asset) const
+{
+    if (asset.empty() || !renderer_) return {};
+    if (const auto it = decalTextureCache_.find(asset); it != decalTextureCache_.end()) return it->second;
+    TextureHandle handle;
+    try { handle = renderer_->UploadImage(assetLibrary::Resolve(assetsDirectory_, std::filesystem::u8path(asset))); }
+    catch (...) { handle = {}; }
+    decalTextureCache_[asset] = handle;
+    return handle;
 }
 MaterialHandle EditorShell::ResolveMaterial(const std::string& materialAsset) const
 {
@@ -1946,6 +1972,7 @@ LRESULT EditorShell::HandleMessage(
     case WM_COMMAND:
         if(LOWORD(wParam)>=AddEmptyCommand&&LOWORD(wParam)<=AddAreaObjectCommand){CreateGameObject(static_cast<ObjectPreset>(LOWORD(wParam)-AddEmptyCommand),selectedObject_);return 0;}
         if(LOWORD(wParam)==AddAudioPlayerCommand){CreateGameObject(ObjectPreset::AudioPlayer,selectedObject_);return 0;}
+        if(LOWORD(wParam)==AddDecalCommand){CreateGameObject(ObjectPreset::Decal,selectedObject_);return 0;}
         if(LOWORD(wParam)>=AddLightBase&&LOWORD(wParam)<=AddLightLast){
             const int k=LOWORD(wParam)-AddLightBase;
             CreateGameObject(k==0?ObjectPreset::PointLight:k==2?ObjectPreset::SpotLight:ObjectPreset::DirectionalLight,selectedObject_);
@@ -2001,7 +2028,7 @@ LRESULT EditorShell::HandleMessage(
         if(PtInRect(&sceneBrowser_,point)) {
             const auto target=ScriptDropTarget(point);if(target)SelectGameObject(target);else {selectedObject_=0;inspectorPanel_->Bind(nullptr);InvalidateRect(window_,&sceneBrowser_,FALSE);}
             HMENU menu=CreatePopupMenu(),add=CreatePopupMenu(),physics=CreatePopupMenu(),ui=CreatePopupMenu();const UINT addFlags=MF_STRING|((Playing()||!sceneOpen_||(target&&!CanEdit(target)))?MF_GRAYED:0);
-            AppendMenuW(add,addFlags,AddEmptyCommand,L"Empty GameObject");AppendMenuW(add,addFlags,AddCubeCommand,L"Cube");AppendMenuW(add,addFlags,AddCameraCommand,L"Camera");AppendMenuW(add,addFlags,AddAudioPlayerCommand,L"Audio Player");
+            AppendMenuW(add,addFlags,AddEmptyCommand,L"Empty GameObject");AppendMenuW(add,addFlags,AddCubeCommand,L"Cube");AppendMenuW(add,addFlags,AddCameraCommand,L"Camera");AppendMenuW(add,addFlags,AddAudioPlayerCommand,L"Audio Player");AppendMenuW(add,addFlags,AddDecalCommand,L"Decal");
             {HMENU lights=CreatePopupMenu();AppendMenuW(lights,addFlags,AddLightBase+0,L"Point");AppendMenuW(lights,addFlags,AddLightBase+1,L"Directional");AppendMenuW(lights,addFlags,AddLightBase+2,L"Spot");AppendMenuW(add,MF_POPUP,reinterpret_cast<UINT_PTR>(lights),L"Light");}
             AppendMenuW(physics,addFlags,AddRigidCommand,L"Rigid Body + Collider");AppendMenuW(physics,addFlags,AddKinematicCommand,L"Kinematic Body + Collider");AppendMenuW(physics,addFlags,AddStaticCommand,L"Static Body + Collider");AppendMenuW(physics,addFlags,AddAreaObjectCommand,L"Area + Collider");
             {int uid=AddUiControlBase;for(const auto& uiType:zengine::ui::UiControlTypes()){const std::wstring label(uiType.begin(),uiType.end());AppendMenuW(ui,addFlags,static_cast<UINT>(uid++),label.c_str());}}

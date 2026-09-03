@@ -2,6 +2,7 @@
 
 #include <d3d11.h>
 #include <wrl/client.h>
+#include <DirectXMath.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -49,6 +50,7 @@ private:
     struct SceneConstants;
     struct LightConstants;
     struct SpriteConstants;
+    struct DecalConstants;
 
     void CreateDeviceAndSwapChain(HWND window, std::uint32_t width, std::uint32_t height);
     void CreateRenderTargets(std::uint32_t width, std::uint32_t height);
@@ -56,6 +58,8 @@ private:
     void CreateCube();
     void CreateEditorGuides();
     void CreateSpritePass();
+    void CreateDecalPass();
+    void RenderDecals(const ViewportFrame& frame, const DirectX::XMMATRIX& viewProjection);
     void RenderSprites(const ViewportFrame& frame);
     [[nodiscard]] std::filesystem::path FindShaderPath() const;
     [[nodiscard]] std::filesystem::path ShaderFile(const wchar_t* name) const;
@@ -85,6 +89,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D11SamplerState> shadowSampler_;
     Microsoft::WRL::ComPtr<ID3D11VertexShader> shadowVertexShader_;
     void CreateShadowResources();
+    // ZE-76: projected decal pass.
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> decalVertexShader_;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> decalPixelShader_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> decalConstantBuffer_;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> decalBlend_;
+    Microsoft::WRL::ComPtr<ID3D11DepthStencilState> decalDepth_;
     UINT gridVertexCount_ = 0;
     UINT axesVertexCount_ = 0;
     MeshHandle cube_;

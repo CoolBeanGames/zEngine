@@ -5,6 +5,7 @@
 #include "audio/AudioSource.h"
 #include "audio/AudioEffect.h"
 #include "core/Light.h"
+#include "core/Decal.h"
 #include "zscript/Text.h"
 #include "zscript/NativeTypes.h"
 #include <algorithm>
@@ -299,6 +300,15 @@ namespace
                 else if(method=="set_color")light->SetColor({a,b,c});
                 else if(method=="set_intensity")light->SetIntensity(a);
                 else if(method=="set_fog_scatter")light->SetFogScatter(a);
+            });
+            runtime.SetDecalCallback([this](ObjectRef ref,std::string_view method,float a,float b,float c){
+                const auto id=NativeId(ref); auto* native=id?scene.Find(id):nullptr;
+                auto* decal=native?native->GetBehavior<Decal>():nullptr;
+                if(!decal)return;
+                if(method=="enable")decal->SetEnabled(true);
+                else if(method=="disable")decal->SetEnabled(false);
+                else if(method=="set_tint")decal->SetTint({a,b,c});
+                else if(method=="set_opacity")decal->SetOpacity(a);
             });
             runtime.SetSceneCallbacks(
                 sceneLoader ? std::function<void(std::string_view)>([sceneLoader](std::string_view scene){sceneLoader(scene);}) : std::function<void(std::string_view)>{},

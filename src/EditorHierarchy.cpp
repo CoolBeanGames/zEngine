@@ -6,6 +6,7 @@
 #include "ui/UiSerialize.h"
 #include "audio/AudioSource.h"
 #include "core/Light.h"
+#include "core/Decal.h"
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -77,6 +78,11 @@ zengine::GameObject& EditorShell::CreateGameObject(ObjectPreset preset,zengine::
                         : preset==ObjectPreset::SpotLight?zengine::Light::Type::Spot : zengine::Light::Type::Directional;
         rename(preset==ObjectPreset::PointLight?"Point Light":preset==ObjectPreset::SpotLight?"Spot Light":"Directional Light");
         object.AddBehavior<zengine::Light>().SetLightType(type);
+        inspectorPanel_->RefreshBehaviors(); OnObjectChanged();
+    }
+    else if(preset==ObjectPreset::Decal){
+        rename("Decal");
+        object.AddBehavior<zengine::Decal>();
         inspectorPanel_->RefreshBehaviors(); OnObjectChanged();
     }
     else if(preset!=ObjectPreset::Empty){rename(preset==ObjectPreset::RigidBody?"RigidBody":preset==ObjectPreset::KinematicBody?"KinematicBody":preset==ObjectPreset::StaticBody?"StaticBody":"Area");object.AddBehavior<zengine::physics::Collider>();if(preset==ObjectPreset::RigidBody)object.AddBehavior<zengine::physics::RigidBody>();else if(preset==ObjectPreset::KinematicBody)object.AddBehavior<zengine::physics::KinematicBody>();else if(preset==ObjectPreset::StaticBody)object.AddBehavior<zengine::physics::StaticBody>();else object.AddBehavior<zengine::physics::Area>();inspectorPanel_->RefreshBehaviors();OnObjectChanged();}

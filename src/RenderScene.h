@@ -38,6 +38,18 @@ struct LightData
     float spotCosOuter = 0.82f;
     float fogScatter = 0; // ZE-75
 };
+// ZE-76: a projected decal. `transform` (times `parentMatrix`) is the oriented
+// projector box (unit cube in local space); the texture is projected down local
+// -Z. Null `texture` => nothing is drawn. `angleFadeCos` is cos(angle-fade).
+struct DecalData
+{
+    zengine::Transform transform;
+    std::optional<DirectX::XMFLOAT4X4> parentMatrix;
+    TextureHandle texture;
+    Float3 tint{1, 1, 1};
+    float opacity = 1.0f;
+    float angleFadeCos = 0.2588f; // cos(75 deg)
+};
 // ZE-75: scene atmosphere. fogMode 0 off / 1 linear / 2 exp2.
 struct EnvironmentData
 {
@@ -47,7 +59,7 @@ struct EnvironmentData
     float heightBase = 0, heightFalloff = 6, heightStrength = 0;
     int volumetric = 0, volumetricSteps = 6;
 };
-struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; bool audioZone=false; };
+struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform transform; zengine::Vec3 offset{},size{1,1,1}; std::optional<DirectX::XMFLOAT4X4> parentMatrix; bool selected=false; bool audioZone=false; bool decal=false; /* ZE-76: projector box */ };
 // ZE-111: audible range of a 3D AudioSource - inner (full volume) + outer (silent)
 // wireframe spheres centred on the object. 2D / global sources emit no AudioRange.
 struct AudioRange { zengine::Transform transform; std::optional<DirectX::XMFLOAT4X4> parentMatrix; float minDistance=1, maxDistance=25; bool selected=false; };
@@ -67,6 +79,7 @@ struct CameraView
 struct ViewportFrame
 {
     std::vector<MeshDraw> meshes;
+    std::vector<DecalData> decals; // ZE-76: projected onto the meshes, after the main pass
     std::vector<LightData> lights; // ZE-74: empty => the scene renders unlit
     std::optional<EnvironmentData> environment; // ZE-75: fog / atmosphere
     std::vector<ColliderDraw> colliders;

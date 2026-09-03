@@ -93,14 +93,14 @@ public:
     const std::filesystem::path& ScenePath() const noexcept { return scenePath_; }
     bool SceneDirty() const noexcept { return sceneDirty_; }
     zengine::GameObject& CreateEmptyGameObject();
-    enum class ObjectPreset { Empty, Cube, Camera, RigidBody, KinematicBody, StaticBody, Area, AudioPlayer, PointLight, DirectionalLight, SpotLight };
+    enum class ObjectPreset { Empty, Cube, Camera, RigidBody, KinematicBody, StaticBody, Area, AudioPlayer, PointLight, DirectionalLight, SpotLight, Decal };
     zengine::GameObject& CreateGameObject(ObjectPreset,zengine::GameObjectId parent=0);
     // Creates a GameObject2D carrying the named ui:: control (ui::UiControlTypes()).
     zengine::GameObject2D& CreateUiControl(std::string_view type,zengine::GameObjectId parent=0);
     void CopyGameObject(zengine::GameObjectId);
     zengine::GameObjectId PasteGameObject(zengine::GameObjectId parent=0);
     void DeleteGameObject(zengine::GameObjectId);
-    static constexpr int AddEmptyCommand=3700,AddCubeCommand=3701,AddCameraCommand=3702,AddRigidCommand=3703,AddKinematicCommand=3704,AddStaticCommand=3705,AddAreaObjectCommand=3706,AddAudioPlayerCommand=3707,CopyObjectCommand=3710,PasteObjectCommand=3711,DeleteObjectCommand=3712;
+    static constexpr int AddEmptyCommand=3700,AddCubeCommand=3701,AddCameraCommand=3702,AddRigidCommand=3703,AddKinematicCommand=3704,AddStaticCommand=3705,AddAreaObjectCommand=3706,AddAudioPlayerCommand=3707,AddDecalCommand=3708,CopyObjectCommand=3710,PasteObjectCommand=3711,DeleteObjectCommand=3712;
     static constexpr int AddUiControlBase=3740,AddUiControlLast=3759; // one per ui::UiControlTypes()
     static constexpr int AddLightBase=3760,AddLightLast=3762; // 0 point, 1 directional, 2 spot (ZE-74)
     std::filesystem::path CreateScriptAsset();
@@ -335,6 +335,9 @@ private:
     mutable std::map<zengine::GameObjectId, LightmapBinding> lightmapBindings_;
     struct ResolvedMesh { MeshHandle mesh; bool lit = true; };
     ResolvedMesh ResolveLightmapMesh(const zengine::GameObject& object, const zengine::MeshRenderer& mesh, MeshHandle fallback) const;
+    // ZE-76: decal projector textures, keyed by project-relative image path.
+    mutable std::map<std::string, TextureHandle> decalTextureCache_;
+    TextureHandle ResolveDecalTexture(const std::string& asset) const;
     std::map<std::filesystem::path, std::weak_ptr<const RenderMesh>> meshCache_;
     std::map<zengine::GameObjectId, std::uint64_t> meshRevisions_;
     int firstObject_ = 0;

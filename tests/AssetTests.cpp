@@ -11,6 +11,7 @@
 #include "audio/AudioEffect.h"
 #include "core/Light.h"
 #include "core/Environment.h"
+#include "core/Decal.h"
 #include "LightmapAssets.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
@@ -513,6 +514,31 @@ namespace
                 if (b.kind == zengine::scenes::BehaviorData::Kind::Mesh && b.meshStatic && !b.meshLightmap.empty())
                     foundStaticMesh = true;
             Require(foundStaticMesh, "the static flag + lightmap path did not serialize into the scene (v15)");
+
+            // ZE-76: a Decal projector reaches the render frame and serializes (scene v16).
+            auto& splat = editor.CreateEmptyGameObject();
+            if (HWND rn4 = GetDlgItem(window, 3900)) SendMessageW(rn4, WM_KEYDOWN, VK_RETURN, 0);
+            auto& decalBehaviour = splat.AddBehavior<zengine::Decal>();
+            decalBehaviour.SetTint({0.9f, 0.15f, 0.1f});
+            decalBehaviour.SetOpacity(0.7f);
+            decalBehaviour.SetAngleFade(55);
+            splat.GetTransform().SetPosition({0, 0, 0});     // above the ZE-113 floor slab
+            splat.GetTransform().SetRotation({-90, 0, 0});   // project straight down (local -Z -> world -Y)
+            splat.GetTransform().SetScale({3, 3, 4});
+            const auto decalFrame = editor.BuildSceneFrame();
+            Require(decalFrame.decals.size() == 1 && std::abs(decalFrame.decals[0].opacity - 0.7f) < 0.001f,
+                    "adding a Decal did not reach the render frame");
+            bool decalGizmo = false;
+            for (const auto& c : decalFrame.colliders) if (c.decal) decalGizmo = true;
+            Require(decalGizmo, "a Decal produces an editor projector gizmo");
+            const auto decalScenePath = editor.AssetsDirectory() / L"DecalScene.zscene";
+            Require(editor.SaveScene(decalScenePath), "could not save the decal scene");
+            const auto decalDoc = zengine::scenes::Decode(zengine::scenes::Load(decalScenePath));
+            bool foundDecal = false;
+            for (const auto& o : decalDoc.objects) for (const auto& b : o.behaviors)
+                if (b.kind == zengine::scenes::BehaviorData::Kind::Decal && std::abs(b.decalOpacity - 0.7f) < 0.001f)
+                    foundDecal = true;
+            Require(foundDecal, "the Decal did not serialize into the scene (v16)");
 
             if (capture) { for (int i = 0; i < 3; ++i) editor.Render(); CaptureWindow(window, L"lighting-qa.bmp"); }
         }

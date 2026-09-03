@@ -107,6 +107,7 @@ add_custom_command(TARGET zPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorCube.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/ColorCube.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShadowDepth.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/ShadowDepth.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Sprite.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/Sprite.hlsl"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Decal.hlsl" "$<TARGET_FILE_DIR:zPlayer>/shaders/Decal.hlsl"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx/LICENSE" "$<TARGET_FILE_DIR:zPlayer>/ufbx-LICENSE.txt")
 add_custom_command(TARGET zPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/third_party/JoltPhysics/LICENSE" "$<TARGET_FILE_DIR:zPlayer>/Jolt-LICENSE.txt")
@@ -182,6 +183,9 @@ add_custom_command(TARGET zEngine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Sprite.hlsl"
             "$<TARGET_FILE_DIR:zEngine>/shaders/Sprite.hlsl"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Decal.hlsl"
+            "$<TARGET_FILE_DIR:zEngine>/shaders/Decal.hlsl"
     COMMENT "Copying shaders"
 )
 

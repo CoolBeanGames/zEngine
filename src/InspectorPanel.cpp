@@ -7,6 +7,7 @@
 #include "audio/AudioEffect.h"
 #include "core/Light.h"
 #include "core/Environment.h"
+#include "core/Decal.h"
 #include "physics/PhysicsBehavior.h"
 #include <windowsx.h>
 #include <algorithm>
@@ -227,7 +228,7 @@ void InspectorPanel::RefreshBehaviors()
         auto* uiCtl=dynamic_cast<zengine::ui::UiControl*>(&behavior);
         const auto name=script ? std::filesystem::path(Wide(script->Asset())).stem().wstring() :
             uiCtl ? L"UI — "+Wide(uiCtl->TypeName()) :
-            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::audio::AudioSource*>(&behavior)?L"Audio Player":dynamic_cast<zengine::audio::AudioEffect*>(&behavior)?L"Audio Effect":dynamic_cast<zengine::Light*>(&behavior)?L"Light":dynamic_cast<zengine::Environment*>(&behavior)?L"Environment":dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
+            dynamic_cast<zengine::MeshRenderer*>(&behavior) ? L"Mesh Renderer" :dynamic_cast<zengine::audio::AudioSource*>(&behavior)?L"Audio Player":dynamic_cast<zengine::audio::AudioEffect*>(&behavior)?L"Audio Effect":dynamic_cast<zengine::Light*>(&behavior)?L"Light":dynamic_cast<zengine::Environment*>(&behavior)?L"Environment":dynamic_cast<zengine::Decal*>(&behavior)?L"Decal":dynamic_cast<zengine::physics::Collider*>(&behavior)?L"Collider":dynamic_cast<zengine::Camera*>(&behavior)?L"Camera":dynamic_cast<zengine::physics::RigidBody*>(&behavior)?L"Rigid Body":dynamic_cast<zengine::physics::KinematicBody*>(&behavior)?L"Kinematic Body":dynamic_cast<zengine::physics::StaticBody*>(&behavior)?L"Static Body":dynamic_cast<zengine::physics::Area*>(&behavior)?L"Area":L"Native Behavior";
         add(&behavior,{},name,false,false,false,BehaviorField::Style::BehaviorHeader);
         add(&behavior,{},L"Priority (higher runs first)",true,true,true);
         if(auto* meshRenderer=dynamic_cast<zengine::MeshRenderer*>(&behavior))
@@ -283,6 +284,13 @@ void InspectorPanel::RefreshBehaviors()
                 {"height_strength",L"Height fog strength (0 - 4)"},{"volumetric",L"Volumetric (0 or 1)"},{"volumetric_steps",L"Volumetric steps (2 - 16)"}})
                 add(&behavior,key,label,false,true,true);
             for(int axis=0;axis<3;++axis){add(&behavior,"fog_color",L"Fog colour (RGB)",false,true,true);behaviorFields_.back().axis=axis;behaviorFields_.back().axisCount=3;}
+        }
+        if(dynamic_cast<zengine::Decal*>(&behavior)) {
+            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{
+                {"decal_texture",L"Texture (image asset)"},{"decal_opacity",L"Opacity (0 - 1)"},
+                {"decal_angle_fade",L"Angle fade (deg from facing)"}})
+                add(&behavior,key,label,false,true,true);
+            for(int axis=0;axis<3;++axis){add(&behavior,"decal_tint",L"Tint (RGB)",false,true,true);behaviorFields_.back().axis=axis;behaviorFields_.back().axisCount=3;}
         }
         if(auto* collider=dynamic_cast<zengine::physics::Collider*>(&behavior)){
             addShape(collider);
@@ -492,6 +500,14 @@ std::wstring InspectorPanel::BehaviorValue(std::size_t index)
         else if(entry.name=="volumetric_steps")out<<ev->VolumetricSteps();
         return out.str();
     }
+    if (auto* dc=dynamic_cast<zengine::Decal*>(entry.behavior)) {
+        if(entry.name=="decal_texture")return Wide(dc->Texture());
+        std::wostringstream out; out<<std::setprecision(9);
+        if(entry.name=="decal_tint"){const auto c=dc->Tint();out<<(entry.axis==0?c.x:entry.axis==1?c.y:c.z);}
+        else if(entry.name=="decal_opacity")out<<dc->Opacity();
+        else if(entry.name=="decal_angle_fade")out<<dc->AngleFade();
+        return out.str();
+    }
     if (auto* script=dynamic_cast<zengine::ScriptBehavior*>(entry.behavior); script && scriptHost_)
         for (const auto& field:scriptHost_->Fields(*script)) if (field.name==entry.name
             && field.array==entry.arrayHeader && (entry.arrayIndex<0 ? field.arrayIndex<0 : field.arrayIndex==entry.arrayIndex)) {
@@ -682,6 +698,15 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
                 else if(entry.name=="height_strength")ev->SetHeightStrength(value);
                 else if(entry.name=="volumetric")ev->SetVolumetric(value!=0);
                 else if(entry.name=="volumetric_steps")ev->SetVolumetricSteps(static_cast<int>(value));
+            }
+        }
+        else if(auto* dc=dynamic_cast<zengine::Decal*>(entry.behavior)) {
+            if(entry.name=="decal_texture")dc->SetTexture(Utf8(text));
+            else {
+                float value;if(!ParseNumber(text,value))throw std::invalid_argument("Invalid decal number");
+                if(entry.name=="decal_tint"){auto c=dc->Tint();(entry.axis==0?c.x:entry.axis==1?c.y:c.z)=value;dc->SetTint(c);}
+                else if(entry.name=="decal_opacity")dc->SetOpacity(value);
+                else if(entry.name=="decal_angle_fade")dc->SetAngleFade(value);
             }
         }
         else if(auto* body=dynamic_cast<zengine::physics::Body*>(entry.behavior)) {
@@ -1084,7 +1109,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
     case WM_CONTEXTMENU: ShowBehaviorMenu({GET_X_LPARAM(l),GET_Y_LPARAM(l)}); return 0;
     case WM_COMMAND:
     {
-        if (!editData_ && ((LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddEnvironmentCommand) || (LOWORD(w)>=AddScriptSubFirst && LOWORD(w)<AddScriptSubFirst+400))) return 0;
+        if (!editData_ && ((LOWORD(w)>=AddScriptButton && LOWORD(w)<=AddDecalCommand) || (LOWORD(w)>=AddScriptSubFirst && LOWORD(w)<AddScriptSubFirst+400))) return 0;
         const int toggleIndex=LOWORD(w)-FirstBehaviorToggle;
         if (toggleIndex>=0 && toggleIndex<static_cast<int>(behaviorToggles_.size()) && HIWORD(w)==BN_CLICKED)
         {
@@ -1188,6 +1213,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
             AppendMenuW(menu,MF_STRING|only3D|((!object_->GetBehavior<zengine::physics::Area>()||object_->GetBehavior<zengine::audio::AudioEffect>())?MF_GRAYED:0),AddAudioEffectCommand,L"Audio Effect (needs an Area)");
             AppendMenuW(menu,MF_STRING|only3D|(object_->GetBehavior<zengine::Light>()?MF_GRAYED:0),AddLightCommand,L"Light");
             AppendMenuW(menu,MF_STRING|only3D|(object_->GetBehavior<zengine::Environment>()?MF_GRAYED:0),AddEnvironmentCommand,L"Environment (fog)");
+            AppendMenuW(menu,MF_STRING|only3D|(object_->GetBehavior<zengine::Decal>()?MF_GRAYED:0),AddDecalCommand,L"Decal");
             RECT button{}; GetWindowRect(addBehaviorButton_,&button);
             const auto command = TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,button.left,button.bottom,0,window_,nullptr);
             DestroyMenu(menu);
@@ -1207,6 +1233,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
         if(LOWORD(w)==AddAudioEffectCommand&&object_&&!object_->Is2D()&&object_->GetBehavior<zengine::physics::Area>()&&!object_->GetBehavior<zengine::audio::AudioEffect>()){object_->AddBehavior<zengine::audio::AudioEffect>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if(LOWORD(w)==AddLightCommand&&object_&&!object_->Is2D()&&!object_->GetBehavior<zengine::Light>()){object_->AddBehavior<zengine::Light>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if(LOWORD(w)==AddEnvironmentCommand&&object_&&!object_->Is2D()&&!object_->GetBehavior<zengine::Environment>()){object_->AddBehavior<zengine::Environment>();RefreshBehaviors();if(changed_)changed_();return 0;}
+        if(LOWORD(w)==AddDecalCommand&&object_&&!object_->Is2D()&&!object_->GetBehavior<zengine::Decal>()){object_->AddBehavior<zengine::Decal>();RefreshBehaviors();if(changed_)changed_();return 0;}
         if (LOWORD(w) == AddMeshCommand || LOWORD(w) == ChooseMeshButton || LOWORD(w) == CubeMeshButton || LOWORD(w) == ClearMeshButton)
         {
             if (object_ && meshAction_) meshAction_(LOWORD(w) == AddMeshCommand ? MeshAction::Add : LOWORD(w) == ChooseMeshButton ? MeshAction::Choose : LOWORD(w) == CubeMeshButton ? MeshAction::Cube : MeshAction::Clear);

@@ -1,6 +1,7 @@
 #include "Scene.h"
 #include "zscript/Text.h"
 #include "core/MeshRenderer.h"
+#include "core/Decal.h"
 #include "core/Camera.h"
 #include "core/Light.h"
 #include "core/Environment.h"
@@ -21,7 +22,7 @@ namespace zengine::scenes
 namespace
 {
     const char* KindName(BehaviorData::Kind kind) {
-        switch(kind){case BehaviorData::Kind::Mesh:return "mesh";case BehaviorData::Kind::Script:return "script";case BehaviorData::Kind::Collider:return "collider";case BehaviorData::Kind::RigidBody:return "rigid_body";case BehaviorData::Kind::KinematicBody:return "kinematic_body";case BehaviorData::Kind::StaticBody:return "static_body";case BehaviorData::Kind::Area:return "area";case BehaviorData::Kind::Camera:return "camera";case BehaviorData::Kind::Ui:return "ui";case BehaviorData::Kind::Audio:return "audio";case BehaviorData::Kind::AudioEffect:return "audio_effect";case BehaviorData::Kind::Light:return "light";case BehaviorData::Kind::Environment:return "environment";}return "";
+        switch(kind){case BehaviorData::Kind::Mesh:return "mesh";case BehaviorData::Kind::Script:return "script";case BehaviorData::Kind::Collider:return "collider";case BehaviorData::Kind::RigidBody:return "rigid_body";case BehaviorData::Kind::KinematicBody:return "kinematic_body";case BehaviorData::Kind::StaticBody:return "static_body";case BehaviorData::Kind::Area:return "area";case BehaviorData::Kind::Camera:return "camera";case BehaviorData::Kind::Ui:return "ui";case BehaviorData::Kind::Audio:return "audio";case BehaviorData::Kind::AudioEffect:return "audio_effect";case BehaviorData::Kind::Light:return "light";case BehaviorData::Kind::Environment:return "environment";case BehaviorData::Kind::Decal:return "decal";}return "";
     }
     void Require(bool value,const char* message) { if (!value) throw std::runtime_error(message); }
     void Token(std::istream& in,const char* expected) { std::string word; Require(static_cast<bool>(in>>word) && word==expected,"Invalid scene structure."); }
@@ -110,6 +111,10 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
                 b.lightSpotInner=lightBehavior->SpotInner();b.lightSpotOuter=lightBehavior->SpotOuter();b.lightStatic=lightBehavior->Static();
                 b.lightFogScatter=lightBehavior->FogScatter();
             }
+            else if(const auto* decal=dynamic_cast<const Decal*>(&behavior)){
+                b.kind=BehaviorData::Kind::Decal;b.decalTexture=decal->Texture();b.decalTint=decal->Tint();
+                b.decalOpacity=decal->Opacity();b.decalAngleFade=decal->AngleFade();
+            }
             else if(const auto* environment=dynamic_cast<const Environment*>(&behavior)){
                 b.kind=BehaviorData::Kind::Environment;b.envFogMode=static_cast<int>(environment->Fog());b.envFogColor=environment->FogColor();
                 b.envFogNear=environment->FogNear();b.envFogFar=environment->FogFar();b.envFogDensity=environment->FogDensity();
@@ -134,7 +139,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
 std::string Encode(const Document& scene)
 {
     std::ostringstream out; out.imbue(std::locale::classic()); out<<std::setprecision(17);
-    out<<"ZENGINE_SCENE 15\nobjects "<<scene.objects.size()<<'\n';
+    out<<"ZENGINE_SCENE 16\nobjects "<<scene.objects.size()<<'\n';
     for (const auto& object:scene.objects)
     {
         out<<"object "<<object.id<<' '<<std::quoted(object.name)<<"\ntags "<<object.tags.size();
@@ -176,6 +181,10 @@ std::string Encode(const Document& scene)
                    <<' '<<b.envFogNear<<' '<<b.envFogFar<<' '<<b.envFogDensity
                    <<' '<<b.envHeightBase<<' '<<b.envHeightFalloff<<' '<<b.envHeightStrength
                    <<' '<<(b.envVolumetric?1:0)<<' '<<b.envVolumetricSteps<<'\n';
+            }
+            else if(b.kind==BehaviorData::Kind::Decal) { // scene v16
+                out<<"decal "<<std::quoted(b.decalTexture)<<' '<<b.decalTint.x<<' '<<b.decalTint.y<<' '<<b.decalTint.z
+                   <<' '<<b.decalOpacity<<' '<<b.decalAngleFade<<'\n';
             }
             else if(b.kind!=BehaviorData::Kind::Mesh && b.kind!=BehaviorData::Kind::Script) {
                 out<<"body "<<b.layer<<' '<<b.mask<<' '<<b.friction<<' '<<b.bounciness<<' '<<b.mass<<' '<<b.gravityScale;
@@ -223,7 +232,7 @@ Document Decode(std::string_view text)
 {
     Require(text.size()<=MaxSceneBytes,"Scene exceeds the 8 MiB limit.");
     std::istringstream in{std::string(text)}; in.imbue(std::locale::classic());
-    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,15); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
+    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,16); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
     Document scene; const auto count=Count(in,10000); std::set<GameObjectId> ids;
     for (std::size_t i=0;i<count;++i)
     {
@@ -257,9 +266,9 @@ Document Decode(std::string_view text)
         for (std::size_t j=0;j<behaviors;++j)
         {
             BehaviorData b; std::string type; in>>type;
-            Require(type=="mesh" || type=="script" || (version>=4 && (type=="collider"||type=="rigid_body"||type=="kinematic_body"||type=="static_body"||type=="area")) || (version>=6 && type=="camera") || (version>=9 && type=="ui") || (version>=11 && type=="audio") || (version>=12 && type=="audio_effect") || (version>=13 && type=="light") || (version>=14 && type=="environment"),"Unknown scene behavior type.");
+            Require(type=="mesh" || type=="script" || (version>=4 && (type=="collider"||type=="rigid_body"||type=="kinematic_body"||type=="static_body"||type=="area")) || (version>=6 && type=="camera") || (version>=9 && type=="ui") || (version>=11 && type=="audio") || (version>=12 && type=="audio_effect") || (version>=13 && type=="light") || (version>=14 && type=="environment") || (version>=16 && type=="decal"),"Unknown scene behavior type.");
             if (type=="mesh") { Require(!mesh,"Duplicate Mesh Renderer."); mesh=true; }
-            else if(type=="script")b.kind=BehaviorData::Kind::Script;else if(type=="collider")b.kind=BehaviorData::Kind::Collider;else if(type=="camera")b.kind=BehaviorData::Kind::Camera;else if(type=="ui")b.kind=BehaviorData::Kind::Ui;else if(type=="audio")b.kind=BehaviorData::Kind::Audio;else if(type=="audio_effect")b.kind=BehaviorData::Kind::AudioEffect;else if(type=="light")b.kind=BehaviorData::Kind::Light;else if(type=="environment")b.kind=BehaviorData::Kind::Environment;else if(type=="rigid_body")b.kind=BehaviorData::Kind::RigidBody;else if(type=="kinematic_body")b.kind=BehaviorData::Kind::KinematicBody;else if(type=="static_body")b.kind=BehaviorData::Kind::StaticBody;else b.kind=BehaviorData::Kind::Area;
+            else if(type=="script")b.kind=BehaviorData::Kind::Script;else if(type=="collider")b.kind=BehaviorData::Kind::Collider;else if(type=="camera")b.kind=BehaviorData::Kind::Camera;else if(type=="ui")b.kind=BehaviorData::Kind::Ui;else if(type=="audio")b.kind=BehaviorData::Kind::Audio;else if(type=="audio_effect")b.kind=BehaviorData::Kind::AudioEffect;else if(type=="light")b.kind=BehaviorData::Kind::Light;else if(type=="environment")b.kind=BehaviorData::Kind::Environment;else if(type=="decal")b.kind=BehaviorData::Kind::Decal;else if(type=="rigid_body")b.kind=BehaviorData::Kind::RigidBody;else if(type=="kinematic_body")b.kind=BehaviorData::Kind::KinematicBody;else if(type=="static_body")b.kind=BehaviorData::Kind::StaticBody;else b.kind=BehaviorData::Kind::Area;
             if(type=="collider"){Require(!collider,"Duplicate Collider.");collider=true;}else if(type=="camera"){Require(!camera,"Duplicate Camera.");camera=true;}else if(type=="rigid_body"||type=="kinematic_body"||type=="static_body"||type=="area"){Require(!body,"Duplicate physics body type.");body=true;}
             b.enabled=Boolean(in); b.priority=Float(in); b.asset=Text(in);if(type=="mesh"||type=="script")Asset(b.asset,type=="mesh");else Require(b.asset.empty(),"Native behaviors cannot reference assets.");
             if(type=="mesh"&&version>=10){Token(in,"mesh_material");b.meshMaterial=Text(in);if(!b.meshMaterial.empty()){Asset(b.meshMaterial,false);Require(b.meshMaterial.ends_with(".material"),"Expected a .material reference.");}}
@@ -293,6 +302,12 @@ Document Decode(std::string_view text)
                 b.envHeightBase=Float(in); b.envHeightFalloff=Float(in); b.envHeightStrength=Float(in);
                 b.envVolumetric=Boolean(in); b.envVolumetricSteps=static_cast<int>(Count(in,16));
                 Require(b.envFogFar>b.envFogNear && b.envFogDensity>=0 && b.envHeightFalloff>=0 && b.envHeightStrength>=0 && b.envVolumetricSteps>=2,"Invalid environment settings.");
+            }
+            else if(type=="decal"){
+                Token(in,"decal"); b.decalTexture=Text(in);
+                if(!b.decalTexture.empty()){Asset(b.decalTexture,false);Require(b.decalTexture.ends_with(".png")||b.decalTexture.ends_with(".jpg")||b.decalTexture.ends_with(".jpeg")||b.decalTexture.ends_with(".bmp")||b.decalTexture.ends_with(".tga")||b.decalTexture.ends_with(".gif")||b.decalTexture.ends_with(".tif")||b.decalTexture.ends_with(".dds"),"Expected an image reference for the decal.");}
+                b.decalTint=Vector(in); b.decalOpacity=Float(in); b.decalAngleFade=Float(in);
+                Require(b.decalOpacity>=0 && b.decalOpacity<=1 && b.decalAngleFade>=1 && b.decalAngleFade<=90,"Invalid decal settings.");
             }
             else if(type!="mesh"&&type!="script"){Token(in,"body");b.layer=static_cast<std::uint32_t>(Count(in,0xffffffffu));b.mask=static_cast<std::uint32_t>(Count(in,0xffffffffu));b.friction=Float(in);b.bounciness=Float(in);b.mass=Float(in);b.gravityScale=Float(in);b.velocity=Vector(in);b.angularVelocity=Vector(in);b.constantForce=Vector(in);b.constantTorque=Vector(in);Require(b.friction>=0&&b.bounciness>=0&&b.bounciness<=1&&b.mass>0,"Invalid physics body settings.");}
             Token(in,"variables"); const auto fields=Count(in,1024); Require(type=="script" || fields==0,"Only scripts can contain fields.");
@@ -385,6 +400,7 @@ Instance Instantiate(const Document& scene)
             else if(b.kind==BehaviorData::Kind::AudioEffect){auto& v=object.AddBehavior<audio::AudioEffect>();v.SetKind(static_cast<audio::EffectKind>(b.audioEffectKind));v.SetDecay(b.audioEffectDecay);v.SetWetMix(b.audioEffectWetMix);v.SetBlendDistance(b.audioEffectBlend);behavior=&v;}
             else if(b.kind==BehaviorData::Kind::Light){auto& v=object.AddBehavior<Light>();v.SetLightType(static_cast<Light::Type>(b.lightType));v.SetColor(b.lightColor);v.SetIntensity(b.lightIntensity);v.SetRange(b.lightRange);v.SetFalloff(b.lightFalloff);v.SetSpotOuter(b.lightSpotOuter);v.SetSpotInner(b.lightSpotInner);v.SetStatic(b.lightStatic);v.SetFogScatter(b.lightFogScatter);behavior=&v;}
             else if(b.kind==BehaviorData::Kind::Environment){auto& v=object.AddBehavior<Environment>();v.SetFog(static_cast<Environment::FogMode>(b.envFogMode));v.SetFogColor(b.envFogColor);v.SetFogFar(b.envFogFar);v.SetFogNear(b.envFogNear);v.SetFogDensity(b.envFogDensity);v.SetHeightBase(b.envHeightBase);v.SetHeightFalloff(b.envHeightFalloff);v.SetHeightStrength(b.envHeightStrength);v.SetVolumetric(b.envVolumetric);v.SetVolumetricSteps(b.envVolumetricSteps);behavior=&v;}
+            else if(b.kind==BehaviorData::Kind::Decal){auto& v=object.AddBehavior<Decal>(b.decalTexture);v.SetTint(b.decalTint);v.SetOpacity(b.decalOpacity);v.SetAngleFade(b.decalAngleFade);behavior=&v;}
             else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& v=object.AddBehavior<physics::RigidBody>();v.SetMass(b.mass);v.SetGravityScale(b.gravityScale);body=&v;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
             behavior->SetEnabled(b.enabled); behavior->SetPriority(b.priority);
         }
@@ -422,6 +438,7 @@ GameObjectId Append(const Document& scene,ObjectStore& objects,ScriptHost& scrip
             else if(b.kind==BehaviorData::Kind::AudioEffect){auto& v=object.AddBehavior<audio::AudioEffect>();v.SetKind(static_cast<audio::EffectKind>(b.audioEffectKind));v.SetDecay(b.audioEffectDecay);v.SetWetMix(b.audioEffectWetMix);v.SetBlendDistance(b.audioEffectBlend);behavior=&v;}
             else if(b.kind==BehaviorData::Kind::Light){auto& v=object.AddBehavior<Light>();v.SetLightType(static_cast<Light::Type>(b.lightType));v.SetColor(b.lightColor);v.SetIntensity(b.lightIntensity);v.SetRange(b.lightRange);v.SetFalloff(b.lightFalloff);v.SetSpotOuter(b.lightSpotOuter);v.SetSpotInner(b.lightSpotInner);v.SetStatic(b.lightStatic);v.SetFogScatter(b.lightFogScatter);behavior=&v;}
             else if(b.kind==BehaviorData::Kind::Environment){auto& v=object.AddBehavior<Environment>();v.SetFog(static_cast<Environment::FogMode>(b.envFogMode));v.SetFogColor(b.envFogColor);v.SetFogFar(b.envFogFar);v.SetFogNear(b.envFogNear);v.SetFogDensity(b.envFogDensity);v.SetHeightBase(b.envHeightBase);v.SetHeightFalloff(b.envHeightFalloff);v.SetHeightStrength(b.envHeightStrength);v.SetVolumetric(b.envVolumetric);v.SetVolumetricSteps(b.envVolumetricSteps);behavior=&v;}
+            else if(b.kind==BehaviorData::Kind::Decal){auto& v=object.AddBehavior<Decal>(b.decalTexture);v.SetTint(b.decalTint);v.SetOpacity(b.decalOpacity);v.SetAngleFade(b.decalAngleFade);behavior=&v;}
             else {physics::Body* body=nullptr;if(b.kind==BehaviorData::Kind::RigidBody){auto& value=object.AddBehavior<physics::RigidBody>();value.SetMass(b.mass);value.SetGravityScale(b.gravityScale);body=&value;}else if(b.kind==BehaviorData::Kind::KinematicBody)body=&object.AddBehavior<physics::KinematicBody>();else if(b.kind==BehaviorData::Kind::StaticBody)body=&object.AddBehavior<physics::StaticBody>();else body=&object.AddBehavior<physics::Area>();body->SetLayer(b.layer);body->SetMask(b.mask);body->SetFriction(b.friction);body->SetBounciness(b.bounciness);if(auto* moving=dynamic_cast<physics::MovingBody*>(body)){moving->SetVelocity(b.velocity);moving->SetAngularVelocity(b.angularVelocity);moving->SetConstantForce(b.constantForce);moving->SetConstantTorque(b.constantTorque);}behavior=body;}
             behavior->SetEnabled(b.enabled);behavior->SetPriority(b.priority);
         }

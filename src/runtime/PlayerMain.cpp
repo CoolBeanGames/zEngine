@@ -12,6 +12,7 @@
 #include "core/MeshRenderer.h"
 #include "core/Light.h"
 #include "core/Environment.h"
+#include "core/Decal.h"
 #include "SceneLights.h"
 #include "LightmapAssets.h"
 #include "CubeModel.h"
@@ -117,6 +118,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             // buffer carrying the baked lighting term. Keyed by object id.
             std::map<zengine::GameObjectId,std::pair<std::string,MeshHandle>> lightmapMeshes;
             std::map<std::string,zengine::lightmap::LightmapDoc> lightmapDocs;
+            std::map<std::string,TextureHandle> decalTextures; // ZE-76
+            const auto resolveDecalTexture=[&](const std::string& asset)->TextureHandle{
+                if(asset.empty())return {};
+                if(const auto it=decalTextures.find(asset);it!=decalTextures.end())return it->second;
+                TextureHandle handle;
+                try{handle=renderer.UploadImage(assetLibrary::Resolve(assetsRoot,std::filesystem::u8path(asset)));}catch(...){handle={};}
+                decalTextures[asset]=handle;
+                return handle;
+            };
             const auto resolveLightmapMesh=[&](const zengine::ObjectCore& object,const zengine::MeshRenderer& mr,MeshHandle base)->std::pair<MeshHandle,bool>{
                 if(!mr.Static()||mr.Lightmap().empty())return {base,true};
                 if(const auto it=lightmapMeshes.find(object.Id());it!=lightmapMeshes.end()&&it->second.first==mr.Lightmap())
@@ -183,12 +193,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                     const auto hardware=uiTookKeyboard?zengine::input::Hardware{}:zengine::input::PollWindows(focused);
                     accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,hardware,gameMouse);accumulated-=1.0/60.0;}
                 }
-                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();lightmapMeshes.clear();lightmapDocs.clear();uiAssets.Invalidate();}
+                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();lightmapMeshes.clear();lightmapDocs.clear();decalTextures.clear();uiAssets.Invalidate();}
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
                 for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(object.Is2D())continue;
                     if(const auto* env=object.GetBehavior<zengine::Environment>();env&&env->Enabled()&&!frame.environment)frame.environment=MakeEnvironment(*env);
                     if(const auto* light=object.GetBehavior<zengine::Light>();light&&light->Enabled()&&frame.lights.size()<8){DirectX::XMFLOAT4X4 lp;DirectX::XMStoreFloat4x4(&lp,ParentMatrix(session.Objects(),object));frame.lights.push_back(MakeLight(*light,zengine::As3D(object).GetTransform(),DirectX::XMLoadFloat4x4(&lp)));}
+                    if(const auto* decal=object.GetBehavior<zengine::Decal>();decal&&decal->Enabled()){DirectX::XMFLOAT4X4 dp;DirectX::XMStoreFloat4x4(&dp,ParentMatrix(session.Objects(),object));DecalData dd;dd.transform=zengine::As3D(object).GetTransform();dd.parentMatrix=dp;dd.texture=resolveDecalTexture(decal->Texture());dd.tint={decal->Tint().x,decal->Tint().y,decal->Tint().z};dd.opacity=decal->Opacity();dd.angleFadeCos=std::cos(decal->AngleFade()*3.14159265f/180.0f);frame.decals.push_back(dd);}
                     if(!visible(object.Id()))continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));const auto* mr=object.GetBehavior<zengine::MeshRenderer>();
                     auto lm=mr?resolveLightmapMesh(object,*mr,meshes.at(object.Id())):std::pair<MeshHandle,bool>{meshes.at(object.Id()),true};
                     frame.meshes.push_back({lm.first,t3d,parent,mr?resolveMeshMaterial(mr->Material()):MaterialHandle{},lm.second});}

@@ -115,6 +115,15 @@ struct Renderer::SpriteConstants
     XMFLOAT2 padding;
 };
 
+struct Renderer::DecalConstants
+{
+    XMFLOAT4X4 worldViewProjection; // mesh object -> clip
+    XMFLOAT4X4 world;               // mesh object -> world
+    XMFLOAT4X4 decalInvWorld;       // world -> decal local unit cube
+    XMFLOAT4 tint{1, 1, 1, 1};      // rgb + opacity
+    XMFLOAT4 params{0.2588f, 0, 0, -1}; // x = cos(angle fade), yzw = world projection direction
+};
+
 void Renderer::Initialize(HWND window, const std::uint32_t width, const std::uint32_t height)
 {
     CreateDeviceAndSwapChain(window, width, height);
@@ -147,6 +156,102 @@ void Renderer::Initialize(HWND window, const std::uint32_t width, const std::uin
     CreateShadowResources();
     CreateEditorGuides();
     CreateSpritePass();
+    CreateDecalPass();
+}
+
+void Renderer::CreateDecalPass()
+{
+    const std::filesystem::path shaderPath = ShaderFile(L"Decal.hlsl");
+    const ComPtr<ID3DBlob> vertexBytecode = CompileShader(shaderPath, "VSMain", "vs_5_0");
+    const ComPtr<ID3DBlob> pixelBytecode = CompileShader(shaderPath, "PSMain", "ps_5_0");
+    ThrowIfFailed(device_->CreateVertexShader(vertexBytecode->GetBufferPointer(), vertexBytecode->GetBufferSize(),
+                                              nullptr, &decalVertexShader_), "Create decal vertex shader");
+    ThrowIfFailed(device_->CreatePixelShader(pixelBytecode->GetBufferPointer(), pixelBytecode->GetBufferSize(),
+                                             nullptr, &decalPixelShader_), "Create decal pixel shader");
+
+    D3D11_BUFFER_DESC constants{};
+    constants.ByteWidth = sizeof(DecalConstants);
+    constants.Usage = D3D11_USAGE_DYNAMIC;
+    constants.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    constants.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    ThrowIfFailed(device_->CreateBuffer(&constants, nullptr, &decalConstantBuffer_), "Create decal constant buffer");
+
+    D3D11_BLEND_DESC blend{};
+    blend.RenderTarget[0].BlendEnable = TRUE;
+    blend.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    blend.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    blend.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    blend.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
+    blend.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    blend.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    blend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    ThrowIfFailed(device_->CreateBlendState(&blend, &decalBlend_), "Create decal blend state");
+
+    D3D11_DEPTH_STENCIL_DESC depth{};
+    depth.DepthEnable = TRUE;
+    depth.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+    depth.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+    ThrowIfFailed(device_->CreateDepthStencilState(&depth, &decalDepth_), "Create decal depth state");
+}
+
+void Renderer::RenderDecals(const ViewportFrame& frame, const XMMATRIX& viewProjection)
+{
+    if (frame.decals.empty() || frame.meshes.empty()) return;
+
+    constexpr UINT stride = static_cast<UINT>(sizeof(Vertex));
+    constexpr UINT offset = 0;
+    context_->IASetInputLayout(inputLayout_.Get());
+    context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context_->VSSetShader(decalVertexShader_.Get(), nullptr, 0);
+    context_->PSSetShader(decalPixelShader_.Get(), nullptr, 0);
+    context_->VSSetConstantBuffers(0, 1, decalConstantBuffer_.GetAddressOf());
+    context_->PSSetConstantBuffers(0, 1, decalConstantBuffer_.GetAddressOf());
+    context_->PSSetSamplers(0, 1, albedoSampler_.GetAddressOf());
+    const float blendFactor[4]{0, 0, 0, 0};
+    context_->OMSetBlendState(decalBlend_.Get(), blendFactor, 0xffffffff);
+    context_->OMSetDepthStencilState(decalDepth_.Get(), 0);
+
+    for (const auto& decal : frame.decals)
+    {
+        const XMMATRIX decalWorld = TransformMatrix(decal.transform) *
+            (decal.parentMatrix ? XMLoadFloat4x4(&*decal.parentMatrix) : XMMatrixIdentity());
+        if (std::abs(XMVectorGetX(XMMatrixDeterminant(decalWorld))) < 1e-12f) continue;
+        const XMMATRIX decalInvWorld = XMMatrixInverse(nullptr, decalWorld);
+        XMFLOAT3 projectDir;
+        XMStoreFloat3(&projectDir, XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0, 0, -1, 0), decalWorld)));
+        ID3D11ShaderResourceView* texture = decal.texture ? decal.texture->view.Get() : whiteTexture_.Get();
+        context_->PSSetShaderResources(0, 1, &texture);
+
+        for (const auto& draw : frame.meshes)
+        {
+            if (!draw.mesh) continue;
+            const XMMATRIX meshWorld = TransformMatrix(draw.transform) *
+                (draw.parentMatrix ? XMLoadFloat4x4(&*draw.parentMatrix) : XMMatrixIdentity());
+            DecalConstants dc{};
+            XMStoreFloat4x4(&dc.worldViewProjection, XMMatrixTranspose(meshWorld * viewProjection));
+            XMStoreFloat4x4(&dc.world, XMMatrixTranspose(meshWorld));
+            XMStoreFloat4x4(&dc.decalInvWorld, XMMatrixTranspose(decalInvWorld));
+            dc.tint = {decal.tint.x, decal.tint.y, decal.tint.z, decal.opacity};
+            dc.params = {decal.angleFadeCos, projectDir.x, projectDir.y, projectDir.z};
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            ThrowIfFailed(context_->Map(decalConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map decal constants");
+            *static_cast<DecalConstants*>(mapped.pData) = dc;
+            context_->Unmap(decalConstantBuffer_.Get(), 0);
+            context_->IASetVertexBuffers(0, 1, draw.mesh->vertices.GetAddressOf(), &stride, &offset);
+            context_->IASetIndexBuffer(draw.mesh->indices.Get(), draw.mesh->indexFormat, 0);
+            for (const auto& part : draw.mesh->parts) context_->DrawIndexed(part.indexCount, part.firstIndex, 0);
+        }
+    }
+
+    // Restore the main-pass pipeline so the editor guides / sprites draw normally.
+    context_->OMSetBlendState(nullptr, blendFactor, 0xffffffff);
+    context_->OMSetDepthStencilState(nullptr, 0);
+    context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
+    context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
+    context_->VSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf());
+    context_->VSSetConstantBuffers(1, 1, lightConstantBuffer_.GetAddressOf());
+    context_->PSSetConstantBuffers(0, 1, sceneConstantBuffer_.GetAddressOf());
+    context_->PSSetConstantBuffers(1, 1, lightConstantBuffer_.GetAddressOf());
 }
 
 void Renderer::CreateShadowResources()
@@ -985,6 +1090,7 @@ void Renderer::Render(const ViewportFrame& frame)
         }
         ++lastMeshCount_;
     }
+    RenderDecals(frame, view * projection); // ZE-76: projected decals over the lit meshes
     if(frame.showEditorGuides && (!frame.colliders.empty() || !frame.cameraGizmos.empty() || !frame.audioRanges.empty() || !frame.lightGizmos.empty())) {
         std::vector<Vertex> vertices;vertices.reserve(frame.colliders.size()*160+frame.cameraGizmos.size()*48+frame.audioRanges.size()*288+frame.lightGizmos.size()*160);const auto segment=[&](Float3 a,Float3 b,Float3 color){vertices.push_back({a,{0,1,0},color});vertices.push_back({b,{0,1,0},color});};
         for(const auto& lg:frame.lightGizmos){
@@ -1043,7 +1149,7 @@ void Renderer::Render(const ViewportFrame& frame)
             for(auto edge:e)segment(c[edge[0]],c[edge[1]],color);
             const Float3 apex=point(0,0,0);for(int i=0;i<4;++i)segment(apex,c[i],color); // lens cone back to the origin
         }
-        for(const auto& draw:frame.colliders){const Float3 color=draw.selected?Float3{1,.8f,.15f}:draw.audioZone?Float3{.55f,.4f,.9f}:Float3{.2f,.85f,.65f};const auto transform=XMMatrixScaling(draw.size.x,draw.size.y,draw.size.z)*XMMatrixTranslation(draw.offset.x,draw.offset.y,draw.offset.z)*TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity());
+        for(const auto& draw:frame.colliders){const Float3 color=draw.selected?Float3{1,.8f,.15f}:draw.decal?Float3{.95f,.55f,.25f}:draw.audioZone?Float3{.55f,.4f,.9f}:Float3{.2f,.85f,.65f};const auto transform=XMMatrixScaling(draw.size.x,draw.size.y,draw.size.z)*XMMatrixTranslation(draw.offset.x,draw.offset.y,draw.offset.z)*TransformMatrix(draw.transform)*(draw.parentMatrix?XMLoadFloat4x4(&*draw.parentMatrix):XMMatrixIdentity());
             const auto point=[&](float x,float y,float z){XMFLOAT3 out;XMStoreFloat3(&out,XMVector3TransformCoord(XMVectorSet(x,y,z,1),transform));return Float3{out.x,out.y,out.z};};
             if(draw.shape==zengine::physics::ColliderShape::Box){const int edges[][2]={{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};Float3 p[8];for(int i=0;i<8;++i)p[i]=point((i&1)?.5f:-.5f,(i&4)?.5f:-.5f,(i&2)?.5f:-.5f);for(auto edge:edges)segment(p[edge[0]],p[edge[1]],color);}
             else {constexpr int slices=24;const float radius=.5f;const float half=draw.shape==zengine::physics::ColliderShape::Sphere?0:.5f;for(int plane=0;plane<3;++plane)for(int i=0;i<slices;++i){const float a=2*3.14159265f*i/slices,b=2*3.14159265f*(i+1)/slices;auto circle=[&](float angle){const float c=std::cos(angle)*radius,s=std::sin(angle)*radius;if(draw.shape==zengine::physics::ColliderShape::Sphere)return plane==0?point(c,s,0):plane==1?point(c,0,s):point(0,c,s);return plane==0?point(c,s+(s>=0?half:-half),0):point(c,s>=0?half:-half,s);};segment(circle(a),circle(b),color);} }

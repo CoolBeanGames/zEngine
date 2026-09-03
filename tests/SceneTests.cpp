@@ -4,6 +4,7 @@
 #include "audio/AudioSource.h"
 #include "audio/AudioEffect.h"
 #include "core/Light.h"
+#include "core/Decal.h"
 #include "core/Environment.h"
 #include "physics/PhysicsBehavior.h"
 #include <windows.h>
@@ -63,7 +64,7 @@ int main()
         Reject([&]{scenes::Resolve(root,root.parent_path()/"outside.zscene");});
         Reject([&]{scenes::Resolve(root,"wrong.zsh");});
         Check(scenes::Decode("ZENGINE_SCENE 1\nobjects 0\nend\n").objects.empty(),"Legacy scene compatibility failed");
-        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 16\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
+        for (const auto& text:{std::string(""),std::string("ZENGINE_SCENE 17\nobjects 0\nend\n"),encoded.substr(0,encoded.size()/2),encoded+"junk",std::string(scenes::MaxSceneBytes+1,'x')})
             Reject([&]{scenes::Decode(text);});
         auto bad=scene; bad.objects.push_back(scene.objects[0]); Reject([&]{scenes::Encode(bad);});
         bad=scene; bad.objects[0].id=0; Reject([&]{scenes::Encode(bad);});
@@ -245,6 +246,21 @@ int main()
                   && std::abs(re->FogDensity()-0.08f)<0.001f && std::abs(re->HeightStrength()-1.5f)<0.001f,
                   "Environment props lost on restore");
             Check(rlamp && std::abs(rlamp->FogScatter()-0.7f)<0.001f,"Light.fogScatter lost on restore");
+        }
+        // ZE-76: a Decal round-trips through scene v16.
+        {
+            ObjectStore s; ScriptHost h;
+            auto& mark=s.Create("Splatter");
+            auto& d=mark.AddBehavior<Decal>("Decals/blood.png");
+            d.SetTint({0.8f,0.1f,0.1f}); d.SetOpacity(0.6f); d.SetAngleFade(50);
+            const auto enc=scenes::Encode(scenes::Capture(s,h));
+            Check(enc.find("decal \"Decals/blood.png\"")!=std::string::npos,"Decal was not serialized");
+            auto copy=scenes::Instantiate(scenes::Decode(enc));
+            Check(scenes::Encode(scenes::Capture(copy.objects,copy.scripts))==enc,"Decal scene round trip changed authored data");
+            auto* rd=copy.objects.Find(copy.objects.At(0).Id())->GetBehavior<Decal>();
+            Check(rd && rd->Texture()=="Decals/blood.png" && std::abs(rd->Opacity()-0.6f)<0.001f
+                  && std::abs(rd->AngleFade()-50.0f)<0.001f && std::abs(rd->Tint().x-0.8f)<0.001f,
+                  "Decal props lost on restore");
         }
         // ZE-66: the new scroll / button / video / html controls round-trip too.
         {
