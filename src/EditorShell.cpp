@@ -554,8 +554,14 @@ ViewportFrame EditorShell::BuildSceneFrame() const
             DirectX::XMFLOAT4X4 parent; DirectX::XMStoreFloat4x4(&parent,ParentMatrix(objects_,object));
             frame.meshes.push_back({bound->second.mesh, object.GetTransform(),parent, ResolveMaterial(mesh->Material())});
         }
-        if (const auto* light = object.GetBehavior<zengine::Light>(); light && light->Enabled() && frame.lights.size() < 8)
-            frame.lights.push_back(MakeLight(*light, object.GetTransform(), ParentMatrix(objects_, object)));
+        if (const auto* light = object.GetBehavior<zengine::Light>(); light && light->Enabled())
+        {
+            const LightData ld = MakeLight(*light, object.GetTransform(), ParentMatrix(objects_, object));
+            if (frame.lights.size() < 8) frame.lights.push_back(ld);
+            if (!Playing())
+                frame.lightGizmos.push_back({ld.type, ld.position, ld.direction, ld.color, ld.range,
+                                             light->SpotOuter(), object.Id() == selectedObject_});
+        }
     }
     if (const auto* object = SelectedGameObject(); object && CanEdit(object->Id(),true))
     {

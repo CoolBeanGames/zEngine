@@ -837,6 +837,19 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         aa.methods.emplace("set_reverb", std::move(reverb));
         program.classes.emplace("audioArea", std::move(aa));
     }
+    // ZE-74: a script inherits lightSource to toggle / retune a Light on the same object.
+    {
+        Class ls; ls.name="lightSource"; ls.base="gameObject";
+        ls.fields=program.classes.at("gameObject").fields;
+        Function noArgs; noArgs.result="void";
+        ls.methods.emplace("enable", noArgs);
+        ls.methods.emplace("disable", noArgs);
+        Function setColor; setColor.result="void"; setColor.params={"float","float","float"};
+        ls.methods.emplace("set_color", std::move(setColor));
+        Function setIntensity; setIntensity.result="void"; setIntensity.params={"float"};
+        ls.methods.emplace("set_intensity", std::move(setIntensity));
+        program.classes.emplace("lightSource", std::move(ls));
+    }
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
     auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());
     for(const auto& native:NativeTypes())if(native.physicsBody){Class body;body.name=std::string(native.name);body.base=std::string(native.base);body.fields=nativePhysics.fields;body.signals=nativePhysics.signals;program.classes.emplace(body.name,std::move(body));}
@@ -985,6 +998,7 @@ struct Runtime::Impl {
     Runtime::PrintCallback printCallback;
     std::function<void(ObjectRef,std::string_view)> audioCallback; // audioPlayer.play() / .stop()
     std::function<void(ObjectRef,std::string_view,float,float)> audioAreaCallback; // audioArea.enable/disable/set_reverb
+    std::function<void(ObjectRef,std::string_view,float,float,float)> lightCallback; // lightSource.enable/disable/set_color/set_intensity
     std::mt19937_64 rng{std::random_device{}()};                   // Mathf.random* (ZE-110)
     std::function<void(std::string_view)> sceneLoadCall;
     std::function<std::string()> sceneCurrentCall;
@@ -1353,6 +1367,16 @@ struct Runtime::Impl {
             if(name=="set_reverb"){ if(args.size()!=2)Error(t,"set_reverb takes decay and wet mix"); a=Number(Coerce(args[0],"float",t)); b=Number(Coerce(args[1],"float",t)); }
             else if(!args.empty())Error(t,"audioArea "+name+" takes no arguments");
             if(audioAreaCallback)audioAreaCallback(ref,name,static_cast<float>(a),static_cast<float>(b));
+            return {};
+        }
+        if((name=="enable"||name=="disable"||name=="set_color"||name=="set_intensity") && program->Assignable("lightSource",object.type->name)
+           && program->Method(object.type->name,name)==&program->classes.at("lightSource").methods.at(name)) {
+            Tick(t);
+            double a=0,b=0,c=0;
+            if(name=="set_color"){ if(args.size()!=3)Error(t,"set_color takes r, g and b"); a=Number(Coerce(args[0],"float",t)); b=Number(Coerce(args[1],"float",t)); c=Number(Coerce(args[2],"float",t)); }
+            else if(name=="set_intensity"){ if(args.size()!=1)Error(t,"set_intensity takes one number"); a=Number(Coerce(args[0],"float",t)); }
+            else if(!args.empty())Error(t,"lightSource "+name+" takes no arguments");
+            if(lightCallback)lightCallback(ref,name,static_cast<float>(a),static_cast<float>(b),static_cast<float>(c));
             return {};
         }
         if(program->Assignable("PhysicsBody",object.type->name) && (name=="add_force"||name=="add_impulse"||name=="add_torque"||name=="add_angular_impulse")) {
@@ -1740,6 +1764,7 @@ void Runtime::SetPrefabSpawnCallback(PrefabSpawnCall callback){impl_->prefabSpaw
 void Runtime::SetPrintCallback(PrintCallback callback){impl_->printCallback=std::move(callback);}
 void Runtime::SetAudioCallback(std::function<void(ObjectRef,std::string_view)> callback){impl_->audioCallback=std::move(callback);}
 void Runtime::SetAudioAreaCallback(std::function<void(ObjectRef,std::string_view,float,float)> callback){impl_->audioAreaCallback=std::move(callback);}
+void Runtime::SetLightCallback(std::function<void(ObjectRef,std::string_view,float,float,float)> callback){impl_->lightCallback=std::move(callback);}
 void Runtime::SetSceneCallbacks(std::function<void(std::string_view)> load,std::function<std::string()> current){impl_->sceneLoadCall=std::move(load);impl_->sceneCurrentCall=std::move(current);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }

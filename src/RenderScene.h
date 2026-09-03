@@ -41,6 +41,9 @@ struct ColliderDraw { zengine::physics::ColliderShape shape; zengine::Transform 
 // ZE-111: audible range of a 3D AudioSource - inner (full volume) + outer (silent)
 // wireframe spheres centred on the object. 2D / global sources emit no AudioRange.
 struct AudioRange { zengine::Transform transform; std::optional<DirectX::XMFLOAT4X4> parentMatrix; float minDistance=1, maxDistance=25; bool selected=false; };
+// ZE-74: editor guide for a Light - a marker at its position plus a beam line
+// (directional / spot) or a range sphere (point / spot), tinted by the colour.
+struct LightGizmo { int type=0; zengine::Vec3 position{}; zengine::Vec3 direction{0,0,1}; Float3 color{1,1,1}; float range=10; float spotOuterDeg=35; bool selected=false; };
 // A Camera GameObject: its frustum is drawn as an editor guide, and the main one
 // replaces the orbit camera as the view when set as gameView.
 struct CameraView
@@ -57,6 +60,7 @@ struct ViewportFrame
     std::vector<LightData> lights; // ZE-74: empty => the scene renders unlit
     std::vector<ColliderDraw> colliders;
     std::vector<AudioRange> audioRanges;
+    std::vector<LightGizmo> lightGizmos;
     std::vector<CameraView> cameraGizmos;
     std::optional<CameraView> gameView; // when set, the renderer views the scene through this camera
     std::optional<zengine::Transform> selectionTransform;

@@ -544,6 +544,23 @@ void AudioPlayerClass() {
     areaRuntime.Start(cave);
     Check(enables == 1 && disables == 1 && lastDecay == 4.0f && std::fabs(lastWet - 0.9f) < 1e-4f,
           "audioArea methods did not route to the host");
+
+    // ZE-74: lightSource - toggle and retune a Light from script.
+    int lon = 0, loff = 0; float lr = 0, lg = 0, lb = 0, li = 0;
+    auto lightProgram = Compile(R"(class Lamp : lightSource {
+        func start(){ disable(); enable(); set_color(1.0, 0.5, 0.25); set_intensity(3.0); }
+    })");
+    Runtime lightRuntime(lightProgram);
+    lightRuntime.SetLightCallback([&](ObjectRef, std::string_view m, float a, float b, float c) {
+        if (m == "enable") lon += 1;
+        else if (m == "disable") loff += 1;
+        else if (m == "set_color") { lr = a; lg = b; lb = c; }
+        else if (m == "set_intensity") li = a;
+    });
+    const auto lamp = lightRuntime.Create("Lamp");
+    lightRuntime.Start(lamp);
+    Check(lon == 1 && loff == 1 && lr == 1.0f && std::fabs(lg - 0.5f) < 1e-4f && li == 3.0f,
+          "lightSource methods did not route to the host");
 }
 void GetBehavior() {
     auto p=Compile(R"(class Player : rigidbody {

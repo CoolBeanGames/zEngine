@@ -854,8 +854,33 @@ void Renderer::Render(const ViewportFrame& frame)
         }
         ++lastMeshCount_;
     }
-    if(frame.showEditorGuides && (!frame.colliders.empty() || !frame.cameraGizmos.empty() || !frame.audioRanges.empty())) {
-        std::vector<Vertex> vertices;vertices.reserve(frame.colliders.size()*160+frame.cameraGizmos.size()*48+frame.audioRanges.size()*288);const auto segment=[&](Float3 a,Float3 b,Float3 color){vertices.push_back({a,{0,1,0},color});vertices.push_back({b,{0,1,0},color});};
+    if(frame.showEditorGuides && (!frame.colliders.empty() || !frame.cameraGizmos.empty() || !frame.audioRanges.empty() || !frame.lightGizmos.empty())) {
+        std::vector<Vertex> vertices;vertices.reserve(frame.colliders.size()*160+frame.cameraGizmos.size()*48+frame.audioRanges.size()*288+frame.lightGizmos.size()*160);const auto segment=[&](Float3 a,Float3 b,Float3 color){vertices.push_back({a,{0,1,0},color});vertices.push_back({b,{0,1,0},color});};
+        for(const auto& lg:frame.lightGizmos){
+            const Float3 p{lg.position.x,lg.position.y,lg.position.z};
+            const Float3 col=lg.selected?Float3{1,.8f,.15f}:Float3{std::max(.3f,lg.color.x),std::max(.3f,lg.color.y),std::max(.3f,lg.color.z)};
+            for(int a=0;a<3;++a){Float3 e0=p,e1=p;(&e0.x)[a]-=0.3f;(&e1.x)[a]+=0.3f;segment(e0,e1,col);} // position star
+            const float dl=std::sqrt(lg.direction.x*lg.direction.x+lg.direction.y*lg.direction.y+lg.direction.z*lg.direction.z);
+            const Float3 dir=dl>1e-4f?Float3{lg.direction.x/dl,lg.direction.y/dl,lg.direction.z/dl}:Float3{0,0,1};
+            if(lg.type==0){ // directional: an arrow along the beam
+                const Float3 tip{p.x+dir.x*1.6f,p.y+dir.y*1.6f,p.z+dir.z*1.6f};
+                segment(p,tip,col);
+            } else if(lg.type==1){ // point: a range sphere
+                constexpr int slices=24;const float r=lg.range;
+                for(int plane=0;plane<3;++plane)for(int i=0;i<slices;++i){const float a0=6.2831853f*i/slices,b0=6.2831853f*(i+1)/slices;auto pt=[&](float ang){const float c=std::cos(ang)*r,s=std::sin(ang)*r;return plane==0?Float3{p.x+c,p.y+s,p.z}:plane==1?Float3{p.x+c,p.y,p.z+s}:Float3{p.x,p.y+c,p.z+s};};segment(pt(a0),pt(b0),col);}
+            } else { // spot: a cone to the outer angle
+                const float len=lg.range;const float rad=std::tan(lg.spotOuterDeg*3.14159265f/180.0f)*len;
+                Float3 up=std::abs(dir.y)<0.95f?Float3{0,1,0}:Float3{1,0,0};
+                Float3 rt{up.y*dir.z-up.z*dir.y,up.z*dir.x-up.x*dir.z,up.x*dir.y-up.y*dir.x};
+                const float rl=std::sqrt(rt.x*rt.x+rt.y*rt.y+rt.z*rt.z);rt={rt.x/rl,rt.y/rl,rt.z/rl};
+                Float3 u2{dir.y*rt.z-dir.z*rt.y,dir.z*rt.x-dir.x*rt.z,dir.x*rt.y-dir.y*rt.x};
+                const Float3 centre{p.x+dir.x*len,p.y+dir.y*len,p.z+dir.z*len};
+                constexpr int slices=20;Float3 prev{};
+                for(int i=0;i<=slices;++i){const float ang=6.2831853f*i/slices,c=std::cos(ang)*rad,s=std::sin(ang)*rad;
+                    Float3 rim{centre.x+rt.x*c+u2.x*s,centre.y+rt.y*c+u2.y*s,centre.z+rt.z*c+u2.z*s};
+                    if(i>0)segment(prev,rim,col); if(i%5==0)segment(p,rim,col); prev=rim;}
+            }
+        }
         for(const auto& range:frame.audioRanges){
             const auto world=TransformMatrix(range.transform)*(range.parentMatrix?XMLoadFloat4x4(&*range.parentMatrix):XMMatrixIdentity());
             XMFLOAT3 wp;XMStoreFloat3(&wp,XMVector3TransformCoord(XMVectorSet(0,0,0,1),world));
