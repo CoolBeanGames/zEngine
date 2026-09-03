@@ -108,16 +108,16 @@ Current gaps:
 - VideoTexture shows a white rect in the editor (no resolveVideoFrame wired in EditorShell) and there is no way to create a .zvid asset from the editor (VideoClip::Encode exists but is not exposed), so video is not usable end to end.
 - Confirm real font-atlas text rendering works for every text-bearing control at the final scale.</prompt>
     <requirements>TextureRect, PanelContainer, Button (all states) and UiHtml &lt;img&gt; display real image files (png/jpg/bmp/tga/... from the asset library) via the renderer texture path; nine-slice samples the real texture correctly. The Inspector exposes a proper asset picker for every texture field (browse + drag an image asset from the library onto the field), and the field stores the project-relative asset path. Text and LongText support horizontal (left/center/right) and vertical (top/middle/bottom) alignment, and a word-wrap mode that wraps to the control's width; UiHtml lays out wrapped paragraphs. A UI reference/design resolution + scale mode (keep-aspect / stretch / fixed) makes authored UI look correct at any window size, in the editor and in a build. Disabling a container or panel disables input for and visually dims its whole subtree. VideoTexture previews real frames in the editor viewport, and a .zvid asset can be created from the editor (e.g. right-click -&gt; build .zvid from an image-sequence folder, or import); the player already plays it. All text-bearing controls render through the real font atlas at the active scale. Full ctest green; editor + player + a RELEASE build (zip the release build for GitHub); a visual QA capture of a populated UI.</requirements>
-    <inProgress>false</inProgress>
+    <inProgress>true</inProgress>
     <done>false</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey></lockKey>
+    <lockKey>k7m2x9qp</lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy>ZE-96</blockedBy>
-    <dateStarted></dateStarted>
+    <dateStarted>2026-09-03 00:00</dateStarted>
     <dueDate></dueDate>
     <commit>true</commit>
     <build>true</build>
