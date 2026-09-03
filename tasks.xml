@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <tasks project="zEngine" nextIndex="100">
   <task id="ZE-95">
     <name>UI click detection breaks for the control with GameObject id 1</name>
@@ -64,12 +64,12 @@ Current state to build on:
 
 What "done" means: build a scripted, interactive menu (buttons that change state, a text field you can type into, a value the script drives, a panel the script shows/hides) that works both in the editor Play preview and in a standalone build, using only scripts + the scene tree.</prompt>
     <requirements>A script class that inherits a ui:: type (e.g. class Menu : uiPanel) can read and write EVERY serialized property of its control at runtime (base: anchor, size, min_size, order, visible, clickable; and every per-type field - text, value, color/tint, texture names, padding, spacing, fill_cross, scroll_x/y, horizontal, playing, loop, speed, html, background, margins, slice, pixel_height, placeholder, region, vertical, fill_color, background_color, disabled, per-state button colours/textures). Transform2D position/rotation/scale on a 2D object round-trips through the script proxy like the 3D Transform does. TextEntry can be typed into (keyboard) and queried both in the editor Play preview and in a standalone build; Enter fires a `submitted` signal. Button / UiHtml report which element was activated (a script can identify the clicked button or link). Hover and focus signals (mouse_entered, mouse_exited, focus_entered, focus_exited) fire on controls. Tab / Shift-Tab move focus between focusable controls; Enter / Space activate the focused button; Esc blurs. A control (or panel subtree) under the pointer consumes the click so it does NOT also reach the 3D game input / raycast layer, and the game can query "did the UI take the pointer / keyboard this frame". The editor Play preview routes UI pointer + wheel + keyboard so UI can be tested without a build. Scripts can build and change the UI tree at runtime: get parent / children, find a descendant by name, add / remove / reparent ui controls, spawn a UI prefab and get its root. Full ctest green; editor + player build; the demo menu described in the prompt works end to end.</requirements>
-    <inProgress>true</inProgress>
-    <done>false</done>
+    <inProgress>false</inProgress>
+    <done>true</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey>k7m2x9qp</lockKey>
+    <lockKey></lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
@@ -79,20 +79,20 @@ What "done" means: build a scripted, interactive menu (buttons that change state
     <build>true</build>
     <release>false</release>
     <tags>ui,scripting,input</tags>
-    <notes></notes>
-    <filesChanged></filesChanged>
+    <notes>Two-way ScriptHost sync for gameObject2D / ui:: control proxies (SyncUiControl): every serialized control property + Transform2D round-trip through the script proxy each tick, matching the 3D path. 2D natives now get a gameObject2D proxy (Proxy in ScriptHost.cpp) so parent chains, find() and reparent coerce correctly. Scripts: get_children(), find(name), reparent via parent=, spawn UI prefab root. Raw AddBehavior-from-script is intentionally not exposed - scripts inherit a control or spawn a prefab. UiSystem focus model: Tab/Shift-Tab cycle focusables, Enter/Space activate focused button, Esc blurs; hover/focus enter-exit tracking; TextEntry submitted; TookPointer/TookKeyboard capture flags for game-input/raycast skip. PlayerMain pumps WM_CHAR into ui.Interact and builds UI before session.Tick; editor Play preview routes viewport pointer+wheel+keyboard into its UiSystem. GameSession dispatches mouse_entered/mouse_exited/focus_entered/focus_exited/submitted. Full ctest 35/35; editor+player build. Commit 72a5ad6.</notes>
+    <filesChanged>src/ScriptHost.cpp, src/ui/UiSystem.h, src/ui/UiSystem.cpp, src/ui/UiControl.h, src/runtime/GameSession.h, src/runtime/PlayerMain.cpp, src/EditorShell.h, src/EditorShell.cpp, scripting/src/Script.cpp, scripting/include/zscript/Script.h, CMakeLists.txt, tests/ScriptHostTests.cpp, tests/UiTests.cpp, scripting/tests/ScriptTests.cpp</filesChanged>
     <image></image>
     <subtasks>
-      <subtask done="false">ScriptHost: two-way field sync for ui:: control proxies - read the control's live values into the proxy before each lifecycle callback, and commit the script's writes back to the control after (every serialized property, per control type)</subtask>
-      <subtask done="false">Transform2D sync for 2D objects through the script proxy (position/rotation/scale + was_moved/was_rotated/was_scaled signals), matching the 3D path</subtask>
-      <subtask done="false">Scripts can manipulate the UI tree at runtime: parent/children accessors, find descendant by name, add/remove/reparent ui controls, spawn a UI prefab and get its root</subtask>
-      <subtask done="false">PlayerMain: pump WM_CHAR (and backspace/enter) into ui.Interact typed input; standalone TextEntry typing works</subtask>
-      <subtask done="false">Focus model in UiSystem: Tab / Shift-Tab cycle focusable controls, Enter/Space activate the focused button, Esc blurs; focusable flag per control</subtask>
-      <subtask done="false">Hover + focus signals: mouse_entered / mouse_exited / focus_entered / focus_exited on ui controls (engine detection + script signal dispatch)</subtask>
-      <subtask done="false">TextEntry `submitted` signal on Enter; Button and UiHtml report the activated element (button index / link href or id) so a script can branch on it</subtask>
-      <subtask done="false">Pointer/keyboard capture: a control under the pointer consumes the event; expose "UI took the pointer/keyboard this frame" so game input / raycasting can skip; a modal/blocking panel option</subtask>
-      <subtask done="false">Editor Play preview: route viewport pointer (incl. wheel) + keyboard into the editor's UiSystem so scripted UI is testable in the editor without a build</subtask>
-      <subtask done="false">Regression tests for all of the above (UiTests, ScriptHostTests, ScriptTests, AssetTests --ui) plus an end-to-end scripted-menu test</subtask>
+      <subtask done="true">ScriptHost: two-way field sync for ui:: control proxies - read the control's live values into the proxy before each lifecycle callback, and commit the script's writes back to the control after (every serialized property, per control type)</subtask>
+      <subtask done="true">Transform2D sync for 2D objects through the script proxy (position/rotation/scale + was_moved/was_rotated/was_scaled signals), matching the 3D path</subtask>
+      <subtask done="true">Scripts can manipulate the UI tree at runtime: parent/children accessors, find descendant by name, add/remove/reparent ui controls, spawn a UI prefab and get its root</subtask>
+      <subtask done="true">PlayerMain: pump WM_CHAR (and backspace/enter) into ui.Interact typed input; standalone TextEntry typing works</subtask>
+      <subtask done="true">Focus model in UiSystem: Tab / Shift-Tab cycle focusable controls, Enter/Space activate the focused button, Esc blurs; focusable flag per control</subtask>
+      <subtask done="true">Hover + focus signals: mouse_entered / mouse_exited / focus_entered / focus_exited on ui controls (engine detection + script signal dispatch)</subtask>
+      <subtask done="true">TextEntry `submitted` signal on Enter; Button and UiHtml report the activated element (button index / link href or id) so a script can branch on it</subtask>
+      <subtask done="true">Pointer/keyboard capture: a control under the pointer consumes the event; expose "UI took the pointer/keyboard this frame" so game input / raycasting can skip; a modal/blocking panel option</subtask>
+      <subtask done="true">Editor Play preview: route viewport pointer (incl. wheel) + keyboard into the editor's UiSystem so scripted UI is testable in the editor without a build</subtask>
+      <subtask done="true">Regression tests for all of the above (UiTests, ScriptHostTests, ScriptTests, AssetTests --ui) plus an end-to-end scripted-menu test</subtask>
     </subtasks>
   </task>
   <task id="ZE-97">
