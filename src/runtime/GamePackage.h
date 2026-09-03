@@ -5,7 +5,9 @@
 #include <functional>
 
 namespace zengine::game {
-struct Settings {SceneCamera camera;bool showFps=true;};
+// uiReference {0,0} = no UI scaling (raw window pixels). Otherwise the UI is laid
+// out against uiReference and scaled to the window per uiScaleMode.
+struct Settings {SceneCamera camera;bool showFps=true;float uiReferenceWidth=0,uiReferenceHeight=0;int uiScaleMode=1;};
 std::string EncodeSettings(const Settings&);
 Settings DecodeSettings(const std::string&);
 // Produces a new, uniquely named output directory. Never overwrites an earlier build.

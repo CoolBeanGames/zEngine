@@ -31,6 +31,72 @@ namespace zengine::ui
         return false;
     }
 
+    const char* HAlignName(HAlign a)
+    { return a == HAlign::Center ? "center" : a == HAlign::Right ? "right" : "left"; }
+    const char* VAlignName(VAlign a)
+    { return a == VAlign::Middle ? "middle" : a == VAlign::Bottom ? "bottom" : "top"; }
+    bool ParseHAlign(std::string_view n, HAlign& out)
+    {
+        if (n == "left") { out = HAlign::Left; return true; }
+        if (n == "center" || n == "centre") { out = HAlign::Center; return true; }
+        if (n == "right") { out = HAlign::Right; return true; }
+        return false;
+    }
+    bool ParseVAlign(std::string_view n, VAlign& out)
+    {
+        if (n == "top") { out = VAlign::Top; return true; }
+        if (n == "middle" || n == "center" || n == "centre") { out = VAlign::Middle; return true; }
+        if (n == "bottom") { out = VAlign::Bottom; return true; }
+        return false;
+    }
+    const char* ScaleModeName(ScaleMode m)
+    {
+        switch (m)
+        {
+        case ScaleMode::Disabled:    return "disabled";
+        case ScaleMode::KeepAspect:  return "keep_aspect";
+        case ScaleMode::Stretch:     return "stretch";
+        case ScaleMode::FixedWidth:  return "fixed_width";
+        case ScaleMode::FixedHeight: return "fixed_height";
+        }
+        return "keep_aspect";
+    }
+    bool ParseScaleMode(std::string_view n, ScaleMode& out)
+    {
+        if (n == "disabled") { out = ScaleMode::Disabled; return true; }
+        if (n == "keep_aspect") { out = ScaleMode::KeepAspect; return true; }
+        if (n == "stretch") { out = ScaleMode::Stretch; return true; }
+        if (n == "fixed_width") { out = ScaleMode::FixedWidth; return true; }
+        if (n == "fixed_height") { out = ScaleMode::FixedHeight; return true; }
+        return false;
+    }
+
+    namespace
+    {
+        // Greedy word-wrap of one already-newline-free line to `maxWidth` px.
+        std::vector<std::string> WrapLine(const std::string& line, float maxWidth,
+                                          const std::function<Vec2(std::string_view, float)>& measure, float pixelHeight)
+        {
+            std::vector<std::string> out;
+            if (!measure || maxWidth <= 0 || measure(line, pixelHeight).x <= maxWidth) { out.push_back(line); return out; }
+            std::string current;
+            std::size_t i = 0;
+            while (i < line.size())
+            {
+                std::size_t j = line.find(' ', i);
+                const std::string word = line.substr(i, j == std::string::npos ? std::string::npos : j - i);
+                const std::string candidate = current.empty() ? word : current + " " + word;
+                if (!current.empty() && measure(candidate, pixelHeight).x > maxWidth)
+                { out.push_back(current); current = word; }
+                else current = candidate;
+                if (j == std::string::npos) break;
+                i = j + 1;
+            }
+            if (!current.empty() || out.empty()) out.push_back(current);
+            return out;
+        }
+    }
+
     Rect ResolveAnchor(const Rect& parent, Anchor anchor, Vec2 offset, Vec2 size)
     {
         const float pw = parent.width, ph = parent.height;
@@ -176,29 +242,57 @@ namespace zengine::ui
         return {std::max(size_.x, minSize_.x), std::max({pixelHeight_ * 1.3f, size_.y, minSize_.y})};
     }
 
+    std::vector<std::string> Text::LayoutLines(float width) const
+    {
+        std::vector<std::string> raw;
+        std::string line;
+        for (char c : text_)
+        {
+            if (c == '\n') { raw.push_back(line); line.clear(); }
+            else if (c != '\r') line.push_back(c);
+        }
+        raw.push_back(line);
+        if (!wrap_ || width <= 0) return raw;
+        const auto measure = HasContext() ? Context().measureText : std::function<Vec2(std::string_view, float)>{};
+        std::vector<std::string> wrapped;
+        for (const auto& r : raw)
+            for (auto& w : WrapLine(r, width, measure, pixelHeight_)) wrapped.push_back(std::move(w));
+        return wrapped;
+    }
+
     void Text::Emit(std::vector<SpriteDraw>&, std::vector<TextDraw>& texts) const
     {
         if (text_.empty()) return;
-        texts.push_back({text_, rect_.x, rect_.y, pixelHeight_, color_});
+        const auto lines = LayoutLines(rect_.width);
+        const float lineHeight = pixelHeight_ * 1.3f;
+        const float block = lineHeight * static_cast<float>(lines.size());
+        float y = rect_.y;
+        if (alignV_ == VAlign::Middle) y += std::max(0.0f, (rect_.height - block) * 0.5f);
+        else if (alignV_ == VAlign::Bottom) y += std::max(0.0f, rect_.height - block);
+        const auto measure = HasContext() ? Context().measureText : std::function<Vec2(std::string_view, float)>{};
+        for (const auto& line : lines)
+        {
+            float x = rect_.x;
+            if (alignH_ != HAlign::Left && measure)
+            {
+                const float w = measure(line, pixelHeight_).x;
+                if (alignH_ == HAlign::Center) x += std::max(0.0f, (rect_.width - w) * 0.5f);
+                else x += std::max(0.0f, rect_.width - w);
+            }
+            if (!line.empty()) texts.push_back({line, x, y, pixelHeight_, color_});
+            y += lineHeight;
+        }
     }
 
     Vec2 LongText::DesiredSize() const
     {
-        int lines = 1;
-        for (char c : text_) if (c == '\n') ++lines;
+        const float wrapWidth = wrap_ ? std::max(size_.x, minSize_.x) : 0.0f;
+        const auto lines = LayoutLines(wrapWidth);
         float widest = 0;
         if (HasContext() && Context().measureText)
-        {
-            std::string line;
-            for (char c : text_)
-            {
-                if (c == '\n') { widest = std::max(widest, Context().measureText(line, pixelHeight_).x); line.clear(); }
-                else line.push_back(c);
-            }
-            widest = std::max(widest, Context().measureText(line, pixelHeight_).x);
-        }
+            for (const auto& l : lines) widest = std::max(widest, Context().measureText(l, pixelHeight_).x);
         return {std::max({widest, size_.x, minSize_.x}),
-                std::max({static_cast<float>(lines) * pixelHeight_ * 1.3f, size_.y, minSize_.y})};
+                std::max({static_cast<float>(lines.size()) * pixelHeight_ * 1.3f, size_.y, minSize_.y})};
     }
 
     // ----- TextEntry ----------------------------------------------------
@@ -642,9 +736,18 @@ namespace zengine::ui
         float y = self.y + 6;
         const float x = self.x + 6;
         const float width = std::max(0.0f, self.width - 12);
+        const auto measure = HasContext() ? Context().measureText : std::function<Vec2(std::string_view, float)>{};
         for (auto& block : blocks_)
         {
-            const float h = BlockHeight(block);
+            block.lines.clear();
+            float h = BlockHeight(block);
+            if (block.kind == Block::Kind::Text || block.kind == Block::Kind::Button)
+            {
+                block.lines = WrapLine(block.text, block.kind == Block::Kind::Text ? width : std::max(0.0f, width - 16),
+                                       measure, block.fontSize);
+                if (block.kind == Block::Kind::Text)
+                    h = std::max(h, static_cast<float>(block.lines.size()) * block.fontSize * 1.35f);
+            }
             block.rect = {x, y, width, h};
             y += h + 4;
         }
@@ -702,14 +805,28 @@ namespace zengine::ui
                 box.tint = {0.20f, 0.34f, 0.52f, 1};
                 sprites.push_back(box);
                 if (!block.text.empty())
-                    texts.push_back({block.text, block.rect.x + 8, block.rect.y + (block.rect.height - block.fontSize) * 0.5f,
+                {
+                    const std::string& label = block.lines.empty() ? block.text : block.lines.front();
+                    texts.push_back({label, block.rect.x + 8, block.rect.y + (block.rect.height - block.fontSize) * 0.5f,
                                      block.fontSize, {0.97f, 0.98f, 1.0f, 1}});
+                }
                 break;
             }
             case Block::Kind::Text:
-                if (!block.text.empty())
-                    texts.push_back({block.text, block.rect.x, block.rect.y, block.fontSize, block.color});
+            {
+                const float lh = block.fontSize * 1.35f;
+                float ty = block.rect.y;
+                if (block.lines.empty())
+                {
+                    if (!block.text.empty()) texts.push_back({block.text, block.rect.x, ty, block.fontSize, block.color});
+                }
+                else for (const auto& line : block.lines)
+                {
+                    if (!line.empty()) texts.push_back({line, block.rect.x, ty, block.fontSize, block.color});
+                    ty += lh;
+                }
                 break;
+            }
             }
         }
     }

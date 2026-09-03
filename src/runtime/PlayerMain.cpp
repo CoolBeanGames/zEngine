@@ -4,6 +4,7 @@
 #include "RenderTransform.h"
 #include "ui/UiSystem.h"
 #include "ui/VideoClip.h"
+#include "UiAssetBinding.h"
 #include "AssetLibrary.h"
 #include "MaterialAssets.h"
 #include "ShaderAssets.h"
@@ -80,32 +81,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             auto previous=std::chrono::steady_clock::now(),fpsSample=previous;double accumulated=0;unsigned rendered=0,fpsFrames=0,currentFps=0;
             bool mousePrev[3]={};
             unsigned sceneGeneration=session.SceneGeneration();
+            const auto assetsRoot=zengine::projects::Assets(project);
             zengine::ui::UiSystem ui;
             zengine::ui::UiContext uiContext;
             uiContext.measureText=[&](std::string_view s,float h){return renderer.MeasureText(s,h);};
-            uiContext.textureSize=[](std::string_view){return zengine::Vec2{};};
-            uiContext.resolveTexture=[&](std::string_view){return renderer.WhiteTexture();};
-            const auto assetsRoot=zengine::projects::Assets(project);
-            std::map<std::string,zengine::ui::VideoClip> videoClips;
-            std::map<std::string,std::pair<int,TextureHandle>> videoFrames;
-            uiContext.resolveVideoFrame=[&](std::string_view asset,double time,bool loop)->TextureHandle{
-                const std::string key(asset);
-                if(key.empty())return renderer.WhiteTexture();
-                auto clipIt=videoClips.find(key);
-                if(clipIt==videoClips.end()){
-                    zengine::ui::VideoClip clip;
-                    try{clip=zengine::ui::VideoClip::LoadFile(assetLibrary::Resolve(assetsRoot,std::filesystem::u8path(key)));}
-                    catch(...){clip={};}
-                    clipIt=videoClips.emplace(key,std::move(clip)).first;
-                }
-                const auto& clip=clipIt->second;
-                if(!clip.Valid())return renderer.WhiteTexture();
-                const int frame=clip.FrameAt(time,loop);
-                auto& cached=videoFrames[key];
-                if(!cached.second || cached.first!=frame)
-                    cached={frame,renderer.UploadTexture(static_cast<std::uint32_t>(clip.Width()),static_cast<std::uint32_t>(clip.Height()),clip.Frame(frame))};
-                return cached.second;
-            };
+            uiContext.referenceResolution={settings.uiReferenceWidth,settings.uiReferenceHeight};
+            uiContext.scaleMode=static_cast<zengine::ui::ScaleMode>(settings.uiScaleMode);
+            zengine::ui::UiAssetBinding uiAssets(renderer,assetsRoot);
+            uiAssets.Bind(uiContext);
             std::map<std::string,MaterialHandle> materialCache;
             const auto resolveMeshMaterial=[&](const std::string& asset)->MaterialHandle{
                 if(asset.empty())return {};
@@ -170,7 +153,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                     const auto hardware=uiTookKeyboard?zengine::input::Hardware{}:zengine::input::PollWindows(focused);
                     accumulated+=elapsed;while(accumulated>=1.0/60.0){session.Tick(1.0f/60.0f,hardware,gameMouse);accumulated-=1.0/60.0;}
                 }
-                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();}
+                if(session.SceneGeneration()!=sceneGeneration){sceneGeneration=session.SceneGeneration();meshes.clear();materialCache.clear();uiAssets.Invalidate();}
                 loadMeshes();
                 session.Draw(visible);ViewportFrame frame;frame.camera=settings.camera;++fpsFrames;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample).count();if(fpsElapsed>=.5){currentFps=static_cast<unsigned>(std::lround(fpsFrames/fpsElapsed));fpsFrames=0;fpsSample=now;}if(settings.showFps)frame.fps=automated?60:currentFps;
                 for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(!visible(object.Id())||object.Is2D())continue;const auto& t3d=zengine::As3D(object).GetTransform();DirectX::XMFLOAT4X4 parent;DirectX::XMStoreFloat4x4(&parent,ParentMatrix(session.Objects(),object));const auto* mr=object.GetBehavior<zengine::MeshRenderer>();frame.meshes.push_back({meshes.at(object.Id()),t3d,parent,mr?resolveMeshMaterial(mr->Material()):MaterialHandle{}});}

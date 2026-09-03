@@ -17,13 +17,16 @@ std::wstring Wide(const std::string& text){const auto n=MultiByteToWideChar(CP_U
 }
 std::filesystem::path ExecutableDirectory(){std::vector<wchar_t> path(32768);const auto n=GetModuleFileNameW(nullptr,path.data(),static_cast<DWORD>(path.size()));Require(n>0 && n<path.size(),"Cannot locate executable.");return std::filesystem::path(std::wstring(path.data(),n)).parent_path();}
 std::string EncodeSettings(const Settings& settings) {
-    const auto& c=settings.camera;std::ostringstream out;out.imbue(std::locale::classic());out<<std::setprecision(9)<<"ZENGINE_GAME 2\ncamera "<<c.target.x<<' '<<c.target.y<<' '<<c.target.z<<' '<<c.yaw<<' '<<c.pitch<<' '<<c.distance<<"\nshow_fps "<<(settings.showFps?1:0)<<"\nend\n";
+    const auto& c=settings.camera;std::ostringstream out;out.imbue(std::locale::classic());out<<std::setprecision(9)<<"ZENGINE_GAME 3\ncamera "<<c.target.x<<' '<<c.target.y<<' '<<c.target.z<<' '<<c.yaw<<' '<<c.pitch<<' '<<c.distance<<"\nshow_fps "<<(settings.showFps?1:0)<<"\nui_scale "<<settings.uiReferenceWidth<<' '<<settings.uiReferenceHeight<<' '<<settings.uiScaleMode<<"\nend\n";
     const auto text=out.str();DecodeSettings(text);return text;
 }
 Settings DecodeSettings(const std::string& text) {
     Require(text.size()<4096,"Game settings exceed size limit.");std::istringstream in(text);in.imbue(std::locale::classic());std::string magic,version,token;Settings s;auto& c=s.camera;
-    Require(static_cast<bool>(in>>magic>>version>>token) && magic=="ZENGINE_GAME" && (version=="1"||version=="2") && token=="camera","Unsupported game package settings.");
-    Require(static_cast<bool>(in>>c.target.x>>c.target.y>>c.target.z>>c.yaw>>c.pitch>>c.distance),"Invalid camera settings.");if(version=="2"){int enabled=-1;Require(static_cast<bool>(in>>token>>enabled)&&token=="show_fps"&&(enabled==0||enabled==1),"Invalid FPS setting.");s.showFps=enabled!=0;}Require(static_cast<bool>(in>>token)&&token=="end","Invalid game settings ending.");
+    Require(static_cast<bool>(in>>magic>>version>>token) && magic=="ZENGINE_GAME" && (version=="1"||version=="2"||version=="3") && token=="camera","Unsupported game package settings.");
+    Require(static_cast<bool>(in>>c.target.x>>c.target.y>>c.target.z>>c.yaw>>c.pitch>>c.distance),"Invalid camera settings.");
+    if(version=="2"||version=="3"){int enabled=-1;Require(static_cast<bool>(in>>token>>enabled)&&token=="show_fps"&&(enabled==0||enabled==1),"Invalid FPS setting.");s.showFps=enabled!=0;}
+    if(version=="3"){Require(static_cast<bool>(in>>token>>s.uiReferenceWidth>>s.uiReferenceHeight>>s.uiScaleMode)&&token=="ui_scale","Invalid UI scale setting.");Require(std::isfinite(s.uiReferenceWidth)&&std::isfinite(s.uiReferenceHeight)&&s.uiReferenceWidth>=0&&s.uiReferenceHeight>=0&&s.uiReferenceWidth<=16384&&s.uiReferenceHeight<=16384&&s.uiScaleMode>=0&&s.uiScaleMode<=4,"UI scale setting out of range.");}
+    Require(static_cast<bool>(in>>token)&&token=="end","Invalid game settings ending.");
     for(float v:{c.target.x,c.target.y,c.target.z,c.yaw,c.pitch,c.distance})Require(std::isfinite(v),"Nonfinite game camera.");
     Require(c.distance>=0 && c.distance<=10000 && std::abs(c.pitch)<=1.55f,"Game camera out of range.");in>>std::ws;Require(in.eof(),"Unexpected game settings data.");return s;
 }

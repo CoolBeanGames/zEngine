@@ -53,6 +53,9 @@ public:
                              std::function<void(const std::string&, zengine::materials::Value)> setValue)
     { resolveMaterial_ = std::move(resolve); setMaterialValue_ = std::move(setValue); }
     bool AssignPrefabAt(POINT screenPoint,const std::string& asset);
+    // Drop a project-relative image / video asset path onto a UI control's
+    // texture field (K::Texture). Returns true if a field accepted it.
+    bool AssignAssetPathAt(POINT screenPoint,const std::string& asset);
     bool AssignObjectReferenceAt(POINT screenPoint, zengine::GameObjectId target);
     HWND Window() const noexcept { return window_; }
     // Test seam: the edit/combo control that edits property `key` (component `axis`

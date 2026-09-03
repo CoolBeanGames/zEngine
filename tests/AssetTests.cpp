@@ -1087,6 +1087,22 @@ void UiEditorTests(bool capture)
             editor.DeleteGameObject(editable.Id()); // drop the scratch control before the capture below
         }
 
+        // ZE-97: a texture field (K::Texture) accepts a dropped library asset path.
+        {
+            auto& tex=editor.CreateUiControl("textureRect"); // selects it
+            auto* tr=tex.GetBehavior<zengine::ui::TextureRect>();
+            Require(tr!=nullptr,"textureRect control missing");
+            const HWND inspector2=FindWindowExW(window,nullptr,L"zEngineInspector",nullptr);
+            for (int i=0;i<40;++i) SendMessageW(inspector2,WM_VSCROLL,MAKEWPARAM(SB_LINEDOWN,0),0);
+            const HWND texField=editor.InspectorUiField("texture");
+            Require(texField!=nullptr,"Inspector has no textureRect 'texture' row");
+            RECT fr{}; GetWindowRect(texField,&fr);
+            const POINT mid{(fr.left+fr.right)/2,(fr.top+fr.bottom)/2};
+            Require(editor.DropAssetPathOnInspector(mid,"art/logo.png"),"asset-path drop onto the texture field was rejected");
+            Require(tr->Texture()=="art/logo.png","texture field did not take the dropped asset path");
+            editor.DeleteGameObject(tex.Id());
+        }
+
         editor.Render(); // exercises the viewport UI emit path
         if(capture){ for(int i=0;i<4;++i) editor.Render(); CaptureScreen(window,L"ui-editor-qa.bmp"); }
     }

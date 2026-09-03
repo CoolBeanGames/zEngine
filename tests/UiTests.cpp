@@ -478,6 +478,113 @@ void FocusHoverAndCapture()
     Check(button.CurrentVisual() == Button::Visual::Hover, "focused button shows the hover visual");
 }
 
+void TextAlignAndWrap()
+{
+    const auto ctx = MakeContext(); // 7px per char at 16px height (h * 0.45)
+    ObjectStore store;
+
+    auto& obj = store.Create2D("Label");
+    auto& text = obj.AddBehavior<Text>();
+    text.SetAnchor(Anchor::TopLeft);
+    text.SetSize({200, 100});
+    text.SetPixelHeight(16);
+    text.SetValue("Hi");
+    text.SetAlignH(HAlign::Center);
+    text.SetAlignV(VAlign::Middle);
+
+    UiSystem ui;
+    ui.Build(store, {400, 300}, ctx);
+    std::vector<SpriteDraw> sprites; std::vector<TextDraw> texts;
+    ui.Emit(sprites, texts);
+    Check(texts.size() == 1, "one line emitted");
+    // "Hi" = 2 * 7.2 = 14.4 wide; centred in 200 -> x ~ 92.8; middle of 100 with one 20.8 line -> y ~ 39.6
+    Check(Near(texts[0].x, (200 - 14.4f) * 0.5f, 0.5f), "horizontally centred");
+    Check(texts[0].y > 30 && texts[0].y < 50, "vertically centred");
+
+    // Word wrap: a long line wrapped to the box width becomes several lines.
+    auto& longObj = store.Create2D("Para");
+    auto& para = longObj.AddBehavior<LongText>(); // wrap on by default
+    para.SetAnchor(Anchor::TopLeft);
+    para.SetSize({70, 200}); // ~9 chars per line at 7.2px
+    para.SetPixelHeight(16);
+    para.SetValue("one two three four five");
+
+    ui.Build(store, {400, 300}, ctx);
+    sprites.clear(); texts.clear();
+    ui.Emit(sprites, texts);
+    int paraLines = 0;
+    for (const auto& t : texts) if (t.text != "Hi") ++paraLines;
+    Check(paraLines >= 3, "long text wrapped to the box width");
+    Check(para.DesiredSize().y >= 3 * 16 * 1.3f, "wrapped height grows with the line count");
+}
+
+void ReferenceResolutionScaling()
+{
+    UiContext ctx = MakeContext();
+    ctx.referenceResolution = {800, 600};
+    ctx.scaleMode = ScaleMode::KeepAspect;
+
+    ObjectStore store;
+    auto& obj = store.Create2D("Box");
+    auto& button = obj.AddBehavior<Button>();
+    button.SetAnchor(Anchor::TopLeft);
+    button.SetSize({100, 50});
+
+    UiSystem ui;
+    // Real window twice the reference size -> uniform 2x scale, no letterbox.
+    ui.Build(store, {1600, 1200}, ctx);
+    Check(Near(ui.Scale().x, 2.0f) && Near(ui.Scale().y, 2.0f), "keep-aspect scale = 2x");
+
+    std::vector<SpriteDraw> sprites; std::vector<TextDraw> texts;
+    ui.Emit(sprites, texts);
+    Check(!sprites.empty() && Near(sprites[0].dest.width, 200) && Near(sprites[0].dest.height, 100),
+          "emitted geometry is scaled to the window");
+
+    // A click at the scaled-up window position maps back to the control.
+    ui.Interact({100, 50}, true);
+    auto clicks2 = ui.Interact({100, 50}, false);
+    Check(clicks2.size() == 1 && clicks2[0] == obj.Id(), "window-space cursor maps back through the scale");
+
+    // Letterboxing when the window aspect differs from the reference.
+    ui.Build(store, {1600, 600}, ctx); // wider than 4:3 -> scale limited by height (1x), centred
+    Check(Near(ui.Scale().x, 1.0f) && ui.Offset().x > 0, "narrower axis drives the scale; wider axis letterboxed");
+}
+
+void DisabledPropagation()
+{
+    const auto ctx = MakeContext();
+    ObjectStore store;
+
+    auto& panelObj = store.Create2D("Panel");
+    auto& panel = panelObj.AddBehavior<PanelContainer>();
+    panel.SetAnchor(Anchor::Fill);
+
+    auto& btnObj = store.Create2D("Btn");
+    btnObj.SetParent(panelObj.Id());
+    auto& button = btnObj.AddBehavior<Button>();
+    button.SetAnchor(Anchor::TopLeft); button.SetSize({80, 30});
+    btnObj.GetTransform().SetPosition({10, 10});
+
+    UiSystem ui;
+    ui.Build(store, {400, 300}, ctx);
+    Check(ui.HitTest({20, 20}) == btnObj.Id(), "enabled button is hit");
+
+    // Disabling the ancestor panel disables the button for input and dims it.
+    panel.SetEnabled(false);
+    ui.Build(store, {400, 300}, ctx);
+    Check(ui.HitTest({20, 20}) == 0, "child of a disabled container is not hit");
+
+    std::vector<SpriteDraw> sprites; std::vector<TextDraw> texts;
+    ui.Emit(sprites, texts);
+    Check(!sprites.empty(), "disabled subtree still emits");
+    for (const auto& s : sprites) Check(s.tint.w <= 0.5f, "disabled subtree is dimmed");
+    for (const auto& t : texts) Check(t.color.w <= 0.5f, "disabled text is dimmed");
+
+    panel.SetEnabled(true);
+    ui.Build(store, {400, 300}, ctx);
+    Check(ui.HitTest({20, 20}) == btnObj.Id(), "re-enabling restores input");
+}
+
 int main()
 {
     try
@@ -493,8 +600,12 @@ int main()
         VideoPlayback();
         HtmlInterpreter();
         FocusHoverAndCapture();
+        TextAlignAndWrap();
+        ReferenceResolutionScaling();
+        DisabledPropagation();
         std::cout << "PASS: anchors, containers, hit-testing, clicks, text entry, batched emit, "
-                     "scroll, button, video, html, focus/hover/capture\n";
+                     "scroll, button, video, html, focus/hover/capture, text align/wrap, "
+                     "reference-resolution scaling, disabled propagation\n";
         return 0;
     }
     catch (const std::exception& error)

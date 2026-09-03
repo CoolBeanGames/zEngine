@@ -1126,6 +1126,35 @@ bool InspectorPanel::AssignPrefabAt(POINT point,const std::string& asset)
     }
     return false;
 }
+bool InspectorPanel::AssignAssetPathAt(POINT point,const std::string& asset)
+{
+    const auto target=WindowFromPoint(point);
+    POINT client=point; ScreenToClient(window_,&client);
+    RECT bounds{}; GetClientRect(window_,&bounds);
+    const bool inPanel=PtInRect(&bounds,client);
+    int rowTop=(bounds.right>=250?329:378)-scroll_; int hoveredRow=-1;
+    for(std::size_t r=0;r<behaviorFields_.size();++r)
+    { const int h=RowHeight(behaviorFields_[r]); if(inPanel&&h>0&&client.y>=rowTop&&client.y<rowTop+h) hoveredRow=static_cast<int>(r); rowTop+=h; }
+
+    for(std::size_t i=0;i<behaviorFields_.size();++i)
+    {
+        auto& entry=behaviorFields_[i];
+        if(!entry.uiControl || entry.uiKind!=zengine::ui::UiPropertyKind::Texture || !entry.field.window)continue;
+        const bool overField=target==entry.field.window||IsChild(entry.field.window,target)||static_cast<int>(i)==hoveredRow;
+        if(!overField)continue;
+        if(!editData_ || !IsWindowEnabled(entry.field.window))return false;
+        auto* control=dynamic_cast<zengine::ui::UiControl*>(entry.behavior);
+        if(!control)return false;
+        try { zengine::ui::LoadUiProperty(*control,entry.name,asset); }
+        catch(const std::exception&){ return false; }
+        SetWindowTextW(entry.field.window,Wide(asset).c_str());
+        entry.field.valid=true;
+        RefreshBehaviors();
+        if(changed_)changed_();
+        return true;
+    }
+    return false;
+}
 void InspectorPanel::ShowBehaviorMenu(POINT screenPoint)
 {
     POINT point=screenPoint;

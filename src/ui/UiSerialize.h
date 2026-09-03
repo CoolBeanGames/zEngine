@@ -42,6 +42,7 @@ namespace zengine::ui
         Vec2,       // two space-separated floats
         Color,      // four space-separated floats (RGBA / region / margins / slice)
         Anchor,     // one of AnchorName()
+        Texture,    // project-relative image / video asset path; edit box + asset drop
     };
 
     struct UiPropertyField

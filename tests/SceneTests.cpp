@@ -149,7 +149,11 @@ int main()
             auto& label=uiStore.Create2D("Label"); label.SetParent(panel.Id());
             auto& labelUi=ui::AddUiControl(label,"text");
             dynamic_cast<ui::Text&>(labelUi).SetValue("Score: \"9000\"");
+            dynamic_cast<ui::Text&>(labelUi).SetAlignH(ui::HAlign::Center);
+            dynamic_cast<ui::Text&>(labelUi).SetAlignV(ui::VAlign::Bottom);
+            dynamic_cast<ui::Text&>(labelUi).SetWrap(true);
             labelUi.SetClickable(true);
+            labelUi.SetEnabled(false); // ZE-97: enabled + text align/wrap round-trip through the scene
 
             const auto uiEncoded=scenes::Encode(scenes::Capture(uiStore,uiHost));
             Check(uiEncoded.find("ui \"panel\"")!=std::string::npos && uiEncoded.find("ui_prop \"value\" \"0.4\"")!=std::string::npos,"UI behavior was not serialized");

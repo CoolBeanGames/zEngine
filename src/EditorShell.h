@@ -14,6 +14,7 @@
 #include "RenderScene.h"
 #include "ModelData.h"
 #include "ui/UiSystem.h"
+#include "UiAssetBinding.h"
 #include "core/GameObject.h"
 #include "ScriptHost.h"
 #include "Scene.h"
@@ -103,10 +104,14 @@ public:
     void OpenShader(const std::filesystem::path& path);
     // ZE-65: material instance assets (.material).
     std::filesystem::path CreateMaterialAsset();
+    // ZE-97: encode the images in a folder (sorted by name) into a .zvid clip.
+    std::filesystem::path BuildVideoClipFromImages();
     bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);
     // Routes a completed object drag onto the Inspector (screen point + dragged object).
     // Same effect as releasing a scene-tree drag over the Inspector; used by tests.
     bool DropObjectOnInspector(POINT screenPoint, zengine::GameObjectId object);
+    // ZE-97: drop a project-relative image/video path onto a UI texture field.
+    bool DropAssetPathOnInspector(POINT screenPoint, const std::string& asset);
     // Test seam: the Inspector edit/combo control for UI property `key` (component
     // `axis` for Vec2 / Colour rows) of the currently selected UI control.
     HWND InspectorUiField(const std::string& key, int axis = 0) const;
@@ -347,6 +352,7 @@ private:
     bool mouseButtonsPrev_[3] = {}; // L/R/M pressed last TickInput, for just_pressed/just_released
     std::unique_ptr<Renderer> renderer_;
     zengine::ui::UiSystem uiViewport_; // screen-space UI preview for the viewport
+    std::optional<zengine::ui::UiAssetBinding> uiViewportAssets_; // image / video cache for the preview
     // ZE-96: viewport UI input, accumulated by the WndProc and applied in Render()
     // while Playing so scripted UI is testable in the editor without a build.
     struct { POINT cursor{-1,-1}; bool primary=false; float wheel=0; std::vector<char32_t> typed; } uiInput_;

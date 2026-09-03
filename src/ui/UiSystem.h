@@ -19,6 +19,7 @@ namespace zengine::ui
             UiControl* control = nullptr;
             std::vector<std::size_t> children; // indices into nodes_
             bool visible = true;               // effective (self AND ancestors)
+            bool enabled = true;               // effective (self AND ancestors)
         };
 
         // Rebuilds the layout tree. `context` must outlive the following Emit / Interact
@@ -66,6 +67,11 @@ namespace zengine::ui
         // callers that need the signals should route through Tab instead.
         void SetFocus(GameObjectId id);
 
+        // Reference-resolution scaling resolved by the last Build: emitted geometry
+        // is authored-space * Scale() + Offset(); Interact maps the cursor back.
+        Vec2 Scale() const noexcept { return scale_; }
+        Vec2 Offset() const noexcept { return offset_; }
+
     private:
         void Layout(std::size_t index, const Rect& area, const Rect* clip);
         void SortChildren(std::vector<std::size_t>& children) const;
@@ -78,6 +84,8 @@ namespace zengine::ui
         std::vector<std::size_t> roots_;
         std::unordered_map<GameObjectId, std::size_t> index_;
         Vec2 screen_{};
+        Vec2 scale_{1, 1};
+        Vec2 offset_{0, 0};
         GameObjectId pressedOn_ = 0;
         bool pressActive_ = false;     // a primary-button press is in progress
         GameObjectId focused_ = 0;

@@ -443,6 +443,12 @@ TextureHandle Renderer::WhiteTexture()
     return whiteHandle_;
 }
 
+Float2 TextureSize(const TextureHandle& texture)
+{
+    if (!texture) return {0, 0};
+    return {static_cast<float>(texture->width), static_cast<float>(texture->height)};
+}
+
 TextureHandle Renderer::UploadImage(const std::filesystem::path& file)
 {
     if (!device_) throw std::runtime_error("Initialize the renderer before uploading images.");
@@ -482,6 +488,30 @@ TextureHandle Renderer::UploadImage(const std::filesystem::path& file)
     ThrowIfFailed(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size()), pixels.data()),
                   "Read image pixels");
     return UploadTexture(width, height, pixels.data());
+}
+
+std::vector<std::uint8_t> DecodeImageFileRGBA(const std::wstring& file, unsigned& width, unsigned& height)
+{
+    ComPtr<IWICImagingFactory> factory;
+    ThrowIfFailed(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)),
+                  "Create image decoder");
+    ComPtr<IWICBitmapDecoder> decoder;
+    ThrowIfFailed(factory->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ,
+                                                     WICDecodeMetadataCacheOnDemand, &decoder), "Open image file");
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ThrowIfFailed(decoder->GetFrame(0, &frame), "Read image frame");
+    UINT w = 0, h = 0;
+    ThrowIfFailed(frame->GetSize(&w, &h), "Read image size");
+    if (!w || !h || w > 8192 || h > 8192) throw std::runtime_error("Image is empty or larger than 8192 px.");
+    ComPtr<IWICFormatConverter> converter;
+    ThrowIfFailed(factory->CreateFormatConverter(&converter), "Create image converter");
+    ThrowIfFailed(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr,
+                                        0.0, WICBitmapPaletteTypeCustom), "Convert image to RGBA");
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(w) * h * 4);
+    ThrowIfFailed(converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(pixels.size()), pixels.data()), "Read image pixels");
+    width = w;
+    height = h;
+    return pixels;
 }
 
 MaterialHandle Renderer::UploadMaterial(TextureHandle albedo, Float4 tint)

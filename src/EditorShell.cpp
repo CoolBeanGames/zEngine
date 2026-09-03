@@ -16,6 +16,7 @@
 #include "core/MeshRenderer.h"
 #include "core/Camera.h"
 #include "ui/UiSerialize.h"
+#include "ui/VideoClip.h"
 #include <commdlg.h>
 #include <commctrl.h>
 
@@ -23,6 +24,8 @@
 
 #include <algorithm>
 #include <array>
+#include <fstream>
+#include <cwctype>
 #include <stdexcept>
 #include <string_view>
 #include <chrono>
@@ -348,8 +351,8 @@ void EditorShell::Render()
     {
         zengine::ui::UiContext uiContext;
         uiContext.measureText=[&](std::string_view s,float h){return renderer_->MeasureText(s,h);};
-        uiContext.textureSize=[](std::string_view){return zengine::Vec2{};};
-        uiContext.resolveTexture=[&](std::string_view){return renderer_->WhiteTexture();};
+        if(!uiViewportAssets_) uiViewportAssets_.emplace(*renderer_,assetsDirectory_);
+        uiViewportAssets_->Bind(uiContext);
         uiViewport_.Build(objects_,renderer_->ViewportSize(),uiContext);
         if (Playing()) // ZE-96: route accumulated viewport input into the live UI
         {
@@ -1060,6 +1063,16 @@ void EditorShell::FinishAssetDrag(POINT point)
         return;
     }
     if (zengine::scenes::IsScene(path)) { status_=L"Double-click a scene asset to open it."; InvalidateRect(window_,&statusBar_,FALSE); return; }
+    {
+        const auto kind=assetLibrary::Type(path);
+        if(kind==assetLibrary::Kind::Image || path.extension()==L".zvid")
+        {
+            POINT screen=point;ClientToScreen(window_,&screen);
+            const auto relative=std::filesystem::relative(path,assetsDirectory_).generic_u8string();
+            const std::string asset(reinterpret_cast<const char*>(relative.data()),relative.size());
+            if(inspectorPanel_ && inspectorPanel_->AssignAssetPathAt(screen,asset))return;
+        }
+    }
     if (zengine::scripts::IsScript(path))
     {
         if (const auto id = ScriptDropTarget(point)) AttachScript(id, path);
@@ -1303,6 +1316,57 @@ std::filesystem::path EditorShell::CreateMaterialAsset()
     BeginAssetRename(path);
     return path;
 }
+std::filesystem::path EditorShell::BuildVideoClipFromImages()
+{
+    RequireProject();
+    if (Playing()) throw std::runtime_error("Stop Play before building a video clip.");
+    SetFocus(window_);
+    std::array<wchar_t,32768> filename{};
+    OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner=window_; dialog.lpstrFile=filename.data();
+    dialog.nMaxFile=static_cast<DWORD>(filename.size());
+    dialog.lpstrFilter=L"Images (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.gif)\0*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.gif\0\0";
+    dialog.lpstrTitle=L"Pick any image in the frame-sequence folder (all images in it, sorted by name, become the clip)";
+    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&dialog)) return {};
+    const std::filesystem::path picked(filename.data());
+    const auto folder=picked.parent_path();
+    assetLibrary::Resolve(assetsDirectory_,folder); // must be inside the project
+
+    auto isImage=[](const std::filesystem::path& p){
+        auto e=p.extension().wstring(); std::transform(e.begin(),e.end(),e.begin(),::towlower);
+        return e==L".png"||e==L".jpg"||e==L".jpeg"||e==L".bmp"||e==L".tif"||e==L".tiff"||e==L".gif";
+    };
+    std::vector<std::filesystem::path> images;
+    for (const auto& entry : std::filesystem::directory_iterator(folder))
+        if (entry.is_regular_file() && isImage(entry.path())) images.push_back(entry.path());
+    std::sort(images.begin(),images.end());
+    if (images.size()<2) throw std::runtime_error("Need at least two images in the folder to build a clip.");
+    if (images.size()>4096) throw std::runtime_error("A clip is limited to 4096 frames.");
+
+    unsigned width=0,height=0;
+    std::vector<std::vector<std::uint8_t>> frames;
+    frames.reserve(images.size());
+    for (const auto& image : images)
+    {
+        unsigned w=0,h=0;
+        auto pixels=DecodeImageFileRGBA(image.wstring(),w,h);
+        if (frames.empty()) { width=w; height=h; }
+        else if (w!=width || h!=height)
+            throw std::runtime_error("All frames must share one size; " + image.filename().string() + " differs.");
+        if (static_cast<std::uint64_t>(width)*height>16u*1024*1024)
+            throw std::runtime_error("Frames are too large for a clip.");
+        frames.push_back(std::move(pixels));
+    }
+    const auto encoded=zengine::ui::VideoClip::Encode(static_cast<int>(width),static_cast<int>(height),12.0f,frames);
+
+    const auto out=folder/(folder.filename().wstring()+L".zvid");
+    { std::ofstream stream(out,std::ios::binary); stream.write(encoded.data(),static_cast<std::streamsize>(encoded.size()));
+      if (!stream) throw std::runtime_error("Could not write the .zvid file."); }
+    RefreshAssets();
+    status_=L"Built "+out.filename().wstring()+L" ("+std::to_wstring(frames.size())+L" frames @ 12 fps) - assign it to a UI Video control";
+    InvalidateRect(window_,nullptr,FALSE);
+    return out;
+}
 zengine::materials::Effective EditorShell::ResolveMaterialEffective(const std::string& materialAsset) const
 {
     if (materialAsset.empty()) return {};
@@ -1368,6 +1432,10 @@ bool EditorShell::AttachScript(zengine::GameObjectId id, const std::filesystem::
 bool EditorShell::DropObjectOnInspector(POINT screenPoint, zengine::GameObjectId object)
 {
     return inspectorPanel_ && inspectorPanel_->AssignObjectReferenceAt(screenPoint, object);
+}
+bool EditorShell::DropAssetPathOnInspector(POINT screenPoint, const std::string& asset)
+{
+    return inspectorPanel_ && inspectorPanel_->AssignAssetPathAt(screenPoint, asset);
 }
 HWND EditorShell::InspectorUiField(const std::string& key, int axis) const
 {
@@ -1741,6 +1809,7 @@ LRESULT EditorShell::HandleMessage(
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
         AppendMenuW(menu, MF_STRING, 3, L"Create Material Shader (.shader)");
         AppendMenuW(menu, MF_STRING, 4, L"Create Material (.material)");
+        AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0), 5, L"Build Video Clip (.zvid) from Images...");
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
         AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),NewFolderCommand,L"New Folder...");
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0),NewSceneCommand,L"Create Scene (.zscene)");
@@ -1750,6 +1819,7 @@ LRESULT EditorShell::HandleMessage(
         if (command == 1) CreateScriptAsset();
         if (command == 3) CreateShaderAsset();
         if (command == 4) CreateMaterialAsset();
+        if (command == 5) { try { BuildVideoClipFromImages(); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
         if (command==NewSceneCommand) NewScene();
         if(command==NewFolderCommand)NewAssetFolderDialog();

@@ -24,6 +24,14 @@
 struct RenderTexture;
 using TextureHandle = std::shared_ptr<const RenderTexture>;
 
+// Pixel dimensions of an uploaded texture; {0,0} for a null handle.
+Float2 TextureSize(const TextureHandle& texture);
+
+// Decodes an image file (PNG/JPEG/BMP/TIFF/GIF) to top-down 32bpp RGBA. Throws
+// std::runtime_error on I/O or format failure. `width` / `height` receive the
+// decoded size (unscaled). Needs a COM apartment (WIC).
+std::vector<std::uint8_t> DecodeImageFileRGBA(const std::wstring& file, unsigned& width, unsigned& height);
+
 // Destination rectangle on screen, in pixels.
 struct SpriteRect { float x = 0, y = 0, width = 0, height = 0; };
 

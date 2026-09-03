@@ -41,6 +41,12 @@ namespace zengine::ui
 
     class UiControl;
 
+    // How authored UI (laid out against a reference resolution) maps to the real
+    // window. Disabled = 1:1 window pixels.
+    enum class ScaleMode { Disabled, KeepAspect, Stretch, FixedWidth, FixedHeight };
+    bool ParseScaleMode(std::string_view name, ScaleMode& out);
+    const char* ScaleModeName(ScaleMode mode);
+
     // Per-frame services the layout pass needs (text measurement, texture sizes).
     struct UiContext
     {
@@ -49,7 +55,18 @@ namespace zengine::ui
         std::function<TextureHandle(std::string_view)> resolveTexture;
         // (video asset, playback time in seconds, loop) -> the frame to show now.
         std::function<TextureHandle(std::string_view, double, bool)> resolveVideoFrame;
+        // Resolution the UI was authored against; {0,0} disables scaling.
+        Vec2 referenceResolution{0, 0};
+        ScaleMode scaleMode = ScaleMode::KeepAspect;
     };
+
+    // Horizontal / vertical text alignment inside a control's box.
+    enum class HAlign { Left, Center, Right };
+    enum class VAlign { Top, Middle, Bottom };
+    bool ParseHAlign(std::string_view name, HAlign& out);
+    bool ParseVAlign(std::string_view name, VAlign& out);
+    const char* HAlignName(HAlign a);
+    const char* VAlignName(VAlign a);
 
     // A UI node. Attached as a behavior to a GameObject2D; the GameObject2D parent
     // hierarchy is the UI tree. Layout runs top-down from the screen rect each frame.
@@ -70,6 +87,11 @@ namespace zengine::ui
         void SetVisible(bool value) noexcept { visible_ = value; }
         bool Clickable() const noexcept { return clickable_; }
         void SetClickable(bool value) noexcept { clickable_ = value; }
+        // Input + visual enable. A disabled control (or container) disables its
+        // whole subtree for input and dims it; UiSystem propagates the effective
+        // state. Distinct from Visible (which hides entirely).
+        bool Enabled() const noexcept { return enabled_; }
+        void SetEnabled(bool value) noexcept { enabled_ = value; }
 
         const Rect& LayoutRect() const noexcept { return rect_; }
         void SetLayoutRect(const Rect& value) noexcept { rect_ = value; }   // UiSystem only
@@ -118,6 +140,7 @@ namespace zengine::ui
         int order_ = 0;
         bool visible_ = true;
         bool clickable_ = false;
+        bool enabled_ = true;
         Rect rect_{};
         const UiContext* context_ = nullptr;
         Rect clip_{};
@@ -230,19 +253,32 @@ namespace zengine::ui
         void SetPixelHeight(float value) noexcept { pixelHeight_ = std::max(1.0f, value); }
         Float4 Color() const noexcept { return color_; }
         void SetColor(Float4 value) noexcept { color_ = value; }
+        HAlign AlignH() const noexcept { return alignH_; }
+        VAlign AlignV() const noexcept { return alignV_; }
+        void SetAlignH(HAlign v) noexcept { alignH_ = v; }
+        void SetAlignV(VAlign v) noexcept { alignV_ = v; }
+        bool Wrap() const noexcept { return wrap_; }
+        void SetWrap(bool v) noexcept { wrap_ = v; }
         Vec2 DesiredSize() const override;
         void Emit(std::vector<SpriteDraw>&, std::vector<TextDraw>&) const override;
     protected:
+        // The lines this control paints for `rect_`, after honouring '\n' and, when
+        // wrapping, the box width.
+        std::vector<std::string> LayoutLines(float width) const;
         std::string text_;
         float pixelHeight_ = 16;
         Float4 color_{0.95f, 0.96f, 0.98f, 1};
+        HAlign alignH_ = HAlign::Left;
+        VAlign alignV_ = VAlign::Top;
+        bool wrap_ = false;
     };
 
-    // Multi-line text. Newlines in the value are honoured; the box does not wrap.
+    // Multi-line text. Newlines in the value are honoured; wraps to the box width
+    // when Wrap() is set.
     class LongText final : public Text
     {
     public:
-        explicit LongText(ObjectCore& owner) : Text(owner) {}
+        explicit LongText(ObjectCore& owner) : Text(owner) { wrap_ = true; }
         const char* TypeName() const noexcept override { return "longText"; }
         Vec2 DesiredSize() const override;
     };
@@ -492,6 +528,7 @@ namespace zengine::ui
             bool bold = false;
             bool link = false;
             Rect rect{};                  // resolved by Arrange
+            std::vector<std::string> lines; // wrapped text lines, filled by Arrange
         };
         float BlockHeight(const Block& block) const;
         void Parse();

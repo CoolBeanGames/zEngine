@@ -22,6 +22,27 @@ namespace zengine::ui
         index_.clear();
         screen_ = screenSize;
 
+        // Reference-resolution scaling: lay out against the authored size, then
+        // Emit / Interact map to / from real window pixels.
+        scale_ = {1, 1};
+        offset_ = {0, 0};
+        Vec2 design = screenSize;
+        const Vec2 ref = context.referenceResolution;
+        if (ref.x > 0 && ref.y > 0 && screenSize.x > 0 && screenSize.y > 0 && context.scaleMode != ScaleMode::Disabled)
+        {
+            design = ref;
+            const float sx = screenSize.x / ref.x, sy = screenSize.y / ref.y;
+            switch (context.scaleMode)
+            {
+            case ScaleMode::Stretch:     scale_ = {sx, sy}; break;
+            case ScaleMode::FixedWidth:  scale_ = {sx, sx}; break;
+            case ScaleMode::FixedHeight: scale_ = {sy, sy}; break;
+            case ScaleMode::KeepAspect:
+            default:                     { const float s = std::min(sx, sy); scale_ = {s, s}; } break;
+            }
+            offset_ = {(screenSize.x - ref.x * scale_.x) * 0.5f, (screenSize.y - ref.y * scale_.y) * 0.5f};
+        }
+
         // Collect every GameObject2D that carries a UiControl.
         for (std::size_t i = 0; i < objects.Size(); ++i)
         {
@@ -52,10 +73,12 @@ namespace zengine::ui
         for (auto& node : nodes_) SortChildren(node.children);
         SortChildren(roots_);
 
-        // Effective visibility, then top-down layout from the screen rect.
-        const Rect screenRect{0, 0, screen_.x, screen_.y};
+        // Effective visibility, then top-down layout from the (authored) screen rect.
+        const Rect screenRect{0, 0, design.x, design.y};
         for (std::size_t r : roots_)
         {
+            nodes_[r].visible = nodes_[r].control->Visible();
+            nodes_[r].enabled = nodes_[r].control->Enabled();
             nodes_[r].control->SetLayoutRect(ResolveAnchor(
                 screenRect, nodes_[r].control->GetAnchor(), nodes_[r].control->LocalOffset(),
                 nodes_[r].control->DesiredSize()));
@@ -93,6 +116,7 @@ namespace zengine::ui
         for (std::size_t c : node.children)
         {
             nodes_[c].visible = node.visible && nodes_[c].control->Visible();
+            nodes_[c].enabled = node.enabled && nodes_[c].control->Enabled();
             Layout(c, nodes_[c].control->LayoutRect(), childClip);
         }
     }
@@ -116,15 +140,40 @@ namespace zengine::ui
 
     void UiSystem::Emit(std::vector<SpriteDraw>& sprites, std::vector<TextDraw>& texts) const
     {
+        const bool scaled = scale_.x != 1.0f || scale_.y != 1.0f || offset_.x != 0.0f || offset_.y != 0.0f;
+        const auto mapRect = [&](SpriteRect r) {
+            return SpriteRect{offset_.x + r.x * scale_.x, offset_.y + r.y * scale_.y, r.width * scale_.x, r.height * scale_.y};
+        };
         for (std::size_t n : PaintOrder())
         {
             const std::size_t firstSprite = sprites.size(), firstText = texts.size();
             nodes_[n].control->Emit(sprites, texts);
+
             if (const Rect* clip = nodes_[n].control->ClipRect())
             {
                 const SpriteRect r{clip->x, clip->y, clip->width, clip->height};
                 for (std::size_t i = firstSprite; i < sprites.size(); ++i) sprites[i].clip = r;
                 for (std::size_t i = firstText; i < texts.size(); ++i) texts[i].clip = r;
+            }
+            if (!nodes_[n].enabled) // dim a disabled subtree
+            {
+                for (std::size_t i = firstSprite; i < sprites.size(); ++i) sprites[i].tint.w *= 0.4f;
+                for (std::size_t i = firstText; i < texts.size(); ++i) texts[i].color.w *= 0.4f;
+            }
+            if (scaled)
+            {
+                for (std::size_t i = firstSprite; i < sprites.size(); ++i)
+                {
+                    sprites[i].dest = mapRect(sprites[i].dest);
+                    if (sprites[i].clip.width > 0 && sprites[i].clip.height > 0) sprites[i].clip = mapRect(sprites[i].clip);
+                }
+                for (std::size_t i = firstText; i < texts.size(); ++i)
+                {
+                    texts[i].x = offset_.x + texts[i].x * scale_.x;
+                    texts[i].y = offset_.y + texts[i].y * scale_.y;
+                    texts[i].pixelHeight *= scale_.y;
+                    if (texts[i].clip.width > 0 && texts[i].clip.height > 0) texts[i].clip = mapRect(texts[i].clip);
+                }
             }
         }
     }
@@ -142,7 +191,7 @@ namespace zengine::ui
         for (auto it = painted.rbegin(); it != painted.rend(); ++it)
         {
             const Node& node = nodes_[*it];
-            if (node.control->Clickable() && node.control->AcceptsPoint(pixel))
+            if (node.enabled && node.control->Clickable() && node.control->AcceptsPoint(pixel))
                 return node.id;
         }
         return 0;
@@ -153,7 +202,7 @@ namespace zengine::ui
         // Paint order = front-to-back visually; Tab walks it front to back.
         std::vector<GameObjectId> order;
         for (std::size_t n : PaintOrder())
-            if (nodes_[n].visible && nodes_[n].control->Clickable()) order.push_back(nodes_[n].id);
+            if (nodes_[n].visible && nodes_[n].enabled && nodes_[n].control->Clickable()) order.push_back(nodes_[n].id);
         return order;
     }
 
@@ -193,6 +242,9 @@ namespace zengine::ui
         std::vector<GameObjectId> clicks;
         presses_.clear(); releases_.clear(); entered_.clear(); exited_.clear(); submissions_.clear();
         focusEntered_ = focusExited_ = 0;
+        // Map the real-window cursor back into authored (layout) space.
+        if (scale_.x != 0.0f) pixel.x = (pixel.x - offset_.x) / scale_.x;
+        if (scale_.y != 0.0f) pixel.y = (pixel.y - offset_.y) / scale_.y;
         const GameObjectId under = HitTest(pixel);
 
         // Hover enter / exit.
