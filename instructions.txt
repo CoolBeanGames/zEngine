@@ -89,6 +89,17 @@ name.
 
 === END TASK IMAGES ===
 
+=== ADDING & REFINING TASKS ===
+
+You have full access to add and create new tasks as needed, to split an existing
+task into separate tasks, and to add subtasks and detail to existing tasks. The
+only rules:
+  - Do NOT change the order of the tasks I put in the list.
+  - Do NOT add brand-new features. Only add tasks that aid the architecture and
+    implementation of features that are already planned.
+
+=== END ADDING & REFINING TASKS ===
+
 read through tasks.xml and complete tasks in the order they are presented. work through the list until reaching the end or you run out of usage. as you finish a task update the xml to mark it as done, as you begin mark it as in-progress. save the xml every time you make a change.
 
 if a task has the tag commit set to true then commit the project and push to github with a meaningful message of all the changes made. Add notes about the changes you made, log all files, and move on to the next task.
@@ -97,10 +108,18 @@ the task is NOT complete unless the requirements have been met, if a task is imp
 
 if the task has a build tag set to true, the project should be built to project_root/builds/debug, if you need to test build to project_root/builds/test, if it has a release tag set use project_root/builds/release
 
-this project is unique as we were already in progress, so continue development with that context while also working through the task list.
-
-you alone are giving the freedom to ignore the design.txt and follow the design language we already have. 
-
 if a task has subtasks it is NOT complete until all subtasks are, check them off as you complete them saving after each one.
 
-if a task is locked ignore it
+if a task is a bug, it takes top priority.
+
+if a task is blocked by another task, finish the task that is blocking it first, then return to the first task.
+
+if a task is in-progress it is the number 1 priority over even bugs.
+
+COMPLETELY ignore the acrhive tags contents, dont even proccess it once you see it.
+
+also I understand that these are often big tasks that may take a long time ore are complex, proceed anyways.
+
+when doing a release build, please zip the contents after the build for upload to github. ONLY release builds.
+
+when you finish a task that was blocking another task, remove the block on those apps so the UI of the task managment app is clear.

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<tasks project="zEngine" nextIndex="98">
+<tasks project="zEngine" nextIndex="99">
   <task id="ZE-95">
     <name>UI click detection breaks for the control with GameObject id 1</name>
     <prompt>UiSystem::Interact uses the literal GameObjectId{1} as a sentinel meaning "the primary button press began over empty space". When the top-most / first clickable UI control actually has id 1 (e.g. a Button created as the only object in a fresh ObjectStore), a press+release over it is discarded as an empty-space press, so no click / clicked signal is produced. Reproduce: create one GameObject2D with a Button behavior, Build, Interact(press) then Interact(release) over it - expect one click, get none.</prompt>
@@ -1706,6 +1706,43 @@ it wont throw exceptions or errors if passed unless theres a type mismatch</prom
     <notes></notes>
     <filesChanged></filesChanged>
     <image></image>
+  </task>
+  <task id="ZE-98">
+    <name>drag cursor feedback - show a valid / invalid drop cursor while dragging</name>
+    <prompt>When the user is mid-drag in the editor (dragging a scene-tree object, an asset from the library, a prefab, etc.) the mouse cursor should tell them whether the thing under the pointer will accept the drop.
+
+- While a drag is in progress and the pointer is over a target that WILL accept what is being dragged (the right reference type for an Inspector field, a valid reparent target in the scene tree, a valid folder in the library, the viewport for a prefab, etc.), change the cursor to a "this is a valid drop" cursor (e.g. IDC_CROSS or a copy/link cursor - pick one and use it consistently).
+- While dragging over anything that will NOT accept the drop (empty space, a wrong-type field, an illegal reparent), show the standard "no drop" cursor (IDC_NO).
+- The moment the pointer leaves a valid target (dragged back off), the cursor returns to the not-valid state; leaving the drag entirely / dropping / cancelling restores the normal arrow.
+- This is purely a cursor/feedback change - it must not alter what drops are actually accepted or how they behave.
+
+Covers every existing editor drag source and drop target (scene-tree -> Inspector reference fields, scene-tree reparent, scene-tree -> viewport prefab spawn, asset library rows -> folders, asset -> Inspector, prefab/model drops). Route it through one shared "what would happen if I dropped here" hit-test so new drag types get the feedback for free.</prompt>
+    <requirements>During any editor drag, the cursor shows a distinct "valid drop" shape over targets that would accept the current payload and a "no drop" shape everywhere else, updates immediately as the pointer moves between targets (including dragging back off a valid target), and reverts to the normal cursor when the drag ends, drops, or is cancelled. Drop acceptance and behaviour are unchanged. There is a single reusable predicate the cursor logic and the actual drop handlers both consult, so it stays correct as drag types are added.</requirements>
+    <inProgress>false</inProgress>
+    <done>false</done>
+    <bug>false</bug>
+    <error>false</error>
+    <errorMessage></errorMessage>
+    <lockKey></lockKey>
+    <locked>false</locked>
+    <archived>false</archived>
+    <blockedBy></blockedBy>
+    <dateStarted></dateStarted>
+    <dueDate></dueDate>
+    <commit>true</commit>
+    <build>true</build>
+    <release>false</release>
+    <tags>editor,ux,drag-drop</tags>
+    <notes></notes>
+    <filesChanged></filesChanged>
+    <image></image>
+    <subtasks>
+      <subtask done="false">One shared "would this target accept the current drag payload?" predicate (drag kind + payload + screen point -&gt; accept/reject), consumed by both the cursor logic and the real drop handlers</subtask>
+      <subtask done="false">During a drag, set IDC_CROSS (or a chosen valid-drop cursor) over accepting targets and IDC_NO elsewhere, via WM_SETCURSOR / SetCursor on mouse-move</subtask>
+      <subtask done="false">Cursor updates the instant the pointer moves on/off a valid target; restored to the normal arrow on drop, cancel (Esc / released outside), or drag end</subtask>
+      <subtask done="false">Wired for every current drag source/target: scene-tree -&gt; Inspector reference field, scene-tree reparent, scene-tree -&gt; viewport prefab, library row -&gt; folder, asset -&gt; Inspector, prefab/model drop</subtask>
+      <subtask done="false">Tests: the predicate returns the right accept/reject per (payload, target), and drop behaviour is unchanged</subtask>
+    </subtasks>
   </task>
   <task id="ZE-90">
     <name>do not work on anything below this line until I personally close it out NO AGENTS</name>
