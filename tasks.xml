@@ -995,12 +995,12 @@ a Breakpoint has been reached
     <name>Material Instances</name>
     <prompt>take a  shader and applies values to parameters, this is what the objects (2D and 3D) actually accept. these are created as asset files in the library (through right click)</prompt>
     <requirements></requirements>
-    <inProgress>false</inProgress>
+    <inProgress>true</inProgress>
     <done>false</done>
     <bug>false</bug>
     <error>false</error>
     <errorMessage></errorMessage>
-    <lockKey></lockKey>
+    <lockKey>k7m2x9qp</lockKey>
     <locked>false</locked>
     <archived>false</archived>
     <blockedBy></blockedBy>
