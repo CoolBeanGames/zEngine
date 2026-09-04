@@ -909,6 +909,7 @@ void EditorShell::SelectGameObject(zengine::GameObjectId id)
     if(index<firstObject_)firstObject_=index;else if(index>=firstObject_+visible)firstObject_=index-visible+1;
     if (inspectorPanel_) inspectorPanel_->Bind(object,CanEdit(id),CanEdit(id,true));
     selectedObject_ = id;
+    selectedAsset_ = -1; // ZE-82: keep asset / object selection mutually exclusive so Delete is unambiguous
     if (prefabLinks_.contains(id)) status_=L"Prefab instance root: edits are saved as instance overrides; double-click the asset to edit every non-overridden instance";
     else if (prefabSources_.contains(id)) status_=L"Nested prefab content is inherited; edit its prefab asset to change it";
     InvalidateRect(window_, &sceneBrowser_, FALSE);
@@ -1994,6 +1995,7 @@ LRESULT EditorShell::HandleMessage(
         if(LOWORD(wParam)==DeleteObjectCommand){if(selectedObject_)DeleteGameObject(selectedObject_);return 0;}
         if(LOWORD(wParam)==RenameObjectCommand){if(selectedObject_)BeginObjectRename(selectedObject_);return 0;}
         if(LOWORD(wParam)==RenameAssetCommand){if(selectedAsset_>=0&&selectedAsset_<static_cast<int>(assets_.size()))BeginAssetRename(assets_[selectedAsset_]);return 0;}
+        if(LOWORD(wParam)==DeleteAssetCommand){if(selectedAsset_>=0&&selectedAsset_<static_cast<int>(assets_.size()))try{DeleteAsset(assets_[selectedAsset_]);}catch(const std::exception& e){status_=WideText(e.what());InvalidateRect(window_,&statusBar_,FALSE);}return 0;}
         if(LOWORD(wParam)==UnparentCommand){if(selectedObject_)SetObjectParent(selectedObject_,0);return 0;}
         if(LOWORD(wParam)==RevertPrefabTransformCommand){if(selectedObject_)RevertPrefabTransform(selectedObject_);return 0;}
         if(LOWORD(wParam)==BuildProjectCommand){ChooseBuildFolder();return 0;}
@@ -2066,7 +2068,7 @@ LRESULT EditorShell::HandleMessage(
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
         AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),NewFolderCommand,L"New Folder...");
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0),NewSceneCommand,L"Create Scene (.zscene)");
-        if(assetIndex>=0){AppendMenuW(menu,MF_SEPARATOR,0,nullptr);AppendMenuW(menu,MF_STRING|((Playing()||assetLibrary::Type(assets_[assetIndex])==assetLibrary::Kind::Input)?MF_GRAYED:0),RenameAssetCommand,L"Rename");}
+        if(assetIndex>=0){AppendMenuW(menu,MF_SEPARATOR,0,nullptr);const UINT protect=(Playing()||assetLibrary::Type(assets_[assetIndex])==assetLibrary::Kind::Input)?MF_GRAYED:0u;AppendMenuW(menu,MF_STRING|protect,RenameAssetCommand,L"Rename");AppendMenuW(menu,MF_STRING|protect,DeleteAssetCommand,L"Delete");}
         const auto command=TrackPopupMenu(menu, TPM_RETURNCMD|TPM_RIGHTBUTTON, screen.x,screen.y,0,window_,nullptr);
         DestroyMenu(menu);
         if (command == 1) CreateScriptAsset();
@@ -2077,6 +2079,8 @@ LRESULT EditorShell::HandleMessage(
         if (command==NewSceneCommand) NewScene();
         if(command==NewFolderCommand)NewAssetFolderDialog();
         if(command==RenameAssetCommand)BeginAssetRename(assets_[assetIndex]);
+        if(command==DeleteAssetCommand && assetIndex>=0 && assetIndex<static_cast<int>(assets_.size()))
+            try { DeleteAsset(assets_[assetIndex]); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); }
         return 0;
     }
     case WM_LBUTTONDBLCLK:
@@ -2297,6 +2301,12 @@ LRESULT EditorShell::HandleMessage(
     }
     case WM_KEYDOWN:
         if (wParam=='W' || wParam=='E' || wParam=='R') { SetTransformTool(wParam=='W'?gizmo::Mode::Move:wParam=='E'?gizmo::Mode::Rotate:gizmo::Mode::Scale); return 0; }
+        if (wParam == VK_DELETE && !Playing()) // ZE-82 / object delete
+        {
+            if (selectedAsset_ >= 0 && selectedAsset_ < static_cast<int>(assets_.size()))
+            { try { DeleteAsset(assets_[selectedAsset_]); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } return 0; }
+            if (selectedObject_ && CanEdit(selectedObject_)) { DeleteGameObject(selectedObject_); return 0; }
+        }
         if (wParam == VK_ESCAPE)
         {
             if (draggedObject_) { draggedObject_=0; ReleaseCapture(); return 0; }

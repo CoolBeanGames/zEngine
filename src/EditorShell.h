@@ -56,7 +56,11 @@ public:
     std::filesystem::path CreateAssetFolder(const std::wstring&);
     void MoveAsset(const std::filesystem::path& source,const std::filesystem::path& folder);
     void RenameAsset(const std::filesystem::path& source,const std::wstring& name);
+    // ZE-82: delete an asset (or a model package / folder) from the project, with a
+    // confirmation that reports how many scenes/prefabs still reference it.
+    bool DeleteAsset(const std::filesystem::path& source,bool confirm=true);
     static constexpr int NewFolderCommand=3400,UpFolderCommand=3401,RenameAssetCommand=3402,RenameObjectCommand=3403;
+    static constexpr int DeleteAssetCommand=3404; // ZE-82
     static constexpr int BuildProjectCommand=3500;
     static constexpr int BakeLightmapsCommand=3501; // ZE-113
     static constexpr int ToggleStaticMeshCommand=3502; // ZE-113

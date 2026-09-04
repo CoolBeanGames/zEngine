@@ -5,6 +5,7 @@
 #include "PrefabAssets.h"
 #include "ScriptAssets.h"
 #include "ScriptEditor.h"
+#include "MaterialEditor.h"
 #include <fstream>
 #include <cwctype>
 
@@ -78,6 +79,54 @@ void EditorShell::MoveAsset(const std::filesystem::path& asset,const std::filesy
     RefreshOpenDocumentAfterAssetMove(source,destination,from,to);
     if(AssetFolder()==source || RelativeAsset(AssetFolder(),assetsDirectory_).starts_with(from+"/"))assetFolder_=Remap(AssetFolder(),source,destination);
     RefreshAssets();status_=L"Moved asset to "+destinationFolder.filename().wstring();InvalidateRect(window_,nullptr,FALSE);
+}
+bool EditorShell::DeleteAsset(const std::filesystem::path& asset,bool confirm)
+{
+    RequireProject();
+    if(Playing())throw std::runtime_error("Stop Play before deleting assets.");
+    if(assetLibrary::Type(asset)==assetLibrary::Kind::Input)throw std::runtime_error("The project Input Map cannot be deleted.");
+    const auto source=assetLibrary::Storage(asset);
+    if(!std::filesystem::exists(source))throw std::runtime_error("That asset no longer exists.");
+    for(const auto& editor:scriptEditors_)if(Within(editor->Path(),source))throw std::runtime_error("Close this script editor before deleting its asset.");
+    if(materialEditor_ && materialEditor_->Window() && IsWindowVisible(materialEditor_->Window()) && Within(materialEditor_->File(),source)) DestroyWindow(materialEditor_->Window());
+    if(sceneOpen_ && (Within(scenePath_,source) || _wcsicmp(scenePath_.c_str(),source.c_str())==0))
+        throw std::runtime_error("This is the open scene - open or create another scene before deleting it.");
+    if(!editingPrefab_.empty() && Within(editingPrefab_,source))
+        throw std::runtime_error("Close this prefab before deleting it.");
+
+    const auto from=RelativeAsset(source,assetsDirectory_);
+    // Count scenes / prefabs that still reference the asset (a folder matches by prefix).
+    int references=0;
+    for(const auto& entry:std::filesystem::recursive_directory_iterator(assetsDirectory_))if(entry.is_regular_file() && !Within(entry.path(),source)){
+        try{
+            if(zengine::scenes::IsScene(entry.path())){auto d=zengine::scenes::Decode(zengine::scenes::Load(entry.path()));if(Rewrite(d,from,from))++references;}
+            else if(zengine::prefabs::IsPrefab(entry.path())){auto d=zengine::prefabs::Decode(zengine::scenes::Load(entry.path()));if(Rewrite(d,from,from))++references;}
+        }catch(const std::exception&){}
+    }
+    if(confirm && window_){
+        std::wstring message=L"Delete "+source.filename().wstring()+L"?\n\nThis permanently removes it from disk.";
+        if(references>0)message+=L"\n\nWARNING: "+std::to_wstring(references)+L" scene/prefab file(s) still reference this asset and will show it as missing.";
+        if(MessageBoxW(window_,message.c_str(),L"Delete asset",MB_OKCANCEL|MB_ICONWARNING|(references>0?MB_DEFBUTTON2:0u))!=IDOK)return false;
+    }
+
+    std::error_code error;
+    const auto removed=std::filesystem::remove_all(source,error);
+    if(error || removed==0)throw std::runtime_error("Could not delete the asset: "+error.message());
+
+    if(project_){
+        const auto prefix="Assets/"+from;
+        auto& scenes=project_->config.scenes;
+        std::erase_if(scenes,[&](const std::string& s){return s==prefix || s.starts_with(prefix+"/");});
+        if(project_->config.lastScene==prefix || project_->config.lastScene.starts_with(prefix+"/"))
+            project_->config.lastScene=scenes.empty()?std::string{}:scenes.front();
+        zengine::projects::Save(*project_);
+    }
+    if(Within(AssetFolder(),source))assetFolder_.clear(); // deleted the folder we were browsing
+    selectedAsset_=-1;draggedAsset_=-1;
+    RefreshAssets();
+    status_=L"Deleted "+source.filename().wstring();
+    InvalidateRect(window_,nullptr,FALSE);
+    return true;
 }
 void EditorShell::RenameAsset(const std::filesystem::path& asset,const std::wstring& requested)
 {

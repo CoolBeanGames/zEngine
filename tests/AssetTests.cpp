@@ -979,6 +979,25 @@ void FolderTests(bool capture) {
         editor.RenameAsset(moved,L"MovedScript");const auto renamed=archive/L"MovedScript.zsh";
         Require(zengine::scripts::Load(renamed).find("class MovedScript")!=std::string::npos,"Renaming a script did not update its class name");
         Require(!std::filesystem::exists(moved)&&std::filesystem::exists(renamed)&&assetLibrary::Type(renamed)==assetLibrary::Kind::Script,"Asset rename failed or lost its type");
+        // ZE-82: delete assets from the editor.
+        {
+            const auto spare=editor.CreateAssetFolder(L"Trash");
+            const auto doomed=editor.CreateScriptAsset();
+            if(HWND rn=GetDlgItem(window,3900))SendMessageW(rn,WM_KEYDOWN,VK_RETURN,0);
+            Require(std::filesystem::is_regular_file(doomed),"delete-test fixture missing");
+            Require(editor.DeleteAsset(doomed,false),"DeleteAsset returned false");
+            Require(!std::filesystem::exists(doomed),"asset still on disk after delete");
+            // A whole folder (with contents) can be removed.
+            editor.OpenAssetFolder(spare); const auto inner=editor.CreateScriptAsset();
+            if(HWND rn=GetDlgItem(window,3900))SendMessageW(rn,WM_KEYDOWN,VK_RETURN,0);
+            editor.OpenAssetFolder(scripts);
+            Require(editor.DeleteAsset(spare,false) && !std::filesystem::exists(spare) && !std::filesystem::exists(inner),"folder delete failed");
+            // The Input Map and the open scene are protected.
+            bool guarded=false; try{ editor.DeleteAsset(editor.AssetsDirectory()/L"Input.zinput",false); }catch(...){ guarded=true; }
+            Require(guarded,"Input Map was deletable");
+            guarded=false; try{ editor.DeleteAsset(editor.ScenePath(),false); }catch(...){ guarded=true; }
+            Require(guarded,"the open scene was deletable");
+        }
         if(capture){editor.Render();CaptureWindow(window,L"asset-folders-qa.bmp");}
     }
     CoUninitialize();std::cout<<"PASS: asset grid navigation, automatic inline rename, moving and renaming assets, nested assets, protected Input Map, path containment\n";
