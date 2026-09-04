@@ -1157,6 +1157,21 @@ ProgramStats Program::Stats() const { return impl_->stats; }
 bool Program::HasClass(std::string_view name) const { return impl_->classes.contains(Canonical(std::string(name))); }
 bool Program::IsGameObject(std::string_view name) const { return impl_->IsGameObjectLike(Canonical(std::string(name))); }
 bool Program::IsDataObject(std::string_view name) const { return impl_->IsData(Canonical(std::string(name))); }
+std::vector<std::pair<std::string,std::string>> Program::DataObjectFields(std::string_view name) const {
+    const auto canonical = Canonical(std::string(name));
+    const auto it = impl_->classes.find(canonical);
+    if (it == impl_->classes.end() || !it->second.isData)
+        throw ScriptError({impl_->source, 1, 1, "'" + std::string(name) + "' is not a data object"});
+    std::vector<std::pair<std::string,std::string>> out;
+    for (const auto& f : it->second.fields) out.emplace_back(f.token.text, f.type); // already base-to-derived (see build())
+    return out;
+}
+std::vector<std::string> Program::DataObjectTypes() const {
+    std::vector<std::string> out;
+    for (const auto& [n, c] : impl_->classes) if (c.isData && n != "data") out.push_back(n);
+    std::sort(out.begin(), out.end());
+    return out;
+}
 bool Program::HasCode(std::string_view className, std::string_view method) const {
     const auto* f = impl_->Method(Canonical(std::string(className)), std::string(method));
     return f && !f->code.empty();

@@ -35,6 +35,12 @@ public:
     ~InspectorPanel();
     void Create(HWND parent, HINSTANCE instance, HFONT font, std::function<void()> changed);
     void Bind(zengine::ObjectCore* object,bool editData=true,bool editTransform=true);
+    // ZE-128: edit a data object (.zdata) asset in the inspector. `fields` are
+    // {name, canonical type, current text value}, in declared order. Edits call
+    // `onEdit(name, newValue)`; the host writes the .zdata file.
+    struct DataFieldRow { std::string name, type, value; };
+    void BindDataObject(std::wstring title, std::vector<DataFieldRow> fields,
+                        std::function<void(const std::string& name, const std::string& value)> onEdit);
     void RefreshBehaviors();
     void SetScriptHost(zengine::ScriptHost* host) { scriptHost_ = host; }
     void RefreshLiveValues();
@@ -109,6 +115,8 @@ private:
         bool materialPath = false;
         bool materialParam = false;
         zengine::shaders::ParamType materialType = zengine::shaders::ParamType::Float4;
+        bool dataField = false; // ZE-128: a row of the .zdata being edited; `name` is the field, `type` its canonical type.
+        std::string dataType;
     };
     std::wstring BehaviorValue(std::size_t index);
     void ChangeBehaviorField(std::size_t index);
@@ -126,6 +134,12 @@ private:
     std::set<zengine::Behavior*> collapsedBehaviors_;
     zengine::Behavior* contextBehavior_ = nullptr;
     zengine::ScriptHost* scriptHost_ = nullptr;
+    // ZE-128: data-object (.zdata) edit mode. When dataMode_ is set, object_ is null
+    // and behaviorFields_ carries one row per data field (entry.dataField_ = true).
+    bool dataMode_ = false;
+    std::wstring dataTitle_;
+    std::vector<DataFieldRow> dataRows_;
+    std::function<void(const std::string&, const std::string&)> dataEdit_;
     int BehaviorHeight() const;
     int RowHeight(const BehaviorField& entry) const;
 

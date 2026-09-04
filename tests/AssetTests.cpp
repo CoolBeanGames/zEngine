@@ -13,6 +13,7 @@
 #include "core/Environment.h"
 #include "core/Decal.h"
 #include "LightmapAssets.h"
+#include "DataAssets.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
 #include "ScriptAssets.h"
@@ -1540,6 +1541,56 @@ void ArrayInspectorTests(bool capture)
     CoUninitialize();
     std::cout << "PASS: exported script arrays render, add/remove/edit elements, and accept dragged auto-typed references\n";
 }
+// ZE-128: .zdata data object asset + inspector editing.
+void DataObjectEditorTests()
+{
+    namespace d = zengine::dataobj;
+    // --- codec round-trip (no editor) ---
+    d::DataDoc doc; doc.type = "Weapon";
+    doc.fields = {{"count","int","3"},{"name","string","a \"big\" sword"},{"damage","float","10.5"},{"aim","Vector2","1, 2"}};
+    const auto decoded = d::Decode(d::Encode(doc));
+    Require(decoded == doc, "DataAssets Encode/Decode round-trip changed the document");
+    try { d::Decode("not a zdata"); Require(false,"Decode accepted garbage"); } catch (const std::exception&) {}
+
+    TestDirectory test;
+    Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM init failed");
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        const auto window = editor.Create(SW_HIDE, test.path); editor.InitializeRenderer();
+        const auto root = editor.AssetsDirectory();
+
+        const auto scriptPath = editor.CreateScriptAsset();
+        zengine::scripts::Save(root, scriptPath,
+            "struct Item {\r\n    int count = 1;\r\n    float weight = 2.5;\r\n    string title = \"sword\";\r\n"
+            "    func doubled():int { return count * 2; }\r\n}\r\n");
+
+        Require(editor.ProjectDataObjectTypes() == std::vector<std::string>{"Item"}, "ProjectDataObjectTypes did not find the struct");
+        const auto zdata = editor.CreateDataObject("Item");
+        Require(d::IsData(zdata) && d::Load(zdata).type == "Item", "CreateDataObject did not write a valid .zdata");
+
+        editor.OpenDataObject(zdata);
+        const auto inspector = FindWindowExW(window, nullptr, L"zEngineInspector", nullptr);
+        Require(inspector != nullptr, "Inspector window missing");
+        // Row 0 is the "Data Object" header (no control); count / weight / title follow.
+        const auto field = [&](int row) { return GetDlgItem(inspector, InspectorPanel::FirstBehaviorField + row); };
+        Require(field(1) && field(2) && field(3), "Data object field rows not shown in the Inspector");
+
+        SetFocus(field(1)); SetWindowTextW(field(1), L"7"); SendMessageW(field(1), WM_KEYDOWN, VK_RETURN, 0);
+        SetFocus(field(3)); SetWindowTextW(field(3), L"excalibur"); SendMessageW(field(3), WM_KEYDOWN, VK_RETURN, 0);
+        const auto saved = d::Load(zdata);
+        const auto value = [&](const std::string& n) { for (auto& f : saved.fields) if (f.name == n) return f.value; return std::string("<none>"); };
+        Require(value("count") == "7", "Inspector edit to an int data field did not persist to the .zdata file");
+        Require(value("title") == "excalibur", "Inspector edit to a string data field did not persist");
+
+        // Invalid input reverts.
+        SetFocus(field(1)); SetWindowTextW(field(1), L"nope"); SendMessageW(field(1), WM_KEYDOWN, VK_RETURN, 0);
+        wchar_t text[64]{}; GetWindowTextW(field(1), text, 64);
+        Require(std::wstring(text) == L"7", "Invalid data-field input did not revert");
+
+    }
+    CoUninitialize();
+    std::cout << "PASS: data object asset + inspector editing\n";
+}
 int main(int argc, char** argv)
 {
     try
@@ -1565,6 +1616,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--gizmos") GizmoTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--prefabs") PrefabTests();
         else if (argc > 1 && (std::string(argv[1]) == "--project-recovery" || std::string(argv[1]) == "--project-dialog" || std::string(argv[1]) == "--project-missing")) ProjectStartupTests(argv[1],argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--data") DataObjectEditorTests();
         else if (argc == 1) ImportTests();
         else throw std::runtime_error("Unknown test mode");
         return 0;

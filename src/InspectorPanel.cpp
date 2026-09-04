@@ -134,6 +134,16 @@ void InspectorPanel::Bind(zengine::ObjectCore* object,bool editData,bool editTra
         { FinishBehaviorField(index,false); SetFocus(window_); }
     object_ = object;
     editData_=editData; editTransform_=editTransform;
+    dataMode_ = false; dataRows_.clear(); dataEdit_ = nullptr; // ZE-128: any object (re)bind leaves data-edit mode
+    RefreshFields();
+    RefreshBehaviors();
+}
+void InspectorPanel::BindDataObject(std::wstring title, std::vector<DataFieldRow> fields,
+                                    std::function<void(const std::string&, const std::string&)> onEdit)
+{
+    EndScrub(true);
+    object_ = nullptr; editData_ = true; editTransform_ = false;
+    dataMode_ = true; dataTitle_ = std::move(title); dataRows_ = std::move(fields); dataEdit_ = std::move(onEdit);
     RefreshFields();
     RefreshBehaviors();
 }
@@ -364,6 +374,22 @@ void InspectorPanel::RefreshBehaviors()
             }
         }
     }
+    if (dataMode_) // ZE-128: one edit row per data-object field
+    {
+        add(nullptr, {}, L"Data Object — " + dataTitle_, false, false, false, BehaviorField::Style::ScriptLabel);
+        for (const auto& row : dataRows_)
+        {
+            const bool vec = row.type == "Vector3" || row.type == "Vector2";
+            const int count = row.type == "Vector2" ? 2 : row.type == "Vector3" ? 3 : 1;
+            for (int a = 0; a < count; ++a)
+            {
+                add(nullptr, row.name, Wide(row.name + (vec ? "" : " (" + row.type + ")")), false, true, true);
+                auto& e = behaviorFields_.back();
+                e.dataField = true; e.dataType = row.type; e.type = row.type;
+                if (vec) { e.axis = a; e.axisCount = count; }
+            }
+        }
+    }
     for (std::size_t i=0;i<behaviorFields_.size();++i)
     {
         if (behaviorFields_[i].bitmask) { RefreshCollisionBits(behaviorFields_[i]); continue; }
@@ -418,6 +444,17 @@ bool InspectorPanel::IsBehaviorCollapsed(const BehaviorField& entry) const
 std::wstring InspectorPanel::BehaviorValue(std::size_t index)
 {
     const auto& entry=behaviorFields_.at(index);
+    if (entry.dataField) // ZE-128
+    {
+        const auto row=std::find_if(dataRows_.begin(),dataRows_.end(),[&](const DataFieldRow& r){return r.name==entry.name;});
+        if(row==dataRows_.end())return {};
+        if(entry.axis<0)return Wide(row->value);
+        // Vector row: split "a, b, c" and return the requested component.
+        std::wstring text=Wide(row->value); std::vector<std::wstring> parts; std::wstring cur;
+        for(wchar_t c:text){ if(c==L','){parts.push_back(cur);cur.clear();} else if(c!=L' ')cur+=c; }
+        parts.push_back(cur);
+        return entry.axis<static_cast<int>(parts.size())?parts[entry.axis]:L"0";
+    }
     if (entry.materialPath)
     {
         auto* mr=dynamic_cast<zengine::MeshRenderer*>(entry.behavior);
@@ -534,6 +571,30 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
 {
     if (updating_ || !editData_) return;
     auto& entry=behaviorFields_.at(index);
+    if (entry.dataField) // ZE-128: validate then hand the new value string to the host
+    {
+        const auto text=ReadText(entry.field.window);
+        auto row=std::find_if(dataRows_.begin(),dataRows_.end(),[&](DataFieldRow& r){return r.name==entry.name;});
+        if(row==dataRows_.end())return;
+        std::string out;
+        try
+        {
+            if(entry.type=="int"){ float v; if(!ParseNumber(text,v)||v!=std::floor(v))throw std::invalid_argument("int"); std::wostringstream o;o<<static_cast<long long>(v);out=Utf8(o.str()); }
+            else if(entry.type=="float"){ float v; if(!ParseNumber(text,v))throw std::invalid_argument("float"); out=Utf8(text); }
+            else if(entry.type=="bool"){ const auto t=Utf8(text); if(t!="true"&&t!="false"&&t!="0"&&t!="1")throw std::invalid_argument("bool"); out=(t=="true"||t=="1")?"true":"false"; }
+            else if(entry.axis>=0){ float v; if(!ParseNumber(text,v))throw std::invalid_argument("number");
+                std::wstring combined; const std::size_t base=index-entry.axis;
+                for(int a=0;a<entry.axisCount;++a){ if(a)combined+=L", "; combined+= a==entry.axis?text:BehaviorValue(base+a); }
+                out=Utf8(combined); }
+            else out=Utf8(text); // string
+            entry.field.valid=true;
+            row->value=out;
+            if(dataEdit_)dataEdit_(entry.name,out);
+        }
+        catch(const std::exception&){ entry.field.valid=false; }
+        InvalidateRect(entry.field.window,nullptr,FALSE);
+        return;
+    }
     if (entry.materialPath)
     {
         if(auto* mr=dynamic_cast<zengine::MeshRenderer*>(entry.behavior))

@@ -21,6 +21,8 @@
 #include "core/Decal.h"
 #include "SceneLights.h"
 #include "LightmapAssets.h"
+#include "DataAssets.h"
+#include "zscript/Script.h"
 #include "CubeModel.h"
 #include "ui/UiSerialize.h"
 #include "ui/VideoClip.h"
@@ -66,6 +68,7 @@ namespace
         case assetLibrary::Kind::Shader: return L"Material Shader";
         case assetLibrary::Kind::Material: return L"Material";
         case assetLibrary::Kind::Audio: return L"Audio";
+        case assetLibrary::Kind::Data: return L"Data Object";
         case assetLibrary::Kind::Folder: return L"Folder";
         default: return L"File";
         }
@@ -1413,6 +1416,81 @@ std::filesystem::path EditorShell::CreateMaterialAsset()
     BeginAssetRename(path);
     return path;
 }
+namespace {
+// ZE-128: the compiled program of the project script that declares data object `type`.
+std::shared_ptr<const zengine::script::Program> ProgramDefiningStruct(
+    const std::filesystem::path& assetsDir, const std::vector<std::wstring>& scriptPaths, const std::string& type)
+{
+    for (const auto& rel : scriptPaths)
+    {
+        std::string source;
+        try { source = zengine::scripts::Load(assetsDir / rel); }
+        catch (const std::exception&) { continue; }
+        const auto result = zengine::script::Compiler::Compile(source, std::filesystem::path(rel).string());
+        if (result && result.program->IsDataObject(type)) return result.program;
+    }
+    return nullptr;
+}
+}
+std::vector<std::string> EditorShell::ProjectDataObjectTypes() const
+{
+    std::set<std::string> types;
+    for (const auto& rel : ProjectScriptPaths())
+    {
+        std::string source;
+        try { source = zengine::scripts::Load(assetsDirectory_ / rel); }
+        catch (const std::exception&) { continue; }
+        const auto result = zengine::script::Compiler::Compile(source, std::filesystem::path(rel).string());
+        if (result) for (const auto& t : result.program->DataObjectTypes()) types.insert(t);
+    }
+    return {types.begin(), types.end()};
+}
+std::filesystem::path EditorShell::CreateDataObject(const std::string& structType)
+{
+    RequireProject();
+    if (Playing()) throw std::runtime_error("Stop Play before creating a data object.");
+    const auto path = zengine::dataobj::Create(AssetFolder(), structType);
+    RefreshAssets();
+    selectedAsset_ = static_cast<int>(std::find(assets_.begin(), assets_.end(), path) - assets_.begin());
+    status_ = L"Created " + path.filename().wstring() + L" - double-click to edit its fields";
+    InvalidateRect(window_, nullptr, FALSE);
+    BeginAssetRename(path);
+    return path;
+}
+void EditorShell::OpenDataObject(const std::filesystem::path& path)
+{
+    RequireProject();
+    if (Playing()) throw std::runtime_error("Stop Play before editing a data object.");
+    const auto file = zengine::dataobj::Resolve(assetsDirectory_, path);
+    auto doc = std::make_shared<zengine::dataobj::DataDoc>(zengine::dataobj::Load(file));
+    const auto program = ProgramDefiningStruct(assetsDirectory_, ProjectScriptPaths(), doc->type);
+    if (!program) throw std::runtime_error("No script defines the data object 'struct " + doc->type + "'.");
+
+    // Merge: one row per declared field, seeded from the file (or its default).
+    std::vector<InspectorPanel::DataFieldRow> rows;
+    std::vector<zengine::dataobj::FieldValue> merged;
+    for (const auto& [name, type] : program->DataObjectFields(doc->type))
+    {
+        if (!zengine::dataobj::IsStorableType(type)) continue;
+        std::string value;
+        for (const auto& f : doc->fields) if (f.name == name) { value = f.value; break; }
+        rows.push_back({name, type, value});
+        merged.push_back({name, type, value});
+    }
+    doc->fields = std::move(merged);
+    zengine::dataobj::Save(assetsDirectory_, file, *doc); // normalise the file to the current schema
+
+    const auto root = assetsDirectory_;
+    inspectorPanel_->BindDataObject(WideText(doc->type + "  (" + file.filename().string() + ")"), std::move(rows),
+        [doc, file, root](const std::string& name, const std::string& value)
+        {
+            for (auto& f : doc->fields) if (f.name == name) { f.value = value; break; }
+            try { zengine::dataobj::Save(root, file, *doc); } catch (const std::exception&) {}
+        });
+    selectedObject_ = 0;
+    status_ = L"Editing data object " + file.filename().wstring();
+    InvalidateRect(window_, nullptr, FALSE);
+}
 void EditorShell::OpenMaterial(const std::filesystem::path& path)
 {
     RequireProject();
@@ -2072,6 +2150,14 @@ LRESULT EditorShell::HandleMessage(
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
         AppendMenuW(menu, MF_STRING, 3, L"Create Material Shader (.shader)");
         AppendMenuW(menu, MF_STRING, 4, L"Create Material (.material)");
+        { // ZE-128: Create Data Object > <struct type>
+            const auto types = Playing() ? std::vector<std::string>{} : ProjectDataObjectTypes();
+            HMENU sub = CreatePopupMenu();
+            for (std::size_t i = 0; i < types.size() && i < 90; ++i)
+                AppendMenuW(sub, MF_STRING, 6000 + static_cast<UINT>(i), WideText(types[i]).c_str());
+            AppendMenuW(menu, MF_POPUP|((Playing()||types.empty())?MF_GRAYED:0), reinterpret_cast<UINT_PTR>(sub),
+                        types.empty() ? L"Create Data Object (define a `struct` first)" : L"Create Data Object (.zdata)");
+        }
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0), 5, L"Build Video Clip (.zvid) from Images...");
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
         AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),NewFolderCommand,L"New Folder...");
@@ -2082,6 +2168,8 @@ LRESULT EditorShell::HandleMessage(
         if (command == 1) CreateScriptAsset();
         if (command == 3) CreateShaderAsset();
         if (command == 4) CreateMaterialAsset();
+        if (command >= 6000 && command < 6090) { const auto types=ProjectDataObjectTypes(); const std::size_t i=command-6000;
+            if (i<types.size()) try { CreateDataObject(types[i]); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
         if (command == 5) { try { BuildVideoClipFromImages(); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
         if (command==NewSceneCommand) NewScene();
@@ -2105,6 +2193,7 @@ LRESULT EditorShell::HandleMessage(
                 else if (zengine::scripts::IsScript(asset)) OpenScript(asset);
                 else if (zengine::shaders::IsShader(asset)) OpenShader(asset);
                 else if (zengine::materials::IsMaterial(asset)) OpenMaterial(asset);
+                else if (zengine::dataobj::IsData(asset)) { try { OpenDataObject(asset); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
                 else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
                 else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
             }

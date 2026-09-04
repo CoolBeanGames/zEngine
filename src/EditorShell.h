@@ -125,6 +125,10 @@ public:
     bool AssignMaterialToObject(zengine::GameObjectId id, const std::string& materialAsset);
     // ZE-65: material instance assets (.material).
     std::filesystem::path CreateMaterialAsset();
+    // ZE-128: data object assets (.zdata) - one instance of a zScript `struct`.
+    std::filesystem::path CreateDataObject(const std::string& structType);
+    void OpenDataObject(const std::filesystem::path& path); // edit it in the Inspector
+    std::vector<std::string> ProjectDataObjectTypes() const;
     // ZE-97: encode the images in a folder (sorted by name) into a .zvid clip.
     std::filesystem::path BuildVideoClipFromImages();
     bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);

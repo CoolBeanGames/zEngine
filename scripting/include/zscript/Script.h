@@ -89,6 +89,11 @@ public:
     bool IsGameObject(std::string_view name) const;
     bool IsDataObject(std::string_view name) const; // ZE-91: a `struct` data object
     bool HasCode(std::string_view className, std::string_view method) const;
+    // ZE-128: a data object's instance fields (declared + inherited), in base-to-derived
+    // order. {name, canonical type}. Throws ScriptError if `name` is not a data object.
+    std::vector<std::pair<std::string, std::string>> DataObjectFields(std::string_view name) const;
+    // Every data object type declared in this program (for the "Create Data Object" picker).
+    std::vector<std::string> DataObjectTypes() const;
     // Reference remains valid for this Program lifetime. Unknown classes throw ScriptError.
     const std::vector<InspectorEntry>& InspectorLayout(std::string_view className) const;
 private:
