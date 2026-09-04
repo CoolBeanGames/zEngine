@@ -1044,6 +1044,14 @@ void EditorShell::PollAssetWork()
                     result.warnings.insert(result.warnings.end(), textureWarnings.begin(), textureWarnings.end());
                     meshCache_[result.path] = handle;
                 }
+                if (!result.model.vertices.empty()) // ZE-104: remember the mesh's local AABB for click-picking
+                {
+                    Float3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
+                    for (const auto& v : result.model.vertices)
+                    { lo.x=std::min(lo.x,v.position.x); lo.y=std::min(lo.y,v.position.y); lo.z=std::min(lo.z,v.position.z);
+                      hi.x=std::max(hi.x,v.position.x); hi.y=std::max(hi.y,v.position.y); hi.z=std::max(hi.z,v.position.z); }
+                    meshBoundsCache_[result.path] = {lo,hi};
+                }
                 const auto name = result.path.parent_path().filename().wstring();
                 auto* object = result.object ? objects_.Find(result.object) : &objects_.Create(Utf8Text(name));
                 if (!object) throw std::runtime_error("The target GameObject no longer exists.");
@@ -1052,6 +1060,8 @@ void EditorShell::PollAssetWork()
                 const auto relative = std::filesystem::relative(result.path,assetsDirectory_).generic_u8string();
                 const std::string asset(reinterpret_cast<const char*>(relative.data()),relative.size());
                 meshBindings_[object->Id()] = {asset,handle};
+                if (const auto b=meshBoundsCache_.find(result.path); b!=meshBoundsCache_.end())
+                { meshBindings_[object->Id()].boundsMin=b->second.first; meshBindings_[object->Id()].boundsMax=b->second.second; }
                 mesh->SetAsset(asset);
                 // ZE-126: adopt the package's default .material (written on import) unless one is already set.
                 if (mesh->Material().empty())

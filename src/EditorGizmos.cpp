@@ -1,7 +1,63 @@
 #include "EditorShell.h"
 #include "InspectorPanel.h"
 #include "RenderTransform.h"
+#include "physics/PhysicsBehavior.h"
 #include <windowsx.h>
+#include <cfloat>
+
+zengine::GameObjectId EditorShell::PickObject(gizmo::Point p) const
+{
+    using namespace DirectX;
+    if (requestedViewportWidth_ == 0 || requestedViewportHeight_ == 0) return 0;
+    ViewportCamera camera(static_cast<float>(requestedViewportWidth_), static_cast<float>(requestedViewportHeight_), sceneCamera_);
+    const XMMATRIX identity = XMMatrixIdentity();
+    const XMVECTOR rayNear = XMVector3Unproject(XMVectorSet(p.x, p.y, 0.0f, 1.0f), 0, 0, camera.width, camera.height, 0.0f, 1.0f, camera.projection, camera.view, identity);
+    const XMVECTOR rayFar  = XMVector3Unproject(XMVectorSet(p.x, p.y, 1.0f, 1.0f), 0, 0, camera.width, camera.height, 0.0f, 1.0f, camera.projection, camera.view, identity);
+
+    float best = FLT_MAX;
+    zengine::GameObjectId hit = 0;
+    for (std::size_t i = 0; i < objects_.Size(); ++i)
+    {
+        const auto* object = zengine::As3D(&objects_.At(i));
+        if (!object) continue;
+        const XMMATRIX world = TransformMatrix(object->GetTransform()) * ParentMatrix(objects_, *object);
+        XMVECTOR det;
+        const XMMATRIX inverse = XMMatrixInverse(&det, world);
+        if (std::abs(XMVectorGetX(det)) < 1e-12f) continue;
+        const XMVECTOR lo = XMVector3TransformCoord(rayNear, inverse);
+        const XMVECTOR dir = XMVector3Normalize(XMVector3TransformCoord(rayFar, inverse) - lo);
+
+        Float3 bmin{-0.35f,-0.35f,-0.35f}, bmax{0.35f,0.35f,0.35f}; // grab box for empties / lights / cameras
+        if (const auto b = meshBindings_.find(object->Id()); b != meshBindings_.end())
+        { bmin = b->second.boundsMin; bmax = b->second.boundsMax; }
+        else if (const auto* collider = object->GetBehavior<zengine::physics::Collider>())
+        {
+            const auto off = collider->Offset(), sz = collider->Size();
+            bmin = {off.x - sz.x * 0.5f, off.y - sz.y * 0.5f, off.z - sz.z * 0.5f};
+            bmax = {off.x + sz.x * 0.5f, off.y + sz.y * 0.5f, off.z + sz.z * 0.5f};
+        }
+
+        // Slab test in the object's local space.
+        float tmin = -FLT_MAX, tmax = FLT_MAX;
+        const float o[3]{XMVectorGetX(lo), XMVectorGetY(lo), XMVectorGetZ(lo)};
+        const float d[3]{XMVectorGetX(dir), XMVectorGetY(dir), XMVectorGetZ(dir)};
+        const float lohi[3][2]{{bmin.x,bmax.x},{bmin.y,bmax.y},{bmin.z,bmax.z}};
+        bool miss = false;
+        for (int a = 0; a < 3 && !miss; ++a)
+        {
+            if (std::abs(d[a]) < 1e-8f) { if (o[a] < lohi[a][0] || o[a] > lohi[a][1]) miss = true; continue; }
+            float t1 = (lohi[a][0] - o[a]) / d[a], t2 = (lohi[a][1] - o[a]) / d[a];
+            if (t1 > t2) std::swap(t1, t2);
+            tmin = std::max(tmin, t1); tmax = std::min(tmax, t2);
+            if (tmin > tmax) miss = true;
+        }
+        if (miss || tmax < 0.0f) continue;
+        const XMVECTOR worldHit = XMVector3TransformCoord(lo + dir * std::max(tmin, 0.0f), world);
+        const float distance = XMVectorGetX(XMVector3Length(worldHit - rayNear));
+        if (distance < best) { best = distance; hit = object->Id(); }
+    }
+    return hit;
+}
 
 void EditorShell::EndCameraDrag(){cameraDrag_=CameraDrag::None;if(GetCapture()==viewportWindow_)ReleaseCapture();}
 void EditorShell::CameraMotion(POINT p)
@@ -90,19 +146,30 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
     {
         if(cameraDrag_!=CameraDrag::None)return 0;
         SetFocus(window);
-        const auto* object=SelectedGameObject(); if (!object || Playing() || !CanEdit(object->Id(),true)) return 0;
-        ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_),sceneCamera_);
-        const auto parent=ParentMatrix(objects_,*object);
-        if (std::abs(DirectX::XMVectorGetX(DirectX::XMMatrixDeterminant(parent)))<=1e-10f) return 0;
-        camera.view=parent*camera.view;
-        const auto shape=gizmo::Build(camera,object->GetTransform(),transformTool_);
-        if (const auto hit=gizmo::Pick(camera,shape,point))
+        // First, try to grab a transform-gizmo axis of the current selection.
+        if (const auto* object=SelectedGameObject(); object && !Playing() && CanEdit(object->Id(),true))
         {
-            gizmoWasDirty_=sceneDirty_; gizmoObject_=object->Id(); hoveredAxis_=hit->axis;
-            gizmoDrag_.emplace(camera,object->GetTransform(),transformTool_,shape,*hit,point);
-            SetCapture(window); status_=L"Dragging transform - release to apply, Escape to cancel";
-            InvalidateRect(window_,&statusBar_,FALSE);
+            ViewportCamera camera(static_cast<float>(requestedViewportWidth_),static_cast<float>(requestedViewportHeight_),sceneCamera_);
+            const auto parent=ParentMatrix(objects_,*object);
+            if (std::abs(DirectX::XMVectorGetX(DirectX::XMMatrixDeterminant(parent)))>1e-10f)
+            {
+                camera.view=parent*camera.view;
+                const auto shape=gizmo::Build(camera,object->GetTransform(),transformTool_);
+                if (const auto hit=gizmo::Pick(camera,shape,point))
+                {
+                    gizmoWasDirty_=sceneDirty_; gizmoObject_=object->Id(); hoveredAxis_=hit->axis;
+                    gizmoDrag_.emplace(camera,object->GetTransform(),transformTool_,shape,*hit,point);
+                    SetCapture(window); status_=L"Dragging transform - release to apply, Escape to cancel";
+                    InvalidateRect(window_,&statusBar_,FALSE);
+                    return 0;
+                }
+            }
         }
+        // ZE-104: otherwise click-select the object under the cursor (empty space clears).
+        const auto picked=PickObject(point);
+        if (picked==selectedObject_) return 0;
+        if (picked) SelectGameObject(picked);
+        else { EndGizmoDrag(true); selectedObject_=0; if(inspectorPanel_)inspectorPanel_->Bind(nullptr); InvalidateRect(window_,&sceneBrowser_,FALSE); SetWindowTextW(viewportWindow_,L"Scene Viewport"); }
         return 0;
     }
     case WM_MOUSEMOVE:

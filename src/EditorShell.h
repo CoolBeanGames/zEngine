@@ -255,6 +255,8 @@ private:
     LRESULT HandleViewportMessage(HWND,UINT,WPARAM,LPARAM);
     void EndGizmoDrag(bool cancel);
     void UpdateGizmoDrag(gizmo::Point);
+    // ZE-104: ray-pick the nearest 3D object under a viewport point (0 = empty space).
+    zengine::GameObjectId PickObject(gizmo::Point viewportPoint) const;
     RECT ToolRectangle(int index) const;
     RECT ChromeRectangle(int index) const;
     int ChromeHit(POINT) const;
@@ -335,7 +337,7 @@ private:
     std::chrono::steady_clock::time_point lastTick_ = std::chrono::steady_clock::now();
     ULONGLONG lastInspectorRefresh_ = 0;
     zengine::GameObjectId selectedObject_ = 0;
-    struct MeshBinding { std::string asset; MeshHandle mesh; };
+    struct MeshBinding { std::string asset; MeshHandle mesh; Float3 boundsMin{-0.5f,-0.5f,-0.5f}, boundsMax{0.5f,0.5f,0.5f}; }; // ZE-104: local AABB for click-picking
     std::map<zengine::GameObjectId, MeshBinding> meshBindings_;
     // ZE-65: resolved Material Instances, keyed by project-relative ".material" path.
     mutable std::map<std::string, MaterialHandle> materialCache_;
@@ -352,6 +354,7 @@ private:
     mutable std::map<std::string, TextureHandle> decalTextureCache_;
     TextureHandle ResolveDecalTexture(const std::string& asset) const;
     std::map<std::filesystem::path, std::weak_ptr<const RenderMesh>> meshCache_;
+    std::map<std::filesystem::path, std::pair<Float3,Float3>> meshBoundsCache_; // ZE-104: mesh local AABB by asset path
     std::map<zengine::GameObjectId, std::uint64_t> meshRevisions_;
     int firstObject_ = 0;
     std::unique_ptr<InspectorPanel> inspectorPanel_;

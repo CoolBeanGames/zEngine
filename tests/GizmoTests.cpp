@@ -149,6 +149,16 @@ void GizmoTests(bool capture)
         const auto eyeA=DirectX::XMMatrixInverse(nullptr,beforeView.view).r[3],eyeB=DirectX::XMMatrixInverse(nullptr,afterView.view).r[3];
         Check(DirectX::XMVectorGetX(DirectX::XMVector3Length(DirectX::XMVectorSubtract(eyeA,eyeB)))<.001f,"Fly look changed camera position");
         SendMessageW(viewport,WM_KEYDOWN,VK_ESCAPE,0);Check(GetCapture()!=viewport && !editor.SceneDirty(),"Camera navigation changed scene data or retained capture");
+
+        // ZE-104: click-to-select in the scene view. The default scene has a cube at the origin.
+        Check(editor.OpenScene(scene),"Cannot reset scene for pick test");
+        const auto cube=editor.SelectedGameObject()->Id();
+        const gizmo::Point centre{static_cast<float>(area.right)/2,static_cast<float>(area.bottom)/2};
+        send(WM_LBUTTONDOWN,{4,4}); send(WM_LBUTTONUP,{4,4});
+        Check(editor.SelectedGameObject()==nullptr,"Clicking empty space did not clear the selection");
+        send(WM_LBUTTONDOWN,centre); send(WM_LBUTTONUP,centre);
+        Check(editor.SelectedGameObject() && editor.SelectedGameObject()->Id()==cube,"Clicking the cube did not select it");
+        Check(!editor.SceneDirty(),"Click-select marked the scene dirty");
     }
-    CoUninitialize(); std::cout<<"PASS: all transform axes, rotation angles, aspect ratios, zero/negative scales, native dragging, cancellation, shortcuts, save and Play guards\n";
+    CoUninitialize(); std::cout<<"PASS: all transform axes, rotation angles, aspect ratios, zero/negative scales, native dragging, cancellation, shortcuts, save and Play guards, click-select\n";
 }
