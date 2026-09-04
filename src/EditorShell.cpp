@@ -250,6 +250,7 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     inspectorPanel_ = std::make_unique<InspectorPanel>();
     inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
     inspectorPanel_->SetScriptHost(&scriptHost_);
+    inspectorPanel_->SetObjectStore(&objects_); // ZE-98
     scriptHost_.SetObjectStore(&objects_);
     // ZE-129: data-object fields read/write their bound .zdata under the project's Assets.
     scriptHost_.SetDataAssetIO(
@@ -1894,6 +1895,38 @@ zengine::GameObjectId EditorShell::ScriptDropTarget(POINT point) const
     if (PtInRect(&inspector_,point)) return selectedObject_;
     return 0; // No ambiguous picking: attach to an explicit tree row or selected Inspector.
 }
+// ZE-98: the single "would a drop here be accepted?" predicate. The cursor logic and
+// the real drop handlers both route through it, so new drag types get feedback for free.
+bool EditorShell::DragWouldAccept(POINT client)
+{
+    if (Playing()) return false;
+    if (draggedObject_ && objectDragMoved_)
+    {
+        POINT screen=client; ClientToScreen(window_,&screen);
+        if (inspectorPanel_ && inspectorPanel_->AcceptsObjectReferenceAt(screen,draggedObject_)) return true;
+        if (PtInRect(&mediaLibrary_,client)) return true; // drop an object onto the library => Create Prefab
+        if (PtInRect(&sceneBrowser_,client))
+        {
+            const auto parent=ScriptDropTarget(client);
+            if (parent==draggedObject_) return false;
+            if (const auto* obj=objects_.Find(draggedObject_); obj && obj->Parent()==parent) return false; // no-op reparent
+            for (auto p=parent; p; ) { const auto* o=objects_.Find(p); if(!o) break; if(o->Id()==draggedObject_) return false; p=o->Parent(); } // would create a cycle
+            if (!editingPrefab_.empty() && ((draggedObject_==objects_.At(0).Id() && parent) || (draggedObject_!=objects_.At(0).Id() && !parent))) return false; // prefab keeps one root
+            return true;
+        }
+        return false;
+    }
+    if (draggedAsset_>=0 && draggedAsset_<static_cast<int>(assets_.size()))
+    {
+        const int target=AssetAt(client);
+        const bool folder = target>=0 && assetLibrary::Type(assets_[target])==assetLibrary::Kind::Folder && target!=draggedAsset_;
+        if (folder) return true;
+        if (zengine::scenes::IsScene(assets_.at(draggedAsset_))) return false;
+        if (ScriptDropTarget(client)!=0) return true; // asset onto a scene-tree row / Inspector
+        return !zengine::scripts::IsScript(assets_.at(draggedAsset_)) && PtInRect(&viewportContent_,client);
+    }
+    return false;
+}
 std::vector<ObjectPicker::Item> EditorShell::AssetPickerItems(std::vector<assetLibrary::Kind> kinds) const
 {
     std::vector<ObjectPicker::Item> items;
@@ -2448,7 +2481,7 @@ LRESULT EditorShell::HandleMessage(
         {
             const POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
             objectDragMoved_=objectDragMoved_ || std::abs(point.x-objectDragStart_.x)>=GetSystemMetrics(SM_CXDRAG) || std::abs(point.y-objectDragStart_.y)>=GetSystemMetrics(SM_CYDRAG);
-            if (objectDragMoved_) SetCursor(LoadCursorW(nullptr,(PtInRect(&mediaLibrary_,point)||PtInRect(&sceneBrowser_,point))?IDC_HAND:IDC_NO));
+            if (objectDragMoved_) SetCursor(LoadCursorW(nullptr, DragWouldAccept(point) ? IDC_CROSS : IDC_NO)); // ZE-98
             return 0;
         }
         if (draggedAsset_ >= 0)
@@ -2456,12 +2489,7 @@ LRESULT EditorShell::HandleMessage(
             const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             assetDragMoved_ = assetDragMoved_ || std::abs(point.x - assetDragStart_.x) >= GetSystemMetrics(SM_CXDRAG) ||
                               std::abs(point.y - assetDragStart_.y) >= GetSystemMetrics(SM_CYDRAG);
-            if (assetDragMoved_)
-            {
-                const int target=AssetAt(point);const bool folder=target>=0&&assetLibrary::Type(assets_[target])==assetLibrary::Kind::Folder&&target!=draggedAsset_;
-                const bool valid = folder || (!zengine::scenes::IsScene(assets_.at(draggedAsset_)) && (ScriptDropTarget(point) != 0 || (!zengine::scripts::IsScript(assets_.at(draggedAsset_)) && PtInRect(&viewportContent_,point))));
-                SetCursor(LoadCursorW(nullptr, valid ? IDC_HAND : IDC_NO));
-            }
+            if (assetDragMoved_) SetCursor(LoadCursorW(nullptr, DragWouldAccept(point) ? IDC_CROSS : IDC_NO)); // ZE-98
             return 0;
         }
         if (dragTarget_ != DragTarget::None)
@@ -2488,10 +2516,12 @@ LRESULT EditorShell::HandleMessage(
             if (!moved) { SelectGameObject(object); return 0; }
             if (moved && PtInRect(&mediaLibrary_,point)) CreatePrefab(object);
             else if(moved && PtInRect(&sceneBrowser_,point))SetObjectParent(object,ScriptDropTarget(point));
+            SetCursor(LoadCursorW(nullptr,IDC_ARROW)); // ZE-98
             return 0;
         }
         FinishAssetDrag(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         EndDrag();
+        SetCursor(LoadCursorW(nullptr,IDC_ARROW)); // ZE-98
         return 0;
     case WM_MOUSEWHEEL:
     {
@@ -2527,12 +2557,15 @@ LRESULT EditorShell::HandleMessage(
         dragTarget_ = DragTarget::None;
         draggedAsset_ = -1;
         assetDragMoved_ = false;
+        SetCursor(LoadCursorW(nullptr,IDC_ARROW)); // ZE-98: end of drag restores the normal cursor
         return 0;
     case WM_SETCURSOR:
     {
         POINT cursor{};
         GetCursorPos(&cursor);
         ScreenToClient(window_, &cursor);
+        if ((draggedObject_ && objectDragMoved_) || (draggedAsset_>=0 && assetDragMoved_)) // ZE-98: a drag owns the cursor
+        { SetCursor(LoadCursorW(nullptr, DragWouldAccept(cursor) ? IDC_CROSS : IDC_NO)); return TRUE; }
         const DragTarget target = HitTestSplitter(cursor);
         if (target == DragTarget::MediaLibrary)
         {

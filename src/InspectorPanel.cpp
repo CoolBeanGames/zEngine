@@ -1456,7 +1456,7 @@ void InspectorPanel::ShowBehaviorMenu(POINT screenPoint)
     }
     else contextBehavior_=nullptr;
 }
-bool InspectorPanel::AssignObjectReferenceAt(POINT point, zengine::GameObjectId target)
+bool InspectorPanel::AssignObjectReferenceAt(POINT point, zengine::GameObjectId target, bool dryRun)
 {
     const auto control=WindowFromPoint(point);
     // Geometric fallback: which behavior row is the drop point over? (WindowFromPoint
@@ -1478,6 +1478,7 @@ bool InspectorPanel::AssignObjectReferenceAt(POINT point, zengine::GameObjectId 
         if (entry.arrayHeader && (overRow || (!entry.bits.empty() && (control==entry.bits[0] || IsChild(entry.bits[0],control)))))
         {
             if (!editData_ || !script || !scriptHost_ || scriptHost_->Playing()) return false;
+            if (dryRun) return true; // an array can always take another object-reference element
             try { scriptHost_->SetArrayElementReference(*script,entry.name,static_cast<std::size_t>(-1),target); } // -1 clamps to append
             catch (const std::exception&) { return false; }
             RefreshBehaviors(); if (changed_) changed_(); return true;
@@ -1487,6 +1488,14 @@ bool InspectorPanel::AssignObjectReferenceAt(POINT point, zengine::GameObjectId 
         if (!entry.objectReference || !overField) continue;
         if (!editData_ || !IsWindowEnabled(entry.field.window)) return false;
         if (!script || !scriptHost_) return false;
+
+        // ZE-98: dry run answers "would this drop be accepted?" without changing anything.
+        if (dryRun)
+        {
+            if (!objectStore_) return true; // no store to consult - assume the field will take it
+            const auto* dragged = objectStore_->Find(target);
+            return dragged && zengine::ScriptHost::ObjectMatchesReferenceType(*dragged, entry.type);
+        }
 
         if (entry.arrayIndex>=0)
         {

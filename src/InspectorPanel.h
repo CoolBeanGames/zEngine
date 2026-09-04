@@ -43,6 +43,7 @@ public:
                         std::function<void(const std::string& name, const std::string& value)> onEdit);
     void RefreshBehaviors();
     void SetScriptHost(zengine::ScriptHost* host) { scriptHost_ = host; }
+    void SetObjectStore(zengine::ObjectStore* store) { objectStore_ = store; } // ZE-98: dry-run type checks
     void RefreshLiveValues();
     void SetAddScriptHandler(std::function<void()> handler) { addScript_ = std::move(handler); }
     // Populates the "Add Behavior > Add Script" submenu and attaches the chosen script by project-relative path.
@@ -63,7 +64,10 @@ public:
     // Drop a project-relative image / video asset path onto a UI control's
     // texture field (K::Texture). Returns true if a field accepted it.
     bool AssignAssetPathAt(POINT screenPoint,const std::string& asset);
-    bool AssignObjectReferenceAt(POINT screenPoint, zengine::GameObjectId target);
+    // dryRun: run every hit-test and type check but make no change; returns whether
+    // a drop here WOULD be accepted (ZE-98 drag-cursor feedback).
+    bool AssignObjectReferenceAt(POINT screenPoint, zengine::GameObjectId target, bool dryRun=false);
+    bool AcceptsObjectReferenceAt(POINT screenPoint, zengine::GameObjectId target) { return AssignObjectReferenceAt(screenPoint,target,true); }
     HWND Window() const noexcept { return window_; }
     // Test seam: the edit/combo control that edits property `key` (component `axis`
     // for Vec2 / Color rows) of `behavior`, or nullptr. Used by the UI-inspector tests.
@@ -134,6 +138,7 @@ private:
     std::set<zengine::Behavior*> collapsedBehaviors_;
     zengine::Behavior* contextBehavior_ = nullptr;
     zengine::ScriptHost* scriptHost_ = nullptr;
+    zengine::ObjectStore* objectStore_ = nullptr; // ZE-98
     // ZE-128: data-object (.zdata) edit mode. When dataMode_ is set, object_ is null
     // and behaviorFields_ carries one row per data field (entry.dataField_ = true).
     bool dataMode_ = false;

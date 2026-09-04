@@ -216,6 +216,7 @@ private:
     RECT CreateObjectRectangle() const;
     RECT ObjectListRectangle() const;
     zengine::GameObjectId ScriptDropTarget(POINT point) const;
+    bool DragWouldAccept(POINT clientPoint); // ZE-98: shared valid-drop predicate
     void ChooseScript();
     std::vector<std::wstring> ProjectScriptPaths() const;
     std::vector<ObjectPicker::Item> AssetPickerItems(std::vector<assetLibrary::Kind> kinds) const;

@@ -1043,6 +1043,18 @@ void HierarchyTests(bool capture) {
         auto& parent=editor.CreateEmptyGameObject();const auto parentId=parent.Id();parent.SetName("Parent");parent.GetTransform().SetPosition({3,0,0});
         const auto drag=[&](int from,int to){SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(80,143+27*from));SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(80,143+27*to));SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(80,143+27*to));};
         drag(1,2);Require(editor.GameObjects().Find(childId)->Parent()==parentId,"Scene tree drag failed to parent");
+        // ZE-98: the drag cursor tells you whether a drop will land.
+        {
+            const HCURSOR cross=LoadCursorW(nullptr,IDC_CROSS), no=LoadCursorW(nullptr,IDC_NO);
+            const auto move=[&](int to){ SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(80,143+27*to)); };
+            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(80,143+27*2)); // rows: 0=root 1=Parent 2=Child; drag Child
+            move(0); Require(GetCursor()==cross,"Dragging an object over a valid reparent row should show 'valid drop'");
+            move(2); Require(GetCursor()==no,"Dragging an object back over its own row should show 'no drop'");
+            SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(420,300)); // over the 3D viewport - not a drop target for an object
+            Require(GetCursor()==no,"Dragging an object over the viewport (no drop target) should show 'no drop'");
+            SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(420,300));
+            Require(GetCursor()==LoadCursorW(nullptr,IDC_ARROW),"Ending a drag did not restore the normal cursor");
+        }
         Require(editor.GameObjects().HierarchyOrder()==std::vector<zengine::GameObjectId>{root,parentId,childId},"Tree hierarchy ordering incorrect");
         auto frame=editor.BuildSceneFrame();Require(frame.meshes.size()==2 && frame.meshes[1].parentMatrix && frame.meshes[1].parentMatrix->_41==3 && child.GetTransform().Position().x==2,"Parent transform missing from rendered child or local transform changed");
         editor.SetObjectParent(parentId,root);
