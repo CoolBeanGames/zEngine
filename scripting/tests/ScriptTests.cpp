@@ -939,6 +939,51 @@ void MouseInput() {
     Error([&]{Compile("class A : gameObject { func f(){ Input.set_mouse_mode(Mouse.nope); } }");},"Unknown mouse mode");
     Error([&]{Compile("class A : gameObject { func f(){ Input.set_mouse_mode(\"captured\"); } }");},"Cannot assign 'string' to 'int'");
 }
+void DataObjects() {
+    // ZE-91: `struct` declares a data object rooted at `data`; it can be created, can
+    // inherit another data object, carry public functions, and be referenced by a behavior.
+    auto p = Compile(R"(struct Item {
+        int count = 1;
+        string name = "thing";
+        func doubled():int { return count * 2; }
+    }
+    struct Weapon : Item {
+        float damage = 5;
+        func dps(float rate):float { return damage * rate; }
+    }
+    class Hero : gameObject {
+        Weapon w;
+        int total = 0;
+        func start() {
+            w = Weapon();
+            w.count = 3;
+            w.damage = 10;
+            total = w.doubled();
+            w.save();
+        }
+        func report():float { return w.dps(2); }
+    })");
+    Check(static_cast<bool>(p), "data objects did not compile");
+    Check(p->IsDataObject("Item") && p->IsDataObject("Weapon"), "struct types report as data objects");
+    Check(!p->IsDataObject("Hero") && !p->IsGameObject("Item"), "data objects are not behaviors and vice versa");
+
+    Runtime r(p);
+    int saves = 0; ObjectRef savedRef{};
+    r.SetDataSaveCallback([&](ObjectRef ref){ ++saves; savedRef = ref; });
+    auto hero = r.Create("Hero");
+    r.Start(hero);
+    Check(Int(r.Get(hero, "total")) == 6, "data object method/field access through a behavior field");
+    Check(std::get<double>(r.Call(hero, "report")) == 20.0, "inherited + own data-object members work");
+    Check(saves == 1 && savedRef.id != 0, "data.save() reached the host callback");
+
+    // A struct cannot be a gameObject, cannot be attached, cannot inherit a behavior.
+    Error([&]{ Compile("struct Bad : gameObject { int x; }"); }, "data object can only inherit another data object");
+    Error([&]{ Compile("struct Thing { int a; } class Bad : Thing { }"); }, "Only a `struct` can inherit a data object");
+    Error([&]{ Compile("struct Bad { export int x; }"); }, "drop 'export'");
+    Error([&]{ Compile("struct Bad { private int x; }"); }, "all public");
+    Error([&]{ Compile("struct Bad { signal ping; }"); }, "cannot declare signals");
+    Error([&]{ Compile("struct Thing { int a; } class Host : gameObject { func f(){ getBehavior(Thing); } }"); }, "native component type");
+}
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "regen") {
         std::ofstream(ZSCRIPT_TYPES_JSON, std::ios::binary) << zengine::script::TypeManifest();
@@ -948,6 +993,7 @@ int main(int argc, char** argv) {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"type manifest is current (ZE-79)", TypeManifestIsCurrent},
         {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"UI control classes", UiControlClasses}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
+        {"data objects (ZE-91)",DataObjects},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"audioPlayer class",AudioPlayerClass},{"Mathf functions",MathfFunctions},{"Scene service",SceneService},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},

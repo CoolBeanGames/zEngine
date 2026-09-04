@@ -49,6 +49,7 @@ bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "for", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Vector2", "Transform", "export", "label"};
     return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || s == "not" || s == "and" || s == "or" || s == "nor"
         || s == "static" || s == "private" || s == "abstract" || s == "override" || s == "super" // ZE-79
+        || s == "struct" || s == "data" // ZE-91: data objects
         || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
@@ -131,7 +132,7 @@ struct FieldAst { Token name; std::string type; std::unique_ptr<Expr> initialize
 // must replace an inherited method (a redefinition without it is still an override).
 struct FunctionAst { Token name; std::string result = "void"; std::vector<FieldAst> params; Stmt body;
                      bool isStatic = false, isPrivate = false, isAbstract = false, isOverride = false; bool hasBody = true; };
-struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; std::vector<InspectorEntry> inspector; std::vector<Token> signals; bool isAbstract = false; };
+struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; std::vector<InspectorEntry> inspector; std::vector<Token> signals; bool isAbstract = false; bool isData = false; /* ZE-91: declared with `struct` */ };
 class Parser {
     std::vector<Token> tokens;
     const std::string& source;
@@ -265,8 +266,13 @@ public:
         while (Current().kind != Token::End) {
             ClassAst c;
             c.isAbstract = Match("abstract"); // ZE-79
-            Expect("class"); c.name = Identifier();
+            // ZE-91: `struct` declares a data object - a value type rooted at `data`,
+            // not a gameObject/behavior. It is referenceable but never attached.
+            if (!c.isAbstract && Match("struct")) c.isData = true;
+            else Expect("class");
+            c.name = Identifier();
             if (Match(":")) c.base = Identifier(true).text;
+            else if (c.isData) c.base = "data";
             Expect("{");
             while (!Is("}")) {
                 const Token declaration = Current();
@@ -282,7 +288,10 @@ public:
                 if ((modStatic || modPrivate || modAbstract || modOverride) && !Is("func") && (modAbstract || modOverride))
                     Fail(source, Current(), "'abstract' and 'override' apply only to functions");
                 if (modStatic && modAbstract) Fail(source, declaration, "An abstract member cannot be static");
+                if (c.isData && (modStatic || modPrivate || modAbstract || modOverride))
+                    Fail(source, declaration, "A data object's members are all public - no static/private/abstract/override");
                 if (Match("label")) {
+                    if (c.isData) Fail(source, declaration, "A data object cannot declare inspector labels");
                     if (modStatic || modPrivate || modAbstract || modOverride) Fail(source, declaration, "Modifiers cannot precede an inspector label");
                     Expect("(");
                     if (Current().kind != Token::String) Fail(source, Current(), "Label requires a string literal");
@@ -290,10 +299,12 @@ public:
                     entry.declaringClass = c.name.text; entry.source = source; entry.line = declaration.line; entry.column = declaration.column;
                     Expect(")"); Match(";"); c.inspector.push_back(std::move(entry));
                 } else if (Match("signal")) {
+                    if (c.isData) Fail(source, declaration, "A data object cannot declare signals");
                     if (modStatic || modPrivate || modAbstract || modOverride) Fail(source, declaration, "Modifiers cannot precede a signal");
                     c.signals.push_back(Identifier()); Expect(";");
                 } else if (Match("func")) {
                     FunctionAst f; f.name = Identifier(); Expect("(");
+                    if (c.isData && f.name.text.front() == '_') Fail(source, f.name, "A data object's functions are public - no leading underscore");
                     f.isStatic = modStatic; f.isPrivate = modPrivate || f.name.text.front() == '_';
                     f.isAbstract = modAbstract; f.isOverride = modOverride;
                     if (!Is(")")) do {
@@ -312,6 +323,7 @@ public:
                     if (modAbstract || modOverride) Fail(source, declaration, "'abstract' and 'override' apply only to functions");
                     bool exported=false,multiline=false;
                     while(Is("export") || Is("multiline")) {const bool multi=Match("multiline");if(!multi)Expect("export");auto& flag=multi?multiline:exported;if(flag)Fail(source,Current(),"Duplicate field tag");flag=true;}
+                    if (c.isData && (exported || multiline)) Fail(source, Current(), "A data object's fields are edited as the object itself - drop 'export'/'multiline'");
                     if (exported && (Current().kind != Token::Identifier || Is("func") || Is("label") || Is("export")))
                         Fail(source, Current(), "Export must precede a typed class field");
                     FieldAst field; field.type = Identifier(true).text; field.name = Identifier();
@@ -354,6 +366,7 @@ struct Class {
     std::set<std::string> signals;
     Function initializer;
     bool isAbstract = false;                 // ZE-79: declared `abstract` or has an unresolved abstract method
+    bool isData = false;                      // ZE-91: a `struct` data object (value type rooted at `data`)
     std::vector<Field> staticFields;          // ZE-79: class-level storage (declared here + inherited)
     Function staticInitializer;               // ZE-79: runs once, sets this class's own static fields
 };
@@ -385,6 +398,11 @@ struct Program::Impl {
     // with a transform, parent and the built-in lifecycle hooks / helper methods).
     bool IsGameObjectLike(const std::string& name) const {
         return Assignable("gameObject", name) || Assignable("gameObject2D", name);
+    }
+    // ZE-91: a `struct` data object (or `data` itself).
+    bool IsData(const std::string& name) const {
+        const auto it = classes.find(name);
+        return it != classes.end() && it->second.isData;
     }
     bool Assignable(const std::string& target, const std::string& from) const {
         if (target == from || (target == "float" && from == "int")) return true;
@@ -1040,6 +1058,9 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         program.classes.emplace("decalProjector", std::move(dp));
     }
     Class behavior;behavior.name="Behavior";behavior.base="gameObject";behavior.fields=program.classes.at("gameObject").fields;program.classes.emplace(behavior.name,std::move(behavior));
+    // ZE-91: `data` is the root of every `struct` data object. save() persists the
+    // instance to its backing asset; without it, edits revert when Play ends.
+    { Class d; d.name="data"; d.isData=true; Function save; save.result="void"; d.methods.emplace("save",std::move(save)); program.classes.emplace("data",std::move(d)); }
     auto& nativePhysics=program.classes.at("PhysicsBody");nativePhysics.base="Behavior";nativePhysics.fields.insert(nativePhysics.fields.begin(),program.classes.at("gameObject").fields.begin(),program.classes.at("gameObject").fields.end());
     for(const auto& native:NativeTypes())if(native.physicsBody){Class body;body.name=std::string(native.name);body.base=std::string(native.base);body.fields=nativePhysics.fields;body.signals=nativePhysics.signals;program.classes.emplace(body.name,std::move(body));}
     // Non-physics native components (Collider, Camera, ...) are plain Behavior-derived classes.
@@ -1050,12 +1071,12 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     std::map<std::string, const ClassAst*> byName;
     for (const auto& ast : asts) {
         if (program.classes.contains(ast.name.text)) Fail(program.source, ast.name, "Duplicate class '" + ast.name.text + "'");
-        Class c; c.name = ast.name.text; c.base = ast.base; c.initializer.token = ast.name; c.isAbstract = ast.isAbstract;
+        Class c; c.name = ast.name.text; c.base = ast.base; c.initializer.token = ast.name; c.isAbstract = ast.isAbstract; c.isData = ast.isData;
         program.classes.emplace(c.name, std::move(c)); byName[ast.name.text] = &ast;
     }
     std::map<std::string, int> state;
     auto build = [&](auto&& self, const std::string& name, std::size_t depth) -> void {
-        if (NativeClass(name) || state[name] == 2) return;
+        if (NativeClass(name) || state[name] == 2 || !byName.contains(name)) return; // pre-registered bases (data, Behavior, ...) have no ast
         const auto& ast = *byName.at(name); auto& c = program.classes.at(name);
         if (state[name] == 1) Fail(program.source, ast.name, "Inheritance cycle");
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
@@ -1066,7 +1087,12 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
             c.signals = program.classes.at(c.base).signals;
+            // ZE-91: data objects and behaviors are separate hierarchies.
+            const bool baseIsData = program.classes.at(c.base).isData;
+            if (c.isData && !baseIsData) Fail(program.source, ast.name, "A data object can only inherit another data object");
+            if (!c.isData && baseIsData) Fail(program.source, ast.name, "Only a `struct` can inherit a data object");
         }
+        if (c.isData && program.IsGameObjectLike(name)) Fail(program.source, ast.name, "A data object cannot be a gameObject/behavior");
         for (const auto& signal : ast.signals) {
             if (program.classes.contains(signal.text) || program.FindField(name, signal.text) || program.Method(c.base, signal.text) || !c.signals.insert(signal.text).second)
                 Fail(program.source, signal, "Duplicate/inherited signal member '" + signal.text + "'");
@@ -1130,6 +1156,7 @@ Program::Program(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
 ProgramStats Program::Stats() const { return impl_->stats; }
 bool Program::HasClass(std::string_view name) const { return impl_->classes.contains(Canonical(std::string(name))); }
 bool Program::IsGameObject(std::string_view name) const { return impl_->IsGameObjectLike(Canonical(std::string(name))); }
+bool Program::IsDataObject(std::string_view name) const { return impl_->IsData(Canonical(std::string(name))); }
 bool Program::HasCode(std::string_view className, std::string_view method) const {
     const auto* f = impl_->Method(Canonical(std::string(className)), std::string(method));
     return f && !f->code.empty();
@@ -1212,6 +1239,7 @@ std::string TypeKind(const std::string& name, const Program::Impl& p) {
         if (p.Assignable("gameObject", name) || p.Assignable("gameObject2D", name)) return "scene_object_base";
         return "native";
     }
+    if (const auto it = p.classes.find(name); it != p.classes.end() && it->second.isData) return "data"; // ZE-91
     return "user";
 }
 }
@@ -1323,6 +1351,7 @@ struct Runtime::Impl {
     std::function<void(std::string_view)> sceneLoadCall;
     std::function<std::string()> sceneCurrentCall;
     std::function<void(int)> mouseModeCall; // ZE-84: Input.set_mouse_mode
+    std::function<void(ObjectRef)> dataSaveCall; // ZE-91: <data object>.save() - persist to the backing asset
     std::map<std::string, std::map<std::string, Value>> statics; // ZE-79: class name -> static field values
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {
@@ -1864,6 +1893,12 @@ struct Runtime::Impl {
             if(name=="get_vector")return Vector2{state.x,state.y};
             Error(t,"Unknown Input method");
         }
+        if (name=="save" && program->IsData(object.type->name)
+            && program->Method(object.type->name,"save")==&program->classes.at("data").methods.at("save")) {
+            Tick(t); if(!args.empty())Error(t,"data.save() takes no arguments");
+            if(dataSaveCall)dataSaveCall(ref);
+            return {};
+        }
         const auto* function = program->Method(object.type->name, name);
         if (!function) Error(t, "Unknown method '" + name + "'");
         return Execute(ref, *function, args, t);
@@ -2172,6 +2207,7 @@ void Runtime::SetLightCallback(std::function<void(ObjectRef,std::string_view,flo
 void Runtime::SetDecalCallback(std::function<void(ObjectRef,std::string_view,float,float,float)> callback){impl_->decalCallback=std::move(callback);}
 void Runtime::SetSceneCallbacks(std::function<void(std::string_view)> load,std::function<std::string()> current){impl_->sceneLoadCall=std::move(load);impl_->sceneCurrentCall=std::move(current);}
 void Runtime::SetMouseModeCallback(std::function<void(int)> callback){impl_->mouseModeCall=std::move(callback);}
+void Runtime::SetDataSaveCallback(std::function<void(ObjectRef)> callback){impl_->dataSaveCall=std::move(callback);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}

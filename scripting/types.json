@@ -81,6 +81,18 @@
       "signals": []
     },
     {
+      "type_name": "Data",
+      "instance_name": "data",
+      "canonical": "data",
+      "kind": "data",
+      "base": null,
+      "abstract": false,
+      "fields": [],
+      "methods": [{"name": "save", "result": "void", "abstract": false, "private": false, "params": []}],
+      "static_members": [],
+      "signals": []
+    },
+    {
       "type_name": "DecalProjector",
       "instance_name": "decalProjector",
       "canonical": "decalProjector",

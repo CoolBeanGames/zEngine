@@ -87,6 +87,7 @@ public:
     ProgramStats Stats() const;
     bool HasClass(std::string_view name) const;
     bool IsGameObject(std::string_view name) const;
+    bool IsDataObject(std::string_view name) const; // ZE-91: a `struct` data object
     bool HasCode(std::string_view className, std::string_view method) const;
     // Reference remains valid for this Program lifetime. Unknown classes throw ScriptError.
     const std::vector<InspectorEntry>& InspectorLayout(std::string_view className) const;
@@ -184,6 +185,9 @@ public:
     // ZE-84: Input.set_mouse_mode(mode). 0 visible, 1 hidden, 2 confined,
     // 3 confined+hidden, 4 captured (recentred, for FPS). The host applies it.
     void SetMouseModeCallback(std::function<void(int)> callback);
+    // ZE-91: a data object's save() call - the host writes the instance back to its
+    // backing asset so the edit survives past the current Play session.
+    void SetDataSaveCallback(std::function<void(ObjectRef)> callback);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);
