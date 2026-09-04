@@ -85,6 +85,8 @@ public:
     static constexpr int MoveToolCommand=3200, RotateToolCommand=3201, ScaleToolCommand=3202;
     void SetTransformTool(gizmo::Mode mode);
     gizmo::Mode TransformTool() const { return transformTool_; }
+    float GridSnap() const noexcept { return gridSnap_; } // ZE-107/108
+    void SetGridSnap(float units) { if(units>0) gridSnap_=units; }
     const zengine::profiling::FrameProfiler& Profiler() const noexcept { return profiler_; } // ZE-125 test seam
     bool StatsGroupCollapsed(const std::string& title) const { return statsCollapsed_.count(title)!=0; }
     void Render();
@@ -260,7 +262,7 @@ private:
     bool objectDragMoved_=false;
     LRESULT HandleViewportMessage(HWND,UINT,WPARAM,LPARAM);
     void EndGizmoDrag(bool cancel);
-    void UpdateGizmoDrag(gizmo::Point);
+    void UpdateGizmoDrag(gizmo::Point, bool gridSnap=false); // ZE-108: Shift-drag = snap
     // ZE-104: ray-pick the nearest 3D object under a viewport point (0 = empty space).
     zengine::GameObjectId PickObject(gizmo::Point viewportPoint) const;
     RECT ToolRectangle(int index) const;
@@ -392,6 +394,8 @@ private:
     HWND renameEdit_=nullptr;
     bool finishingRename_=false;
     ULONGLONG lastBusyPaint_ = 0;
+    float gridSnap_=0.5f; // ZE-107/108: Shift-drag snap size in world units
+    static constexpr int GridSnapBase=3820; // popup command ids 3820..3826
     bool showFps_=true; // ZE-125: now toggles the full stats overlay
     unsigned currentFps_=0,framesSinceFps_=0;
     std::chrono::steady_clock::time_point fpsSample_=std::chrono::steady_clock::now();

@@ -144,6 +144,17 @@ void GizmoTests(bool capture)
             auto& object=const_cast<zengine::GameObject&>(zengine::As3D(editor.GameObjects().At(0))); object.GetTransform()=zengine::Transform{}; Check(editor.SaveScene(),"Fixture reset failed");
         }
         editor.SetTransformTool(gizmo::Mode::Move);
+        // ZE-107 / ZE-108: Shift-drag snaps the moved axis to the grid size.
+        {
+            auto& obj=const_cast<zengine::GameObject&>(zengine::As3D(editor.GameObjects().At(0))); obj.GetTransform()=zengine::Transform{};
+            editor.SetGridSnap(0.5f);
+            gizmo::Point s; auto sh=gizmo::Build(camera,obj.GetTransform(),gizmo::Mode::Move);
+            auto h=Find(camera,sh,0,s); const auto e=Destination(camera,sh,h,s,gizmo::Mode::Move);
+            send(WM_LBUTTONDOWN,s); send(WM_MOUSEMOVE,{e.x+3,e.y},MK_LBUTTON|MK_SHIFT); send(WM_LBUTTONUP,{e.x+3,e.y},MK_SHIFT);
+            const float x=obj.GetTransform().Position().x;
+            Check(std::abs(x-std::round(x/0.5f)*0.5f)<1e-4f && x!=0.f,"Shift-drag did not snap the moved axis to the grid");
+            obj.GetTransform()=zengine::Transform{}; Check(editor.SaveScene(),"grid-snap fixture reset failed");
+        }
         gizmo::Point start; auto shape=gizmo::Build(camera,editor.SelectedGameObject()->GetTransform(),gizmo::Mode::Move);
         auto hit=Find(camera,shape,0,start); const auto end=Destination(camera,shape,hit,start,gizmo::Mode::Move);
         send(WM_LBUTTONDOWN,start); send(WM_MOUSEMOVE,end,MK_LBUTTON); SendMessageW(viewport,WM_KEYDOWN,VK_ESCAPE,0);

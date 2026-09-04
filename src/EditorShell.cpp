@@ -769,6 +769,10 @@ void EditorShell::Paint()
     {
         button(6+i,toolNames[i],static_cast<int>(transformTool_)==i);
     }
+    { // ZE-107: grid-snap size, applied while Shift-dragging (ZE-108)
+        std::wostringstream g; g<<L"⊞ Grid "<<gridSnap_;
+        button(12,g.str(),false);
+    }
     DrawTextLabel(bufferContext, project_?WideText(project_->config.name):L"No project open", projectName, MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     button(11,(showFps_?L"☑ Stats ":L"☐ Stats ")+std::to_wstring(currentFps_)+L" fps",showFps_); // ZE-125
     RECT optionLine{0, optionsBar_.bottom - 1, optionsBar_.right, optionsBar_.bottom};
@@ -2377,6 +2381,15 @@ LRESULT EditorShell::HandleMessage(
         if(pressedChrome_>=0){InvalidateRect(window_,nullptr,FALSE);if(!ChromeEnabled(pressedChrome_)){pressedChrome_=-1;return 0;}}
         if(pressedChrome_==10){SendMessageW(window_,WM_COMMAND,UpFolderCommand,0);return 0;}
         if(pressedChrome_==11){showFps_=!showFps_;InvalidateRect(window_,&optionsBar_,FALSE);return 0;}
+        if(pressedChrome_==12){ // ZE-107: choose the Shift-drag grid snap size
+            static const float sizes[]{0.05f,0.1f,0.25f,0.5f,1.0f,2.0f,5.0f};
+            HMENU menu=CreatePopupMenu();
+            for(int i=0;i<7;++i){std::wostringstream s;s<<sizes[i]<<L" units";AppendMenuW(menu,MF_STRING|(gridSnap_==sizes[i]?MF_CHECKED:0),GridSnapBase+i,s.str().c_str());}
+            const auto r=ChromeRectangle(12);POINT p{r.left,r.bottom};ClientToScreen(window_,&p);
+            const auto cmd=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_LEFTBUTTON,p.x,p.y,0,window_,nullptr);DestroyMenu(menu);
+            if(cmd>=GridSnapBase&&cmd<GridSnapBase+7){gridSnap_=sizes[cmd-GridSnapBase];InvalidateRect(window_,&optionsBar_,FALSE);}
+            pressedChrome_=-1;return 0;
+        }
         const RECT assetRoot{mediaLibrary_.left+12,mediaLibrary_.top+PanelHeaderHeight+12,mediaLibrary_.left+150,mediaLibrary_.top+PanelHeaderHeight+36};
         if(project_ && PtInRect(&assetRoot,point)){OpenAssetFolder(assetsDirectory_);return 0;}
         for (int i=0;i<3;++i) { const auto rectangle=ToolRectangle(i); if (PtInRect(&rectangle,point)) { SetTransformTool(static_cast<gizmo::Mode>(i)); return 0; } }

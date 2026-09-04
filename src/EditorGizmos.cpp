@@ -4,6 +4,7 @@
 #include "physics/PhysicsBehavior.h"
 #include <windowsx.h>
 #include <cfloat>
+#include <cmath>
 
 zengine::GameObjectId EditorShell::PickObject(gizmo::Point p) const
 {
@@ -115,12 +116,23 @@ void EditorShell::EndGizmoDrag(bool cancel)
     status_=cancel?L"Transform drag canceled":L"Transform updated - save the scene to keep your changes";
     InvalidateRect(window_,nullptr,FALSE);
 }
-void EditorShell::UpdateGizmoDrag(gizmo::Point point)
+void EditorShell::UpdateGizmoDrag(gizmo::Point point, bool gridSnap)
 {
     if (!gizmoDrag_) return;
     auto* object=zengine::As3D(objects_.Find(gizmoObject_));
     if (!object || Playing()) { EndGizmoDrag(true); return; }
     object->GetTransform()=gizmoDrag_->Update(point);
+    // ZE-108: Shift-dragging the Move tool snaps the dragged axis (or plane) to the grid.
+    if (gridSnap && transformTool_==gizmo::Mode::Move && gridSnap_>0)
+    {
+        const int a=gizmoDrag_->Axis();
+        auto snap=[&](float v){ return std::round(v/gridSnap_)*gridSnap_; };
+        auto p=object->GetTransform().Position();
+        if (a==0||a==3||a==4) p.x=snap(p.x);
+        if (a==1||a==3||a==5) p.y=snap(p.y);
+        if (a==2||a==4||a==5) p.z=snap(p.z);
+        object->GetTransform().SetPosition(p);
+    }
     // Keep no-op clicks and drags back to the start clean.
     const auto& current=object->GetTransform(); const auto& original=gizmoDrag_->Original();
     const auto equal=[](zengine::Vec3 a,zengine::Vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; };
@@ -175,7 +187,7 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
     }
     case WM_MOUSEMOVE:
         if(cameraDrag_!=CameraDrag::None){CameraMotion({GET_X_LPARAM(l),GET_Y_LPARAM(l)});return 0;}
-        if (gizmoDrag_) UpdateGizmoDrag(point);
+        if (gizmoDrag_) UpdateGizmoDrag(point, (w & MK_SHIFT)!=0); // ZE-108
         else
         {
             hoveredAxis_=-1;
@@ -190,7 +202,7 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
         }
         SetCursor(LoadCursorW(nullptr,hoveredAxis_>=0?IDC_HAND:IDC_ARROW)); return 0;
     case WM_LBUTTONUP:
-        if (gizmoDrag_) { UpdateGizmoDrag(point); EndGizmoDrag(false); } return 0;
+        if (gizmoDrag_) { UpdateGizmoDrag(point, (w & MK_SHIFT)!=0); EndGizmoDrag(false); } return 0; // ZE-108
     case WM_CAPTURECHANGED:
     case WM_CANCELMODE:
     case WM_KILLFOCUS:

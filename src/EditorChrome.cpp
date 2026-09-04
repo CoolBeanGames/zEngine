@@ -1,5 +1,6 @@
 #include "EditorShell.h"
 RECT EditorShell::ChromeRectangle(int index) const {
+    if(index==12){const auto t=ToolRectangle(3);return {t.left+8,t.top,t.left+96,t.bottom};} // ZE-107: grid-snap button
     if(index==11)return {optionsBar_.right-158,optionsBar_.top+4,optionsBar_.right-10,optionsBar_.bottom-4}; // ZE-125: wider for "Stats"
     if(index==9)return {};
     if(index==10)return {mediaLibrary_.left+12,mediaLibrary_.top+73,mediaLibrary_.left+42,mediaLibrary_.top+99};
@@ -11,10 +12,11 @@ RECT EditorShell::ChromeRectangle(int index) const {
     return {left,viewportPanel_.top+4,left+28,viewportPanel_.top+26};
 }
 int EditorShell::ChromeHit(POINT point) const {
-    for(int i=0;i<12;++i){const auto r=ChromeRectangle(i);if(PtInRect(&r,point))return i;}
+    for(int i=0;i<13;++i){const auto r=ChromeRectangle(i);if(PtInRect(&r,point))return i;}
     return -1;
 }
 bool EditorShell::ChromeEnabled(int index) const {
+    if(index==12)return true; // ZE-107: grid snap size is always adjustable
     if(index==11)return true;
     if(index==9)return false;
     if(index==10)return project_.has_value() && AssetFolder()!=assetsDirectory_;
