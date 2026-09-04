@@ -794,9 +794,13 @@ void SceneEditorTests(bool capture)
         editor.CreateEmptyGameObject(); SetWindowTextW(field(InspectorPanel::NameField),L"Scene B Only");
         Require(editor.SaveScene(),"Save active new scene failed");
         RECT client{}; GetClientRect(window,&client);
-        // A.zscene sorts first. Opening it uses the same native double-click path as the library.
+        // ZE-115: A.zscene sorts first. Double-clicking a scene now enters inline rename;
+        // it is opened from the right-click "Open Scene" command instead.
         SendMessageW(window,WM_LBUTTONDBLCLK,MK_LBUTTON,MAKELPARAM(50,client.bottom-220));
-        Require(editor.ScenePath()==sceneA && editor.GameObjects().Size()==2,"Library double-click did not open scene");
+        Require(GetDlgItem(window,3900)!=nullptr,"Double-clicking a scene did not enter inline rename");
+        SendMessageW(GetDlgItem(window,3900),WM_KEYDOWN,VK_ESCAPE,0);
+        editor.OpenScene(sceneA);
+        Require(editor.ScenePath()==sceneA && editor.GameObjects().Size()==2,"Open Scene did not load the scene");
         auto* cube=editor.GameObjects().Find(1);
         Require(cube!=nullptr,"Scene cube identity lost");
         Require(cube->Name()=="Scene A Cube",("Scene cube name changed to: "+cube->Name()).c_str());

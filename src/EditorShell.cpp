@@ -2233,7 +2233,9 @@ LRESULT EditorShell::HandleMessage(
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
         AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),NewFolderCommand,L"New Folder...");
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0),NewSceneCommand,L"Create Scene (.zscene)");
-        if(assetIndex>=0){AppendMenuW(menu,MF_SEPARATOR,0,nullptr);const UINT protect=(Playing()||assetLibrary::Type(assets_[assetIndex])==assetLibrary::Kind::Input)?MF_GRAYED:0u;AppendMenuW(menu,MF_STRING|protect,RenameAssetCommand,L"Rename");AppendMenuW(menu,MF_STRING|protect,DeleteAssetCommand,L"Delete");}
+        if(assetIndex>=0){AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+            if(zengine::scenes::IsScene(assets_[assetIndex]))AppendMenuW(menu,MF_STRING|(Playing()?MF_GRAYED:0),OpenAssetCommand,L"Open Scene"); // ZE-115
+            const UINT protect=(Playing()||assetLibrary::Type(assets_[assetIndex])==assetLibrary::Kind::Input)?MF_GRAYED:0u;AppendMenuW(menu,MF_STRING|protect,RenameAssetCommand,L"Rename");AppendMenuW(menu,MF_STRING|protect,DeleteAssetCommand,L"Delete");}
         const auto command=TrackPopupMenu(menu, TPM_RETURNCMD|TPM_RIGHTBUTTON, screen.x,screen.y,0,window_,nullptr);
         DestroyMenu(menu);
         if (command == 1) CreateScriptAsset();
@@ -2247,6 +2249,7 @@ LRESULT EditorShell::HandleMessage(
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
         if (command==NewSceneCommand) NewScene();
         if(command==NewFolderCommand)NewAssetFolderDialog();
+        if(command==OpenAssetCommand && assetIndex>=0 && assetIndex<static_cast<int>(assets_.size()) && zengine::scenes::IsScene(assets_[assetIndex])) OpenScene(assets_[assetIndex]);
         if(command==RenameAssetCommand)BeginAssetRename(assets_[assetIndex]);
         if(command==DeleteAssetCommand && assetIndex>=0 && assetIndex<static_cast<int>(assets_.size()))
             try { DeleteAsset(assets_[assetIndex]); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); }
@@ -2269,7 +2272,7 @@ LRESULT EditorShell::HandleMessage(
                 else if (zengine::dataobj::IsData(asset)) { try { OpenDataObject(asset); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
                 else if (zengine::datasheet::IsSheet(asset)) { try { OpenDataSheet(asset); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
                 else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
-                else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
+                else if (zengine::scenes::IsScene(asset)) BeginAssetRename(asset); // ZE-115: double-click a scene renames it (Open via right-click)
             }
         }
         return 0;
