@@ -489,6 +489,7 @@ void EditorShell::TickPreviewAudio(float delta)
 void EditorShell::Stop()
 {
     SetFocus(window_);
+    mouseCapture_.Release(); // ZE-84: restore the OS cursor
     if(consoleWindow_){DestroyWindow(consoleWindow_);consoleWindow_=nullptr;}
     scriptHost_.Stop(objects_);physicsWorld_.reset();if(audioPreview_){audioPreview_->StopAll();audioPreview_.reset();} paused_=false; stepDraw_=false; tickAccumulator_=0;
     std::set<zengine::GameObjectId> spawned;for(std::size_t i=0;i<objects_.Size();++i)if(!playObjects_.contains(objects_.At(i).Id()))spawned.insert(objects_.At(i).Id());

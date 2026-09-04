@@ -895,6 +895,21 @@ void MouseInput() {
     { Runtime bad(Compile("class Bad : gameObject { func start(){ Input.mouse.was_just_moved.connect(f); } func f(Vector3 v){} }"));
       auto o=bad.Create("Bad"); Error([&]{bad.Start(o);},"Mouse was_just_moved"); }
     Error([&]{ Runtime bad(Compile("class X : gameObject {}")); bad.SetMouse([]{ MouseFrame m; m.x=99; return m; }()); },"Invalid mouse position");
+
+    // ZE-84: Input.set_mouse_mode(Mouse.<mode>) routes an int 0-4 to the host.
+    { Runtime m(Compile(R"(class M : gameObject {
+        func lock(){ Input.set_mouse_mode(Mouse.captured); }
+        func hide(){ Input.set_mouse_mode(Mouse.confined_hidden); }
+        func free(){ Input.set_mouse_mode(Mouse.visible); }
+      })"));
+      int seen=-99; m.SetMouseModeCallback([&](int mode){ seen=mode; });
+      auto o=m.Create("M");
+      m.Call(o,"lock");   Check(seen==4,"Mouse.captured did not reach the host as 4");
+      m.Call(o,"hide");   Check(seen==3,"Mouse.confined_hidden did not reach the host as 3");
+      m.Call(o,"free");   Check(seen==0,"Mouse.visible did not reach the host as 0");
+    }
+    Error([&]{Compile("class A : gameObject { func f(){ Input.set_mouse_mode(Mouse.nope); } }");},"Unknown mouse mode");
+    Error([&]{Compile("class A : gameObject { func f(){ Input.set_mouse_mode(\"captured\"); } }");},"Cannot assign 'string' to 'int'");
 }
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "regen") {

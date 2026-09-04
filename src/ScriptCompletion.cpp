@@ -65,7 +65,9 @@ Index::Index() {
     for(const auto name:{L"just_pressed",L"just_released",L"is_pressed",L"was_just_pressed",L"was_just_released"})add(L"InputAction",name,L"signal");
     add(L"InputAction",L"pressed",L"bool");add(L"InputAction",L"axis",L"Vector2");add(L"InputAction",L"value",L"Vector2");
     add(L"Input",L"mouse",L"Mouse");
+    add(L"Input",L"set_mouse_mode",L"void",true); // ZE-84
     add(L"Mouse",L"delta",L"Vector2");add(L"Mouse",L"position",L"Vector2");
+    for(const auto name:{L"visible",L"hidden",L"confined",L"confined_hidden",L"captured"})add(L"Mouse",name,L"int"); // ZE-84 mode constants
     for(const auto name:{L"clicked",L"click_ended",L"held",L"was_just_moved"})add(L"Mouse",name,L"signal");
     add(L"Physics",L"cast",L"gameObject",true);add(L"Physics",L"cast_all",L"array",true);
     for(const auto name:{L"lerp",L"sin",L"cos",L"tan",L"sqrt",L"exp",L"round"})add(L"Mathf",name,L"float",true);

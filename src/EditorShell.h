@@ -18,6 +18,7 @@
 #include "core/GameObject.h"
 #include "core/MeshRenderer.h"
 #include "ScriptHost.h"
+#include "runtime/MouseCapture.h"
 #include "Scene.h"
 #include "audio/AudioSystem.h"
 #include "Project.h"
@@ -383,6 +384,7 @@ private:
     HWND consoleWindow_ = nullptr;
     HWND viewportWindow_ = nullptr;
     bool mouseButtonsPrev_[3] = {}; // L/R/M pressed last TickInput, for just_pressed/just_released
+    zengine::game::MouseCaptureState mouseCapture_; // ZE-84: Input.set_mouse_mode during Play preview
     std::unique_ptr<Renderer> renderer_;
     zengine::ui::UiSystem uiViewport_; // screen-space UI preview for the viewport
     std::optional<zengine::ui::UiAssetBinding> uiViewportAssets_; // image / video cache for the preview

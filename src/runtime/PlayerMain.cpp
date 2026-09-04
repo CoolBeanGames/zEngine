@@ -1,5 +1,6 @@
 #include "GameSession.h"
 #include "GamePackage.h"
+#include "MouseCapture.h"
 #include "Renderer.h"
 #include "RenderTransform.h"
 #include "ui/UiSystem.h"
@@ -88,6 +89,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             const auto visible=[&](zengine::GameObjectId id){const auto* object=session.Objects().Find(id);const auto* mesh=object?object->GetBehavior<zengine::MeshRenderer>():nullptr;return mesh&&mesh->Enabled()&&meshes.contains(id);};
             auto previous=std::chrono::steady_clock::now(),fpsSample=previous;double accumulated=0;unsigned rendered=0,fpsFrames=0,currentFps=0;
             bool mousePrev[3]={};
+            zengine::game::MouseCaptureState mouseCapture; // ZE-84
             unsigned sceneGeneration=session.SceneGeneration();
             const auto assetsRoot=zengine::projects::Assets(project);
             zengine::ui::UiSystem ui;
@@ -166,9 +168,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                     const bool focused=GetForegroundWindow()==window;
                     if(state.width && state.height) {
                         POINT cursor{}; GetCursorPos(&cursor); ScreenToClient(window,&cursor);
-                        mouse.inside = cursor.x>=0 && cursor.y>=0 && cursor.x<static_cast<LONG>(state.width) && cursor.y<static_cast<LONG>(state.height);
-                        mouse.x = std::clamp(cursor.x/static_cast<double>(state.width)*2.0-1.0,-1.0,1.0);
-                        mouse.y = std::clamp(1.0-cursor.y/static_cast<double>(state.height)*2.0,-1.0,1.0);
+                        const RECT client{0,0,static_cast<LONG>(state.width),static_cast<LONG>(state.height)};
+                        zengine::game::ApplyMouseMode(session.MouseMode(),window,client,cursor,focused,mouseCapture,mouse); // ZE-84
                     }
                     const int vks[3]={VK_LBUTTON,VK_RBUTTON,VK_MBUTTON};
                     for(int i=0;i<3;++i) {
@@ -209,6 +210,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
                 ui.Emit(frame.sprites,frame.texts);
                 renderer.Render(frame);++rendered;
             }
+            mouseCapture.Release(); // ZE-84: restore the OS cursor on exit
             if(!report.empty()) {
                 std::ofstream out(report,std::ios::binary);out<<"ZENGINE_PLAYER_REPORT 1\nscene "<<std::quoted(session.Scene())<<"\nframes "<<rendered<<"\nmeshes "<<renderer.LastMeshCount()<<'\n';
                 for(std::size_t i=0;i<session.Objects().Size();++i){const auto& object=session.Objects().At(i);if(object.Is2D())continue;const auto p=zengine::As3D(object).GetTransform().Position(),r=zengine::As3D(object).GetTransform().Rotation();out<<"object "<<object.Id()<<' '<<std::quoted(object.Name())<<" parent "<<object.Parent()<<" position "<<p.x<<' '<<p.y<<' '<<p.z<<" rotation "<<r.x<<' '<<r.y<<' '<<r.z<<'\n';}

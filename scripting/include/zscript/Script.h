@@ -181,6 +181,9 @@ public:
     // Host-owned scene management for the `Scene` service: `load` switches the
     // running scene by name; `current` returns the active scene's name.
     void SetSceneCallbacks(std::function<void(std::string_view)> load, std::function<std::string()> current);
+    // ZE-84: Input.set_mouse_mode(mode). 0 visible, 1 hidden, 2 confined,
+    // 3 confined+hidden, 4 captured (recentred, for FPS). The host applies it.
+    void SetMouseModeCallback(std::function<void(int)> callback);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);

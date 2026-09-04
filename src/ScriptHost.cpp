@@ -249,7 +249,7 @@ namespace
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const std::map<std::string,std::vector<ScriptArrayElement>>& arrays, const InputFrame& inputFrame,const MouseFrame& mouseFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output,const ScriptHost::SceneLoader& sceneLoader,std::string sceneName)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const std::map<std::string,std::vector<ScriptArrayElement>>& arrays, const InputFrame& inputFrame,const MouseFrame& mouseFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output,const ScriptHost::SceneLoader& sceneLoader,std::string sceneName,int* mouseMode /* ZE-84 */)
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
               draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),mouse(mouseFrame),scene(objects),ownerId(owner)
         {
@@ -318,6 +318,7 @@ namespace
             runtime.SetSceneCallbacks(
                 sceneLoader ? std::function<void(std::string_view)>([sceneLoader](std::string_view scene){sceneLoader(scene);}) : std::function<void(std::string_view)>{},
                 [scene=std::move(sceneName)]{return scene;});
+            if(mouseMode)runtime.SetMouseModeCallback([mouseMode](int mode){ *mouseMode = mode; }); // ZE-84
             for (const auto& [field, id] : references)
                 if (id)
                     for (const auto& entry : program->InspectorLayout(name))
@@ -613,7 +614,7 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
         record.preview=std::move(preview); record.program=compiled.program;
         ApplyPreviewReferences(record);
         for (const auto& [field, elements] : record.arrays) { (void)elements; SyncPreviewArray(record, field); }
-        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,record.arrays,input_,mouse_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_,sceneLoader_,sceneName_));}
+        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,record.arrays,input_,mouse_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_,sceneLoader_,sceneName_,&mouseMode_));}
         return true;
     }
     catch (const std::exception& e) { record.overrides=std::move(previousValues); record.error=e.what(); return false; }
@@ -876,7 +877,7 @@ bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,r.arrays,input_,mouse_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_,sceneLoader_,sceneName_)); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,r.arrays,input_,mouse_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_,sceneLoader_,sceneName_,&mouseMode_)); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();
@@ -911,6 +912,6 @@ void ScriptHost::Stop(ObjectStore& objects)
             if (auto* script=dynamic_cast<ScriptBehavior*>(&object.BehaviorAt(j))) script->BindInstance(nullptr);
         if (auto* g=As3D(&object)) if (auto it=transforms_.find(g->Id()); it!=transforms_.end()) g->GetTransform()=it->second;
     }
-    objects.SetParents(parents_);parents_.clear();transforms_.clear(); playing_=false;playingObjects_=nullptr;playingPhysics_=nullptr;
+    objects.SetParents(parents_);parents_.clear();transforms_.clear(); playing_=false;mouseMode_=0;playingObjects_=nullptr;playingPhysics_=nullptr;
 }
 }

@@ -515,8 +515,17 @@ class BytecodeCompiler {
             auto type = MemberType(owner.name, t); Emit(Op::Self, t); Emit(Op::LoadField, t, 0, t.text); return type;
         }
         if (e.kind == Expr::Member) {
-            // ZE-79: `TypeName.staticField` - a static member reached through the type, not an instance.
             const Expr& recv = *e.children[0];
+            // ZE-84: mouse-mode constants, e.g. `Input.set_mouse_mode(Mouse.captured)`.
+            if (recv.kind == Expr::Name && recv.token.text == "Mouse"
+                && Local("Mouse") == std::numeric_limits<std::size_t>::max() && program.FindField(owner.name, "Mouse") == nullptr) {
+                static const std::map<std::string, std::int64_t> modes = {
+                    {"visible", 0}, {"hidden", 1}, {"confined", 2}, {"confined_hidden", 3}, {"captured", 4}};
+                const auto it = modes.find(t.text);
+                Require(it != modes.end(), t, "Unknown mouse mode 'Mouse." + t.text + "'");
+                Emit(Op::Constant, t, 0, {}, it->second); return "int";
+            }
+            // ZE-79: `TypeName.staticField` - a static member reached through the type, not an instance.
             if (recv.kind == Expr::Name && program.classes.contains(Canonical(recv.token.text)) && !NativeClass(Canonical(recv.token.text))
                 && Local(recv.token.text) == std::numeric_limits<std::size_t>::max() && program.FindField(owner.name, recv.token.text) == nullptr) {
                 const auto cn = Canonical(recv.token.text);
@@ -858,6 +867,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         input.methods.emplace(name,std::move(f));
     }
     input.fields={{{Token::Identifier,"mouse"},"Mouse"}}; // Input.mouse
+    { Function f; f.params={"int"}; f.result="void"; input.methods.emplace("set_mouse_mode",std::move(f)); } // ZE-84
     program.classes.emplace(input.name,std::move(input));
     Class action;action.name="InputAction";action.signals={"just_pressed","just_released","is_pressed","was_just_pressed","was_just_released"};
     action.fields={{{Token::Identifier,"pressed"},"bool"},{{Token::Identifier,"axis"},"Vector2"},{{Token::Identifier,"value"},"Vector2"}};
@@ -1306,6 +1316,7 @@ struct Runtime::Impl {
     std::mt19937_64 rng{std::random_device{}()};                   // Mathf.random* (ZE-110)
     std::function<void(std::string_view)> sceneLoadCall;
     std::function<std::string()> sceneCurrentCall;
+    std::function<void(int)> mouseModeCall; // ZE-84: Input.set_mouse_mode
     std::map<std::string, std::map<std::string, Value>> statics; // ZE-79: class name -> static field values
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {
@@ -1825,6 +1836,13 @@ struct Runtime::Impl {
             return MakeArray(std::move(values),t);
         }
         if(object.type->name=="InputService") {
+            if(name=="set_mouse_mode") { // ZE-84
+                if(args.size()!=1)Error(t,"set_mouse_mode takes one mode value");
+                const auto mode=std::get<std::int64_t>(Coerce(args[0],"int",t));
+                if(mode<0 || mode>4)Error(t,"Mouse mode must be Mouse.visible/hidden/confined/confined_hidden/captured");
+                if(mouseModeCall)mouseModeCall(static_cast<int>(mode));
+                return {};
+            }
             if(args.size()!=1)Error(t,"Input calls take one action name");
             const auto action=std::get<std::string>(Coerce(args[0],"string",t));const auto found=inputFrame.find(action);
             const InputState empty;const auto& state=found==inputFrame.end()?empty:found->second;
@@ -2142,6 +2160,7 @@ void Runtime::SetAudioAreaCallback(std::function<void(ObjectRef,std::string_view
 void Runtime::SetLightCallback(std::function<void(ObjectRef,std::string_view,float,float,float)> callback){impl_->lightCallback=std::move(callback);}
 void Runtime::SetDecalCallback(std::function<void(ObjectRef,std::string_view,float,float,float)> callback){impl_->decalCallback=std::move(callback);}
 void Runtime::SetSceneCallbacks(std::function<void(std::string_view)> load,std::function<std::string()> current){impl_->sceneLoadCall=std::move(load);impl_->sceneCurrentCall=std::move(current);}
+void Runtime::SetMouseModeCallback(std::function<void(int)> callback){impl_->mouseModeCall=std::move(callback);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}

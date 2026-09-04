@@ -72,6 +72,10 @@ namespace zengine
         bool Playing() const noexcept { return playing_; }
         void SetInput(script::InputFrame frame) { input_=std::move(frame); }
         void SetMouse(script::MouseFrame frame) { mouse_=frame; }
+        // ZE-84: the mouse capture mode a script last requested via Input.set_mouse_mode
+        // (0 visible / 1 hidden / 2 confined / 3 confined+hidden / 4 captured). The host
+        // applies it. Reset to 0 on Stop.
+        int MouseMode() const noexcept { return mouseMode_; }
     private:
         struct Record
         {
@@ -95,6 +99,7 @@ namespace zengine
         std::map<GameObjectId,GameObjectId> parents_;
         BehaviorLifecycle lifecycle_;
         bool playing_ = false;
+        int mouseMode_ = 0; // ZE-84
         script::InputFrame input_;
         script::MouseFrame mouse_;
         PrefabSpawner prefabSpawner_;

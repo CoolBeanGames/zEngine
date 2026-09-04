@@ -37,6 +37,8 @@ public:
     // Bumped every time ChangeScene actually swaps; hosts key their per-scene
     // caches (e.g. uploaded meshes) off this.
     unsigned SceneGeneration() const noexcept {return generation_;}
+    // ZE-84: the mouse capture mode a script requested (0 visible..4 captured). The host applies it.
+    int MouseMode() const noexcept {return scene_.scripts.MouseMode();}
 private:
     void CheckErrors() const;
     void LoadScene(const std::string& reference); // (re)builds scene_ from the named asset

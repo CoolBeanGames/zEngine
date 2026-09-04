@@ -23,10 +23,10 @@ void EditorShell::TickInput() {
     RECT vp{};
     if(viewportWindow_ && GetClientRect(viewportWindow_,&vp) && vp.right>0 && vp.bottom>0) {
         POINT cursor{}; GetCursorPos(&cursor); ScreenToClient(viewportWindow_,&cursor);
-        mouse.inside = cursor.x>=0 && cursor.y>=0 && cursor.x<vp.right && cursor.y<vp.bottom;
-        mouse.x = std::clamp(cursor.x/static_cast<double>(vp.right)*2.0-1.0,-1.0,1.0);
-        mouse.y = std::clamp(1.0-cursor.y/static_cast<double>(vp.bottom)*2.0,-1.0,1.0);
-    }
+        // ZE-84: apply a script-requested capture mode, but only while the Play preview owns the viewport.
+        const bool viewportFocus = Playing() && active && cursor.x>=0 && cursor.y>=0 && cursor.x<vp.right && cursor.y<vp.bottom;
+        zengine::game::ApplyMouseMode(Playing()?scriptHost_.MouseMode():0,viewportWindow_,vp,cursor,viewportFocus,mouseCapture_,mouse);
+    } else mouseCapture_.Release();
     const int vks[3]={VK_LBUTTON,VK_RBUTTON,VK_MBUTTON};
     for(int i=0;i<3;++i) {
         const bool down = active && (GetKeyState(vks[i]) & 0x8000)!=0;
