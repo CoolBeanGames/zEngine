@@ -340,6 +340,21 @@ void Examples() {
         Compile(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()));
     }
 }
+void TypeManifestIsCurrent() {
+    // ZE-79: scripting/types.json is generated from TypeManifest(). Keep it in sync -
+    // if this fails, run the test binary with `regen` to rewrite the file.
+    const std::string fresh = zengine::script::TypeManifest();
+    Check(fresh.find("\"zscript_type_manifest\": 1") != std::string::npos, "manifest header missing");
+    Check(fresh.find("\"type_name\": \"Vector3\"") != std::string::npos
+          && fresh.find("\"instance_name\": \"gameObject\"") != std::string::npos, "manifest is missing core types");
+    std::ifstream in(ZSCRIPT_TYPES_JSON, std::ios::binary);
+    std::string onDisk; { std::istreambuf_iterator<char> it(in), end; onDisk.assign(it, end); }
+    if (onDisk != fresh) {
+        std::ofstream actual(std::string(ZSCRIPT_TYPES_JSON) + ".actual", std::ios::binary);
+        actual << fresh;
+        Check(false, "scripting/types.json is stale - regenerate it (see types.json.actual)");
+    }
+}
 void ArraysTypesAndLocals() {
     auto p=Compile(R"(class Base {} class Child : Base {}
         class A : gameObject {
@@ -857,8 +872,14 @@ void MouseInput() {
       auto o=bad.Create("Bad"); Error([&]{bad.Start(o);},"Mouse was_just_moved"); }
     Error([&]{ Runtime bad(Compile("class X : gameObject {}")); bad.SetMouse([]{ MouseFrame m; m.x=99; return m; }()); },"Invalid mouse position");
 }
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "regen") {
+        std::ofstream(ZSCRIPT_TYPES_JSON, std::ios::binary) << zengine::script::TypeManifest();
+        std::cout << "wrote " << ZSCRIPT_TYPES_JSON << '\n';
+        return 0;
+    }
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
+        {"type manifest is current (ZE-79)", TypeManifestIsCurrent},
         {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"UI control classes", UiControlClasses}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"audioPlayer class",AudioPlayerClass},{"Mathf functions",MathfFunctions},{"Scene service",SceneService},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},

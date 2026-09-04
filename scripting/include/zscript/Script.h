@@ -106,6 +106,11 @@ public:
     // One compilation unit may contain multiple classes, including forward references.
     static CompileResult Compile(std::string_view source, std::string sourceName = "<script>");
 };
+
+// ZE-79: a machine-readable description of every built-in zScript type - its base,
+// kind, fields, methods (instance and static), and signals - for external tooling.
+// Deterministic; regenerate scripting/types.json from it whenever types change.
+std::string TypeManifest();
 struct RuntimeLimits {
     std::size_t instructionsPerCall = 100000;
     std::size_t callDepth = 128;

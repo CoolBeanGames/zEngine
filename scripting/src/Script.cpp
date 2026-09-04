@@ -1070,6 +1070,113 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
         return {std::shared_ptr<const Program>(new Program(std::move(p))), {}};
     } catch (const ScriptError& error) { return {nullptr, {error.Detail()}}; }
 }
+namespace {
+std::string JsonString(std::string_view s) {
+    std::string out = "\"";
+    for (char c : s) {
+        switch (c) {
+        case '"': out += "\\\""; break; case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break; case '\t': out += "\\t"; break; case '\r': out += "\\r"; break;
+        default: out += c;
+        }
+    }
+    return out + "\"";
+}
+std::string LowerFirst(std::string s) { if (!s.empty()) s[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(s[0]))); return s; }
+std::string UpperFirst(std::string s) { if (!s.empty()) s[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(s[0]))); return s; }
+// Primitive/pseudo types keep their spelling; named types use the capitalised type form.
+std::string TypeLabel(const std::string& s) {
+    static const std::set<std::string> primitive = {"void", "int", "float", "bool", "string", "char", "any", "array", "callable", "signal", "null"};
+    return primitive.count(s) ? s : UpperFirst(s);
+}
+// ZE-79: static factory members exposed on the value types (see Expr::Call above).
+const std::vector<std::pair<std::string, std::string>>& ValueStatics(const std::string& type) {
+    static const std::vector<std::pair<std::string, std::string>> v3 = {
+        {"zero", "Vector3"}, {"one", "Vector3"}, {"up", "Vector3"}, {"down", "Vector3"},
+        {"left", "Vector3"}, {"right", "Vector3"}, {"forward", "Vector3"}, {"back", "Vector3"}};
+    static const std::vector<std::pair<std::string, std::string>> v2 = {
+        {"zero", "Vector2"}, {"one", "Vector2"}, {"up", "Vector2"}, {"down", "Vector2"}, {"left", "Vector2"}, {"right", "Vector2"}};
+    static const std::vector<std::pair<std::string, std::string>> none;
+    return type == "Vector3" ? v3 : type == "Vector2" ? v2 : none;
+}
+std::string TypeKind(const std::string& name, const Program::Impl& p) {
+    if (name == "Vector3" || name == "Vector2") return "value";
+    if (const auto* nt = FindNativeType(name)) {
+        if (!nt->scriptClass) return "value";
+        if (name == "InputService" || name == "PhysicsService" || name == "SceneService" || name == "Mathf") return "service";
+        if (name == "InputAction" || name == "Mouse") return "input";
+        if (name == "prefab" || name == "Timer") return "utility";
+        if (name == "Transform" || name == "Transform2D") return "transform";
+        if (nt->physicsBody) return "physics_body";
+        if (nt->component) return "component";
+        if (name == "gameObject" || name == "gameObject2D") return "scene_object";
+        if (name == "Behavior" || name == "PhysicsBody") return "behavior_base";
+        if (name.rfind("ui", 0) == 0) return "ui_control";
+        if (p.Assignable("gameObject", name) || p.Assignable("gameObject2D", name)) return "scene_object_base";
+        return "native";
+    }
+    return "user";
+}
+}
+std::string TypeManifest() {
+    auto p = std::make_shared<Program::Impl>(); p->source = "<manifest>";
+    BuildDeclarations(*p, {});
+    std::ostringstream out;
+    out << "{\n  \"zscript_type_manifest\": 1,\n";
+    out << "  \"note\": \"Every zScript type has a capitalised type form (statics only) and a lower-first instance form.\",\n";
+    out << "  \"types\": [\n";
+    std::vector<std::string> names;
+    for (const auto& [name, _] : p->classes) names.push_back(name);
+    names.push_back("Vector3"); names.push_back("Vector2");
+    std::sort(names.begin(), names.end(), [](const std::string& a, const std::string& b) {
+        return LowerFirst(a) < LowerFirst(b);
+    });
+    for (std::size_t n = 0; n < names.size(); ++n) {
+        const auto& name = names[n];
+        const Class* c = p->classes.count(name) ? &p->classes.at(name) : nullptr;
+        const auto* nt = FindNativeType(name);
+        out << "    {\n";
+        out << "      \"type_name\": " << JsonString(UpperFirst(name)) << ",\n";
+        out << "      \"instance_name\": " << JsonString(LowerFirst(name)) << ",\n";
+        out << "      \"canonical\": " << JsonString(name) << ",\n";
+        out << "      \"kind\": " << JsonString(TypeKind(name, *p)) << ",\n";
+        out << "      \"base\": " << (c && !c->base.empty() ? JsonString(UpperFirst(c->base)) : "null") << ",\n";
+        out << "      \"abstract\": " << (c && c->isAbstract ? "true" : "false") << ",\n";
+        if (nt) out << "      \"attachable_component\": " << (nt->component ? "true" : "false") << ",\n";
+        // fields
+        out << "      \"fields\": [";
+        if (c) for (std::size_t i = 0; i < c->fields.size(); ++i) {
+            const auto& f = c->fields[i];
+            out << (i ? ", " : "") << "{\"name\": " << JsonString(f.token.text) << ", \"type\": " << JsonString(TypeLabel(f.type))
+                << ", \"private\": " << (f.isPrivate ? "true" : "false") << "}";
+        } else if (name == "Vector3") out << "{\"name\": \"x\", \"type\": \"float\"}, {\"name\": \"y\", \"type\": \"float\"}, {\"name\": \"z\", \"type\": \"float\"}";
+        else if (name == "Vector2") out << "{\"name\": \"x\", \"type\": \"float\"}, {\"name\": \"y\", \"type\": \"float\"}";
+        out << "],\n";
+        // instance methods
+        out << "      \"methods\": [";
+        if (c) { bool first = true; for (const auto& [mn, f] : c->methods) {
+            out << (first ? "" : ", "); first = false;
+            out << "{\"name\": " << JsonString(mn) << ", \"result\": " << JsonString(TypeLabel(f.result))
+                << ", \"abstract\": " << (f.isAbstract ? "true" : "false")
+                << ", \"private\": " << (f.isPrivate ? "true" : "false") << ", \"params\": [";
+            for (std::size_t i = 0; i < f.params.size(); ++i) out << (i ? ", " : "") << JsonString(TypeLabel(f.params[i]));
+            out << "]}";
+        } }
+        out << "],\n";
+        // static members (value-type factories today; user statics later)
+        out << "      \"static_members\": [";
+        { const auto& s = ValueStatics(name); for (std::size_t i = 0; i < s.size(); ++i)
+            out << (i ? ", " : "") << "{\"name\": " << JsonString(s[i].first) << ", \"result\": " << JsonString(s[i].second) << ", \"params\": []}"; }
+        out << "],\n";
+        // signals
+        out << "      \"signals\": [";
+        if (c) { bool first = true; for (const auto& sig : c->signals) { out << (first ? "" : ", ") << JsonString(sig); first = false; } }
+        out << "]\n";
+        out << "    }" << (n + 1 < names.size() ? "," : "") << "\n";
+    }
+    out << "  ]\n}\n";
+    return out.str();
+}
 struct Runtime::Impl {
     struct Object {
         ObjectRef transformOwner;
