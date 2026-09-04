@@ -116,9 +116,28 @@ void ScopeKeywords() {
     Error([&] { Compile("class P { func q() {} }  class A : P { func x() { super.nope(); } }"); }, "No inherited 'nope'");
     Error([&] { Compile("class A { func x() { super.y(); } }"); }, "'super' requires a base class");
     Error([&] { Compile("class A { abstract func f() { return 1; } }"); }, "Expected");
-    Error([&] { Compile("class A { static int n; }"); }, "not supported yet");
     // A concrete subclass of an abstract base is constructible; the abstract base is not.
     Check(Compile("class A { abstract func f() : int; }  class B : A { override func f() : int { return 1; } func make() { B b = B(); } }") != nullptr, "concrete subclass constructs");
+
+    // ZE-79: static fields + methods - class-level state, no `this`.
+    auto s = Compile(R"ZS(class Counter {
+        static int total = 10;
+        private static int _step = 1;
+        static func bump() : int { total += _step; return total; }
+        static func reset() { total = 0; }
+        func mine() : int { return Counter.total; }
+    })ZS");
+    Runtime rs(s);
+    auto c1 = rs.Create("Counter"), c2 = rs.Create("Counter");
+    Check(Int(rs.Call(c1, "bump")) == 11 && Int(rs.Call(c2, "bump")) == 12, "static state is shared across instances");
+    Check(Int(rs.Call(c1, "mine")) == 12, "instance reads a static via ClassName.field");
+    rs.Call(c1, "reset");
+    Check(Int(rs.Call(c2, "mine")) == 0, "static reset seen everywhere");
+
+    Error([&] { Compile("class A { static func s() {} func f() { s(); this.s(); } }  class B { func g(A a) { a.s(); } }"); }, "static");
+    Error([&] { Compile("class A { int n; static func s() : int { return n; } }"); }, "static method cannot use the instance member");
+    Error([&] { Compile("class A { static int n; }  class B { func f() : int { A a = A(); return a.n; } }"); }, "static member of A");
+    Error([&] { Compile("class A { int n; func f() : int { return A.n; } }"); }, "instance member of A");
 }
 void ValuesAndControlFlow() {
     auto p = Compile(R"(class Math { int calls; string text = "hi";

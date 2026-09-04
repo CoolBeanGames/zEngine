@@ -281,7 +281,7 @@ public:
                 }
                 if ((modStatic || modPrivate || modAbstract || modOverride) && !Is("func") && (modAbstract || modOverride))
                     Fail(source, Current(), "'abstract' and 'override' apply only to functions");
-                if (modStatic) Fail(source, declaration, "'static' members are not supported yet (ZE-79 pending)");
+                if (modStatic && modAbstract) Fail(source, declaration, "An abstract member cannot be static");
                 if (Match("label")) {
                     if (modStatic || modPrivate || modAbstract || modOverride) Fail(source, declaration, "Modifiers cannot precede an inspector label");
                     Expect("(");
@@ -335,7 +335,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, Scene, LoadLocal, StoreLocal, LoadField, StoreField, Call, CallSuper, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, Scene, LoadLocal, StoreLocal, LoadField, StoreField, LoadStatic, StoreStatic, Call, CallSuper, CallStatic, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -354,7 +354,8 @@ struct Class {
     std::set<std::string> signals;
     Function initializer;
     bool isAbstract = false;                 // ZE-79: declared `abstract` or has an unresolved abstract method
-    std::vector<Field> staticFields;          // ZE-79: class-level storage
+    std::vector<Field> staticFields;          // ZE-79: class-level storage (declared here + inherited)
+    Function staticInitializer;               // ZE-79: runs once, sets this class's own static fields
 };
 bool Numeric(const std::string& t) { return t == "int" || t == "float"; }
 bool TextType(const std::string& t) { return t=="string" || t=="char"; }
@@ -409,6 +410,11 @@ struct Program::Impl {
         }
         return nullptr;
     }
+    const Field* FindStatic(const std::string& type, const std::string& name) const { // ZE-79
+        auto c = classes.find(type); if (c == classes.end()) return nullptr;
+        for (const auto& f : c->second.staticFields) if (f.token.text == name) return &f;
+        return nullptr;
+    }
 };
 namespace {
 class BytecodeCompiler {
@@ -448,6 +454,8 @@ class BytecodeCompiler {
         if (type == "Vector3" && (field.text == "x" || field.text == "y" || field.text == "z")) return "float";
         if (type == "Vector2" && (field.text == "x" || field.text == "y")) return "float";
         const auto* f = program.FindField(type, field.text);
+        if (!f && program.FindStatic(type, field.text)) // ZE-79
+            Fail(program.source, field, "'" + field.text + "' is a static member of " + type + "; use " + type + "." + field.text);
         Require(f != nullptr, field, "Unknown field '" + field.text + "' on '" + type + "'");
         CheckPrivate(f->isPrivate, f->declaringClass, field.text, field);
         return f->type;
@@ -495,13 +503,31 @@ class BytecodeCompiler {
             if (t.text == "Physics") { Emit(Op::Physics,t); return "PhysicsService"; }
             if (t.text == "Mathf") { Emit(Op::Math,t); return "Mathf"; }
             if (t.text == "Scene") { Emit(Op::Scene,t); return "SceneService"; }
-            if (t.text == "this") { Emit(Op::Self, t); return owner.name; }
+            if (t.text == "this") { Require(!function.isStatic, t, "'this' is not available in a static method"); Emit(Op::Self, t); return owner.name; }
             auto local = Local(t.text);
             if (local != std::numeric_limits<std::size_t>::max()) { Emit(Op::LoadLocal, t, local); return function.locals[local]; }
+            // ZE-79: a bare name may be one of this class's static fields (declared or inherited).
+            if (const auto* sf = program.FindStatic(owner.name, t.text)) {
+                CheckPrivate(sf->isPrivate, sf->declaringClass, t.text, t);
+                Emit(Op::LoadStatic, t, 0, t.text, sf->declaringClass); return sf->type;
+            }
+            Require(!function.isStatic, t, "A static method cannot use the instance member '" + t.text + "'"); // ZE-79
             auto type = MemberType(owner.name, t); Emit(Op::Self, t); Emit(Op::LoadField, t, 0, t.text); return type;
         }
         if (e.kind == Expr::Member) {
-            auto receiver = Expression(*e.children[0]); auto type = MemberType(receiver, t);
+            // ZE-79: `TypeName.staticField` - a static member reached through the type, not an instance.
+            const Expr& recv = *e.children[0];
+            if (recv.kind == Expr::Name && program.classes.contains(Canonical(recv.token.text)) && !NativeClass(Canonical(recv.token.text))
+                && Local(recv.token.text) == std::numeric_limits<std::size_t>::max() && program.FindField(owner.name, recv.token.text) == nullptr) {
+                const auto cn = Canonical(recv.token.text);
+                const auto* sf = program.FindStatic(cn, t.text);
+                Require(sf != nullptr, t, program.FindField(cn, t.text) || program.Method(cn, t.text)
+                        ? "'" + t.text + "' is an instance member of " + recv.token.text + "; read it from a value of that type"
+                        : "Unknown static member '" + recv.token.text + "." + t.text + "'");
+                CheckPrivate(sf->isPrivate, sf->declaringClass, t.text, t);
+                Emit(Op::LoadStatic, t, 0, t.text, sf->declaringClass); return sf->type;
+            }
+            auto receiver = Expression(recv); auto type = MemberType(receiver, t);
             Emit(Op::LoadField, t, 0, t.text); return type;
         }
         if (e.kind == Expr::Call) {
@@ -543,6 +569,32 @@ class BytecodeCompiler {
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
                 Require(!program.classes.at(Canonical(callee.token.text)).isAbstract, t, "Cannot construct the abstract class '" + callee.token.text + "'"); // ZE-79
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
+            }
+            // ZE-79: static method call - `TypeName.method(args)` or, from inside the class, a bare `method(args)`.
+            {
+                std::string staticType; // only user classes take part; native types keep their existing semantics
+                if (callee.kind == Expr::Member && callee.children[0]->kind == Expr::Name
+                    && program.classes.contains(Canonical(callee.children[0]->token.text)) && !NativeClass(Canonical(callee.children[0]->token.text))
+                    && Local(callee.children[0]->token.text) == std::numeric_limits<std::size_t>::max()
+                    && program.FindField(owner.name, callee.children[0]->token.text) == nullptr) {
+                    staticType = Canonical(callee.children[0]->token.text);
+                } else if (callee.kind == Expr::Name && Local(callee.token.text) == std::numeric_limits<std::size_t>::max()) {
+                    if (const auto* m = program.Method(owner.name, callee.token.text); m && m->isStatic) staticType = m->declaringClass;
+                }
+                if (!staticType.empty()) {
+                    const auto* f = program.Method(staticType, callee.token.text);
+                    if (f && f->isStatic) {
+                        CheckPrivate(f->isPrivate, f->declaringClass, callee.token.text, callee.token);
+                        Require(f->params.size() == e.children.size() - 1, t, "Wrong argument count for '" + callee.token.text + "'");
+                        for (std::size_t i = 1; i < e.children.size(); ++i) Compatible(f->params[i - 1], Expression(*e.children[i]), e.children[i]->token);
+                        Emit(Op::CallStatic, t, f->params.size(), callee.token.text, f->declaringClass);
+                        return f->result;
+                    }
+                    if (callee.kind == Expr::Member && f)
+                        Fail(program.source, callee.token, "'" + callee.token.text + "' is an instance method; call it on a value of type " + callee.children[0]->token.text);
+                    if (callee.kind == Expr::Member)
+                        Fail(program.source, callee.token, "Unknown static member '" + callee.children[0]->token.text + "." + callee.token.text + "'");
+                }
             }
             // ZE-79: super.method(args) - call the base class's version, `this` unchanged.
             if (callee.kind == Expr::Member && callee.children[0]->kind == Expr::Name && callee.children[0]->token.text == "super"
@@ -622,6 +674,7 @@ class BytecodeCompiler {
             const auto* f = program.Method(receiver, callee.token.text);
             Require(f != nullptr, callee.token, "Unknown method '" + callee.token.text + "' on '" + receiver + "'");
             CheckPrivate(f->isPrivate, f->declaringClass, callee.token.text, callee.token); // ZE-79
+            Require(!f->isStatic, callee.token, "'" + callee.token.text + "' is static; call it as " + f->declaringClass + "." + callee.token.text + "()"); // ZE-79
             Require(f->params.size() == e.children.size() - 1, t, "Wrong argument count for '" + callee.token.text + "'");
             for (std::size_t i = 1; i < e.children.size(); ++i) Compatible(f->params[i - 1], Expression(*e.children[i]), e.children[i]->token);
             Emit(Op::Call, t, f->params.size(), callee.token.text); return f->result;
@@ -670,25 +723,39 @@ class BytecodeCompiler {
         Require(Numeric(left) && Numeric(right), t, "Arithmetic operands must be numeric or compatible Vector3/Vector2 values");
         return left == "float" || right == "float" ? "float" : "int";
     }
-    struct Slot { std::string type; bool field; std::size_t index; std::string name; };
+    struct Slot { std::string type; bool field; std::size_t index; std::string name; std::string staticClass; }; // staticClass != "" => a static field
     Slot Destination(const Expr& e) {
         if (e.kind == Expr::Name) {
             Require(e.token.text != "this", e.token, "Cannot assign to this");
             auto local = Local(e.token.text);
-            if (local != std::numeric_limits<std::size_t>::max()) return {function.locals[local], false, local, {}};
-            auto type = FieldType(owner.name, e.token); Emit(Op::Self, e.token); return {type, true, 0, e.token.text};
+            if (local != std::numeric_limits<std::size_t>::max()) return {function.locals[local], false, local, {}, {}};
+            if (const auto* sf = program.FindStatic(owner.name, e.token.text)) { // ZE-79
+                CheckPrivate(sf->isPrivate, sf->declaringClass, e.token.text, e.token);
+                return {sf->type, false, 0, e.token.text, sf->declaringClass};
+            }
+            Require(!function.isStatic, e.token, "A static method cannot assign the instance field '" + e.token.text + "'");
+            auto type = FieldType(owner.name, e.token); Emit(Op::Self, e.token); return {type, true, 0, e.token.text, {}};
         }
         Require(e.kind == Expr::Member, e.token, "Assignment target must be a variable or field");
+        // ZE-79: assign a static field through the type - `TypeName.staticField = ...`.
+        if (const Expr& recv = *e.children[0]; recv.kind == Expr::Name && program.classes.contains(Canonical(recv.token.text)) && !NativeClass(Canonical(recv.token.text))
+            && Local(recv.token.text) == std::numeric_limits<std::size_t>::max() && program.FindField(owner.name, recv.token.text) == nullptr) {
+            const auto* sf = program.FindStatic(Canonical(recv.token.text), e.token.text);
+            Require(sf != nullptr, e.token, "Unknown or non-static member '" + recv.token.text + "." + e.token.text + "'");
+            CheckPrivate(sf->isPrivate, sf->declaringClass, e.token.text, e.token);
+            return {sf->type, false, 0, e.token.text, sf->declaringClass};
+        }
         auto receiver = Expression(*e.children[0]);
         Require(receiver != "Vector3" && receiver != "Vector2", e.token, "Cannot assign to a temporary vector component");
         Require(receiver != "InputAction" && receiver != "Mouse",e.token,"Input state is read-only");
         const auto nativeAccessor=[&](const std::string& field){for(const auto& n:NativeTypes())if(!n.accessor.empty()&&n.accessor!="transform"&&n.accessor==field)return true;return false;};
         Require(!(program.Assignable("gameObject",receiver) && nativeAccessor(e.token.text)),e.token,"Native behavior references are read-only");
             Require(!(program.Assignable("Transform",receiver) && GlobalField(e.token.text)),e.token,"Global transform fields are read-only");
-        return {FieldType(receiver, e.token), true, 0, e.token.text};
+        return {FieldType(receiver, e.token), true, 0, e.token.text, {}};
     }
     void Load(const Slot& slot, const Token& t) {
-        if (slot.field) { Emit(Op::Duplicate, t); Emit(Op::LoadField, t, 0, slot.name); }
+        if (!slot.staticClass.empty()) Emit(Op::LoadStatic, t, 0, slot.name, slot.staticClass);
+        else if (slot.field) { Emit(Op::Duplicate, t); Emit(Op::LoadField, t, 0, slot.name); }
         else Emit(Op::LoadLocal, t, slot.index);
     }
     bool Statement(const Stmt& s) {
@@ -720,7 +787,11 @@ class BytecodeCompiler {
             }
             const Expr* destination = &target;
             bool component = false;
-            if (target.kind == Expr::Member) {
+            const bool staticTarget = target.kind == Expr::Member && target.children[0]->kind == Expr::Name // ZE-79
+                && program.classes.contains(Canonical(target.children[0]->token.text)) && !NativeClass(Canonical(target.children[0]->token.text))
+                && Local(target.children[0]->token.text) == std::numeric_limits<std::size_t>::max()
+                && program.FindField(owner.name, target.children[0]->token.text) == nullptr;
+            if (target.kind == Expr::Member && !staticTarget) {
                 auto mark = function.code.size(); auto receiverType = Expression(*target.children[0]); function.code.resize(mark);
                 component = receiverType == "Vector3" || receiverType == "Vector2";
                 if (component) { FieldType(receiverType, target.token); destination = target.children[0].get(); }
@@ -737,7 +808,8 @@ class BytecodeCompiler {
             }
             Compatible(expected, actual, t);
             if (component) Emit(Op::SetComponent, target.token, 0, target.token.text);
-            Emit(slot.field ? Op::StoreField : Op::StoreLocal, t, slot.index, slot.name);
+            Emit(!slot.staticClass.empty() ? Op::StoreStatic : slot.field ? Op::StoreField : Op::StoreLocal, t, slot.index, slot.name,
+                 slot.staticClass.empty() ? Value{} : Value{slot.staticClass});
             return false;
         }
         if (s.kind == Stmt::Expression) { Expression(*s.expressions[0]); Emit(Op::Pop, t); return false; }
@@ -765,8 +837,16 @@ public:
         if (!function.code.empty() && function.result == "void") { Emit(Op::Constant, ast.name); Emit(Op::Return, ast.name); }
     }
     void Initialize(const ClassAst& ast) {
-        for (const auto& field : ast.fields) if (field.initializer) {
+        for (const auto& field : ast.fields) if (field.initializer && !field.isStatic) {
             Emit(Op::Self, field.name); Compatible(field.type, Expression(*field.initializer), field.name); Emit(Op::StoreField, field.name, 0, field.name.text);
+        }
+        if (!function.code.empty()) { Emit(Op::Constant, ast.name); Emit(Op::Return, ast.name); }
+    }
+    void StaticInitialize(const ClassAst& ast) { // ZE-79: runs once when the Runtime starts
+        function.isStatic = true;
+        for (const auto& field : ast.fields) if (field.initializer && field.isStatic) {
+            Compatible(field.type, Expression(*field.initializer), field.name);
+            Emit(Op::StoreStatic, field.name, 0, field.name.text, Value{std::string(owner.name)});
         }
         if (!function.code.empty()) { Emit(Op::Constant, ast.name); Emit(Op::Return, ast.name); }
     }
@@ -1050,6 +1130,7 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
         for (const auto& ast : asts) {
             auto& c = p->classes.at(ast.name.text);
             BytecodeCompiler(*p, c, c.initializer).Initialize(ast);
+            BytecodeCompiler(*p, c, c.staticInitializer).StaticInitialize(ast); // ZE-79
             for (const auto& method : ast.methods)
                 if (method.hasBody) BytecodeCompiler(*p, c, c.methods.at(method.name.text)).Compile(method); // ZE-79: abstract methods have none
         }
@@ -1225,8 +1306,14 @@ struct Runtime::Impl {
     std::mt19937_64 rng{std::random_device{}()};                   // Mathf.random* (ZE-110)
     std::function<void(std::string_view)> sceneLoadCall;
     std::function<std::string()> sceneCurrentCall;
+    std::map<std::string, std::map<std::string, Value>> statics; // ZE-79: class name -> static field values
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
-    Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {}
+    Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {
+        for (const auto& [cn, c] : program->classes) // ZE-79: seed static storage
+            for (const auto& f : c.staticFields) statics[f.declaringClass].emplace(f.token.text, DefaultValue(f.type));
+        for (const auto& [cn, c] : program->classes)
+            if (!c.staticInitializer.code.empty()) { Reset(); Execute({}, c.staticInitializer, {}, c.staticInitializer.token); }
+    }
     [[noreturn]] void Error(const Token& t, const std::string& message) const { Fail(program->source, t, message); }
     void Reset() { remaining = limits.instructionsPerCall; }
     void Tick(const Token& t) { if (remaining == 0) Error(t, "Instruction budget exceeded"); --remaining; }
@@ -1826,6 +1913,21 @@ struct Runtime::Impl {
                 break;
             }
             case Op::StoreField: { auto value = pop(); auto target = Reference(pop(), t); Set(target, ins.name, std::move(value), t); break; }
+            case Op::LoadStatic: stack.push_back(statics.at(std::get<std::string>(ins.value)).at(ins.name)); break; // ZE-79
+            case Op::StoreStatic: {
+                const auto& cls = std::get<std::string>(ins.value);
+                const auto* fd = program->FindStatic(cls, ins.name);
+                statics.at(cls).at(ins.name) = Coerce(pop(), fd ? fd->type : std::string{}, t);
+                break;
+            }
+            case Op::CallStatic: { // ZE-79: no `this`
+                std::vector<Value> arguments(ins.a);
+                for (std::size_t i = ins.a; i > 0; --i) arguments[i - 1] = pop();
+                const auto* fn = program->Method(std::get<std::string>(ins.value), ins.name);
+                if (!fn) Error(t, "Static method '" + ins.name + "' is missing");
+                stack.push_back(Execute({}, *fn, arguments, t));
+                break;
+            }
             case Op::Call: {
                 std::vector<Value> arguments(ins.a);
                 for (std::size_t i = ins.a; i > 0; --i) arguments[i - 1] = pop();
