@@ -143,6 +143,7 @@ add_executable(zEngine WIN32
     src/ObjectPicker.h
     src/ProjectDialog.cpp
     src/Renderer.h
+    src/zEngine.rc
 )
 
 target_compile_features(zEngine PRIVATE cxx_std_20)

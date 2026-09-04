@@ -1,0 +1,6 @@
+#include <windows.h>
+
+// Application icon. IDI_APP_ICON (1) is the first icon, so it is also the
+// executable's shell icon. Loaded at runtime for the window classes.
+#define IDI_APP_ICON 1
+IDI_APP_ICON ICON "zEngine.ico"

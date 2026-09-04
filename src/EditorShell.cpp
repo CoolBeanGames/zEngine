@@ -150,11 +150,18 @@ namespace
 EditorShell::EditorShell(const HINSTANCE instance)
     : instance_(instance)
 {
+    // ZE-82 follow-up: the app icon (IDI_APP_ICON == 1, from src/zEngine.rc).
+    const HICON appIcon = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED));
+    const HICON appIconSmall = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
+
     WNDCLASSEXW editorClass{};
     editorClass.cbSize = sizeof(editorClass);
     editorClass.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     editorClass.lpfnWndProc = WindowProcedure;
     editorClass.hInstance = instance_;
+    editorClass.hIcon = appIcon;
+    editorClass.hIconSm = appIconSmall;
     editorClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     editorClass.hbrBackground = nullptr;
     editorClass.lpszClassName = EditorWindowClass;
