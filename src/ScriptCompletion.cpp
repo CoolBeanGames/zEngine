@@ -182,7 +182,7 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
         if(result.prefix.empty())return result;
         candidates=variables;
         for(const auto& [name,type]:index.types_)if(name!=L"signal" && name!=L"InputAction" && name!=L"Mouse")candidates[name]={name,L"type"};
-        for(const auto word:{L"class",L"func",L"return",L"if",L"else",L"while",L"for",L"true",L"false",L"null",L"export",L"multiline",L"label",L"signal",L"is",L"not",L"and",L"or",L"nor"})candidates[word]={word,L"keyword"};
+        for(const auto word:{L"class",L"func",L"return",L"if",L"else",L"while",L"for",L"true",L"false",L"null",L"export",L"multiline",L"label",L"signal",L"is",L"not",L"and",L"or",L"nor",L"abstract",L"override",L"private",L"static",L"super"})candidates[word]={word,L"keyword"};
         auto preceding=source.substr(0,result.start);const auto last=preceding.find_last_not_of(L" \t\r\n");
         if(last!=preceding.npos && last>=3 && preceding.substr(last-3,4)==L"func") {
             candidates.clear();for(const auto name:{L"start",L"update",L"physicsUpdate",L"draw"})candidates[name]={name,L"lifecycle",true};

@@ -88,6 +88,38 @@ void LifecycleAndInheritance() {
     auto native=Compile("class NativeMover : RigidBody { RigidBody saved; func take(RigidBody body){saved=body;} }");Runtime nativeRuntime(native);auto nativeMover=nativeRuntime.Create("NativeMover");nativeRuntime.Call(nativeMover,"take",{nativeMover});
     Check(std::get<ObjectRef>(nativeRuntime.Get(nativeMover,"physics"))==nativeMover&&std::get<ObjectRef>(nativeRuntime.Get(nativeMover,"rigidbody"))==nativeMover&&std::get<ObjectRef>(nativeRuntime.Get(nativeMover,"saved"))==nativeMover,"Native behavior inheritance/reference typing");
 }
+void ScopeKeywords() {
+    // ZE-79: super, override, abstract, private, _ shorthand.
+    auto p = Compile(R"ZS(class Animal {
+        abstract func speak() : string;
+        private func _secret() : int { return 7; }
+        func describe() : string { return "an " & speak() & " count " & {_secret()}; }
+    }
+    class Dog : Animal {
+        override func speak() : string { return "dog"; }
+    }
+    class Puppy : Dog {
+        override func speak() : string { return super.speak() & " small"; }
+        func both() : string { return super.speak() & "/" & speak(); }
+    })ZS");
+    Runtime r(p);
+    auto dog = r.Create("Dog"), puppy = r.Create("Puppy");
+    Check(std::get<std::string>(r.Call(dog, "describe")) == "an dog count 7", "abstract impl + private helper");
+    Check(std::get<std::string>(r.Call(puppy, "speak")) == "dog small", "super.speak() calls the base implementation");
+    Check(std::get<std::string>(r.Call(puppy, "both")) == "dog/dog small", "super is static, speak() is virtual");
+    Check(std::get<std::string>(r.Call(puppy, "describe")) == "an dog small count 7", "inherited describe() dispatches virtually");
+
+    Error([&] { Compile("class A { abstract func f(); }  class B { func g() { A x = A(); } }"); }, "abstract class 'A'");
+    Error([&] { Compile("class A { func f() {} }  class B : A { override func g() {} }"); }, "does not replace an inherited method");
+    Error([&] { Compile("class A { private func p() {} }  class B { func g(A a) { a.p(); } }"); }, "private to A");
+    Error([&] { Compile("class A { int _hidden; }  class B { func g(A a) : int { return a._hidden; } }"); }, "private to A");
+    Error([&] { Compile("class P { func q() {} }  class A : P { func x() { super.nope(); } }"); }, "No inherited 'nope'");
+    Error([&] { Compile("class A { func x() { super.y(); } }"); }, "'super' requires a base class");
+    Error([&] { Compile("class A { abstract func f() { return 1; } }"); }, "Expected");
+    Error([&] { Compile("class A { static int n; }"); }, "not supported yet");
+    // A concrete subclass of an abstract base is constructible; the abstract base is not.
+    Check(Compile("class A { abstract func f() : int; }  class B : A { override func f() : int { return 1; } func make() { B b = B(); } }") != nullptr, "concrete subclass constructs");
+}
 void ValuesAndControlFlow() {
     auto p = Compile(R"(class Math { int calls; string text = "hi";
         func sum(int n) : int { int total = 0; int i = 0; while (i < n) { total += i; i += 1; } { int total = 99; } return total; }
@@ -833,6 +865,7 @@ int main() {
         {"arrays, type tests, local variables", ArraysTypesAndLocals},
         {"signals", Signals},
         {"empty code and comments", EmptyAndComments}, {"movement and Vector3", Movement}, {"lifecycle and inheritance", LifecycleAndInheritance},
+        {"scope keywords (ZE-79)", ScopeKeywords},
         {"values and control flow", ValuesAndControlFlow}, {"references and initializers", ReferencesAndInitializers},
         {"compile diagnostics", Diagnostics}, {"runtime limits", TestRuntimeLimits}, {"host boundary", HostBoundary}, {"native defaults and expression depth", InheritedNativeDefaultsAndExpressionDepth}, {"Inspector metadata", InspectorMetadata}, {"Inspector metadata has no execution cost", InspectorMetadataHasNoExecutionCost}, {"Inspector diagnostics", InspectorDiagnostics}, {"example files", Examples}
     };

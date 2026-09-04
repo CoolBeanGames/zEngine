@@ -47,7 +47,9 @@ std::string Canonical(std::string name) {
 }
 bool Reserved(std::string_view s) {
     static const std::set<std::string_view> words = {"class", "func", "return", "if", "else", "while", "for", "true", "false", "null", "this", "int", "float", "bool", "string", "void", "gameObject", "GameObject", "Vector3", "Vector2", "Transform", "export", "label"};
-    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || s == "not" || s == "and" || s == "or" || s == "nor" || words.contains(s);
+    return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || s == "not" || s == "and" || s == "or" || s == "nor"
+        || s == "static" || s == "private" || s == "abstract" || s == "override" || s == "super" // ZE-79
+        || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
     if (s.size() > 1024 * 1024) Fail(source, {}, "Source exceeds 1 MiB limit");
@@ -124,9 +126,12 @@ struct Stmt {
     std::vector<std::unique_ptr<Expr>> expressions;
     std::vector<Stmt> children;
 };
-struct FieldAst { Token name; std::string type; std::unique_ptr<Expr> initializer; };
-struct FunctionAst { Token name; std::string result = "void"; std::vector<FieldAst> params; Stmt body; };
-struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; std::vector<InspectorEntry> inspector; std::vector<Token> signals; };
+struct FieldAst { Token name; std::string type; std::unique_ptr<Expr> initializer; bool isStatic = false, isPrivate = false; };
+// ZE-79: method modifiers. `abstract` => no body, must be overridden. `override` =>
+// must replace an inherited method (a redefinition without it is still an override).
+struct FunctionAst { Token name; std::string result = "void"; std::vector<FieldAst> params; Stmt body;
+                     bool isStatic = false, isPrivate = false, isAbstract = false, isOverride = false; bool hasBody = true; };
+struct ClassAst { Token name; std::string base; std::vector<FieldAst> fields; std::vector<FunctionAst> methods; std::vector<InspectorEntry> inspector; std::vector<Token> signals; bool isAbstract = false; };
 class Parser {
     std::vector<Token> tokens;
     const std::string& source;
@@ -258,33 +263,60 @@ public:
     std::vector<ClassAst> Parse() {
         std::vector<ClassAst> classes;
         while (Current().kind != Token::End) {
-            Expect("class"); ClassAst c; c.name = Identifier();
+            ClassAst c;
+            c.isAbstract = Match("abstract"); // ZE-79
+            Expect("class"); c.name = Identifier();
             if (Match(":")) c.base = Identifier(true).text;
             Expect("{");
             while (!Is("}")) {
                 const Token declaration = Current();
+                // ZE-79: member modifiers, in any order, before `func` or a field.
+                bool modStatic = false, modPrivate = false, modAbstract = false, modOverride = false;
+                for (bool more = true; more;) {
+                    if (Match("static")) { if (modStatic) Fail(source, declaration, "Duplicate 'static'"); modStatic = true; }
+                    else if (Match("private")) { if (modPrivate) Fail(source, declaration, "Duplicate 'private'"); modPrivate = true; }
+                    else if (Match("abstract")) { if (modAbstract) Fail(source, declaration, "Duplicate 'abstract'"); modAbstract = true; }
+                    else if (Match("override")) { if (modOverride) Fail(source, declaration, "Duplicate 'override'"); modOverride = true; }
+                    else more = false;
+                }
+                if ((modStatic || modPrivate || modAbstract || modOverride) && !Is("func") && (modAbstract || modOverride))
+                    Fail(source, Current(), "'abstract' and 'override' apply only to functions");
+                if (modStatic) Fail(source, declaration, "'static' members are not supported yet (ZE-79 pending)");
                 if (Match("label")) {
+                    if (modStatic || modPrivate || modAbstract || modOverride) Fail(source, declaration, "Modifiers cannot precede an inspector label");
                     Expect("(");
                     if (Current().kind != Token::String) Fail(source, Current(), "Label requires a string literal");
                     InspectorEntry entry; entry.kind = InspectorEntry::Kind::Label; entry.text = Current().text; ++pos;
                     entry.declaringClass = c.name.text; entry.source = source; entry.line = declaration.line; entry.column = declaration.column;
                     Expect(")"); Match(";"); c.inspector.push_back(std::move(entry));
                 } else if (Match("signal")) {
+                    if (modStatic || modPrivate || modAbstract || modOverride) Fail(source, declaration, "Modifiers cannot precede a signal");
                     c.signals.push_back(Identifier()); Expect(";");
                 } else if (Match("func")) {
                     FunctionAst f; f.name = Identifier(); Expect("(");
+                    f.isStatic = modStatic; f.isPrivate = modPrivate || f.name.text.front() == '_';
+                    f.isAbstract = modAbstract; f.isOverride = modOverride;
                     if (!Is(")")) do {
                         FieldAst param; param.type = Identifier(true).text; param.name = Identifier(); f.params.push_back(std::move(param));
                     } while (Match(","));
                     Expect(")"); if (Match(":")) f.result = Identifier(true).text;
-                    if (!Is("{")) Fail(source, Current(), "Expected function body");
-                    f.body = Statement(); c.methods.push_back(std::move(f));
+                    if (modAbstract) {
+                        f.hasBody = false; Expect(";");
+                        if (modStatic) Fail(source, f.name, "An abstract function cannot be static");
+                    } else {
+                        if (!Is("{")) Fail(source, Current(), "Expected function body");
+                        f.body = Statement();
+                    }
+                    c.methods.push_back(std::move(f));
                 } else {
+                    if (modAbstract || modOverride) Fail(source, declaration, "'abstract' and 'override' apply only to functions");
                     bool exported=false,multiline=false;
                     while(Is("export") || Is("multiline")) {const bool multi=Match("multiline");if(!multi)Expect("export");auto& flag=multi?multiline:exported;if(flag)Fail(source,Current(),"Duplicate field tag");flag=true;}
                     if (exported && (Current().kind != Token::Identifier || Is("func") || Is("label") || Is("export")))
                         Fail(source, Current(), "Export must precede a typed class field");
                     FieldAst field; field.type = Identifier(true).text; field.name = Identifier();
+                    field.isStatic = modStatic; field.isPrivate = modPrivate || field.name.text.front() == '_';
+                    if (modStatic && exported) Fail(source, field.name, "A static field cannot be exported to the inspector");
                     if(multiline && (!exported || field.type!="string"))Fail(source,field.name,"multiline requires an exported string field");
                     if (Match("=")) field.initializer = Expression();
                     Expect(";");
@@ -303,15 +335,17 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, Scene, LoadLocal, StoreLocal, LoadField, StoreField, Call, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, Scene, LoadLocal, StoreLocal, LoadField, StoreField, Call, CallSuper, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
     std::string result = "void";
     std::vector<std::string> params, locals;
     std::vector<Instruction> code;
+    bool isStatic = false, isPrivate = false, isAbstract = false; // ZE-79
+    std::string declaringClass; // class that declared this method (for static dispatch / private checks)
 };
-struct Field { Token token; std::string type; };
+struct Field { Token token; std::string type; bool isStatic = false, isPrivate = false; std::string declaringClass; };
 struct Class {
     std::string name, base;
     std::vector<Field> fields;
@@ -319,6 +353,8 @@ struct Class {
     std::map<std::string, Function> methods;
     std::set<std::string> signals;
     Function initializer;
+    bool isAbstract = false;                 // ZE-79: declared `abstract` or has an unresolved abstract method
+    std::vector<Field> staticFields;          // ZE-79: class-level storage
 };
 bool Numeric(const std::string& t) { return t == "int" || t == "float"; }
 bool TextType(const std::string& t) { return t=="string" || t=="char"; }
@@ -404,17 +440,22 @@ class BytecodeCompiler {
         Require(!scopes.back().contains(t.text), t, "Duplicate local '" + t.text + "'");
         auto index = function.locals.size(); function.locals.push_back(type); scopes.back()[t.text] = index; return index;
     }
+    // ZE-79: a private member is reachable only from the class that declared it.
+    void CheckPrivate(bool isPrivate, const std::string& declaringClass, const std::string& member, const Token& t) const {
+        Require(!isPrivate || declaringClass == owner.name, t, "'" + member + "' is private to " + declaringClass);
+    }
     std::string FieldType(const std::string& type, const Token& field) const {
         if (type == "Vector3" && (field.text == "x" || field.text == "y" || field.text == "z")) return "float";
         if (type == "Vector2" && (field.text == "x" || field.text == "y")) return "float";
         const auto* f = program.FindField(type, field.text);
         Require(f != nullptr, field, "Unknown field '" + field.text + "' on '" + type + "'");
+        CheckPrivate(f->isPrivate, f->declaringClass, field.text, field);
         return f->type;
     }
     std::string MemberType(const std::string& type, const Token& token) const {
         auto c = program.classes.find(type);
         if (c != program.classes.end() && c->second.signals.contains(token.text)) return "signal";
-        if (program.Method(type, token.text)) return "callable";
+        if (const auto* m = program.Method(type, token.text)) { CheckPrivate(m->isPrivate, m->declaringClass, token.text, token); return "callable"; }
         return FieldType(type, token);
     }
     std::string Expression(const Expr& e) {
@@ -500,7 +541,21 @@ class BytecodeCompiler {
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
                 Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "Mouse" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "SceneService" && callee.token.text != "Timer" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");
+                Require(!program.classes.at(Canonical(callee.token.text)).isAbstract, t, "Cannot construct the abstract class '" + callee.token.text + "'"); // ZE-79
                 Emit(Op::New, t, 0, Canonical(callee.token.text)); return Canonical(callee.token.text);
+            }
+            // ZE-79: super.method(args) - call the base class's version, `this` unchanged.
+            if (callee.kind == Expr::Member && callee.children[0]->kind == Expr::Name && callee.children[0]->token.text == "super"
+                && Local("super") == std::numeric_limits<std::size_t>::max()) {
+                Require(!owner.base.empty(), t, "'super' requires a base class");
+                Require(!function.isStatic, t, "'super' is not available in a static method");
+                const auto* f = program.Method(owner.base, callee.token.text);
+                Require(f != nullptr && !f->isAbstract, callee.token, "No inherited '" + callee.token.text + "' to call with super");
+                Require(f->params.size() == e.children.size() - 1, t, "Wrong argument count for 'super." + callee.token.text + "'");
+                Emit(Op::Self, t);
+                for (std::size_t i = 1; i < e.children.size(); ++i) Compatible(f->params[i - 1], Expression(*e.children[i]), e.children[i]->token);
+                Emit(Op::CallSuper, t, f->params.size(), callee.token.text, owner.base);
+                return f->result;
             }
             std::string receiver;
             // GameObject.find(...) / gameObject.find_by_type(...) - the base type name reads
@@ -566,6 +621,7 @@ class BytecodeCompiler {
             }
             const auto* f = program.Method(receiver, callee.token.text);
             Require(f != nullptr, callee.token, "Unknown method '" + callee.token.text + "' on '" + receiver + "'");
+            CheckPrivate(f->isPrivate, f->declaringClass, callee.token.text, callee.token); // ZE-79
             Require(f->params.size() == e.children.size() - 1, t, "Wrong argument count for '" + callee.token.text + "'");
             for (std::size_t i = 1; i < e.children.size(); ++i) Compatible(f->params[i - 1], Expression(*e.children[i]), e.children[i]->token);
             Emit(Op::Call, t, f->params.size(), callee.token.text); return f->result;
@@ -898,7 +954,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     std::map<std::string, const ClassAst*> byName;
     for (const auto& ast : asts) {
         if (program.classes.contains(ast.name.text)) Fail(program.source, ast.name, "Duplicate class '" + ast.name.text + "'");
-        Class c; c.name = ast.name.text; c.base = ast.base; c.initializer.token = ast.name;
+        Class c; c.name = ast.name.text; c.base = ast.base; c.initializer.token = ast.name; c.isAbstract = ast.isAbstract;
         program.classes.emplace(c.name, std::move(c)); byName[ast.name.text] = &ast;
     }
     std::map<std::string, int> state;
@@ -920,24 +976,35 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
                 Fail(program.source, signal, "Duplicate/inherited signal member '" + signal.text + "'");
         }
         c.inspector.insert(c.inspector.end(), ast.inspector.begin(), ast.inspector.end());
+        // ZE-79: inherit the base class's static storage (each subclass shares the base's statics).
+        if (!c.base.empty()) c.staticFields = program.classes.at(c.base).staticFields;
         for (const auto& f : ast.fields) {
             if (!program.IsType(f.type)) Fail(program.source, f.name, "Unknown or invalid field type '" + f.type + "'");
             if (program.classes.contains(f.name.text)) Fail(program.source, f.name, "Class names are type keywords");
             if (c.signals.contains(f.name.text) || program.FindField(name, f.name.text) || program.Method(c.base, f.name.text)) Fail(program.source, f.name, "Duplicate/inherited member '" + f.name.text + "'");
-            c.fields.push_back({f.name, f.type});
+            for (const auto& sf : c.staticFields) if (sf.token.text == f.name.text) Fail(program.source, f.name, "'" + f.name.text + "' is already a static field");
+            Field field{f.name, f.type, f.isStatic, f.isPrivate, name};
+            if (f.isStatic) c.staticFields.push_back(std::move(field)); else c.fields.push_back(std::move(field));
         }
         for (const auto& method : ast.methods) {
             if (program.classes.contains(method.name.text)) Fail(program.source, method.name, "Class names are type keywords");
             if (c.signals.contains(method.name.text) || c.methods.contains(method.name.text) || program.FindField(name, method.name.text)) Fail(program.source, method.name, "Duplicate member '" + method.name.text + "'");
             Function f; f.token = method.name; f.result = method.result;
+            f.isStatic = method.isStatic; f.isPrivate = method.isPrivate; f.isAbstract = method.isAbstract; f.declaringClass = name;
             if (f.result != "void" && !program.IsType(f.result)) Fail(program.source, method.name, "Unknown return type '" + f.result + "'");
             for (const auto& param : method.params) {
                 if (!program.IsType(param.type)) Fail(program.source, param.name, "Unknown or invalid parameter type");
                 f.params.push_back(param.type);
             }
-            if (const auto* base = program.Method(c.base, method.name.text)) {
-                if (base->result != f.result || base->params != f.params) Fail(program.source, method.name, "Override must preserve the inherited signature");
+            const auto* baseMethod = program.Method(c.base, method.name.text);
+            if (baseMethod) {
+                if (baseMethod->result != f.result || baseMethod->params != f.params) Fail(program.source, method.name, "Override must preserve the inherited signature");
+                if (baseMethod->isStatic != f.isStatic) Fail(program.source, method.name, "Cannot change 'static' when overriding '" + method.name.text + "'");
+            } else if (method.isOverride) {
+                Fail(program.source, method.name, "'override' but '" + method.name.text + "' does not replace an inherited method");
             }
+            if (f.isAbstract && baseMethod && !baseMethod->isAbstract)
+                Fail(program.source, method.name, "Cannot make the inherited '" + method.name.text + "' abstract");
             if (program.IsGameObjectLike(name)) {
                 if (method.name.text == "start" || method.name.text == "draw") {
                     if (f.result != "void" || !f.params.empty()) Fail(program.source, method.name, "Lifecycle hook must be void with no parameters");
@@ -946,6 +1013,15 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
                 }
             }
             c.methods.emplace(method.name.text, std::move(f));
+        }
+        // ZE-79: the class is abstract if it declares `abstract class`, or any method
+        // visible on it (declared here or inherited) still resolves to an abstract body.
+        std::set<std::string> visible;
+        for (const Class* cur = &c; cur; cur = cur->base.empty() ? nullptr : &program.classes.at(cur->base))
+            for (const auto& [methodName, _] : cur->methods) visible.insert(methodName);
+        for (const auto& methodName : visible) {
+            const auto* resolved = program.Method(name, methodName);
+            if (resolved && resolved->isAbstract) { c.isAbstract = true; break; }
         }
         state[name] = 2;
     };
@@ -974,7 +1050,8 @@ CompileResult Compiler::Compile(std::string_view source, std::string sourceName)
         for (const auto& ast : asts) {
             auto& c = p->classes.at(ast.name.text);
             BytecodeCompiler(*p, c, c.initializer).Initialize(ast);
-            for (const auto& method : ast.methods) BytecodeCompiler(*p, c, c.methods.at(method.name.text)).Compile(method);
+            for (const auto& method : ast.methods)
+                if (method.hasBody) BytecodeCompiler(*p, c, c.methods.at(method.name.text)).Compile(method); // ZE-79: abstract methods have none
         }
         p->stats.declaredClasses = asts.size();
         for (const auto& [name, c] : p->classes) {
@@ -1646,6 +1723,15 @@ struct Runtime::Impl {
                 std::vector<Value> arguments(ins.a);
                 for (std::size_t i = ins.a; i > 0; --i) arguments[i - 1] = pop();
                 auto target = Reference(pop(), t); stack.push_back(Invoke(target, ins.name, arguments, t)); break;
+            }
+            case Op::CallSuper: { // ZE-79: dispatch statically from the named base class, `this` unchanged
+                std::vector<Value> arguments(ins.a);
+                for (std::size_t i = ins.a; i > 0; --i) arguments[i - 1] = pop();
+                auto self = Reference(pop(), t);
+                const auto* f = program->Method(std::get<std::string>(ins.value), ins.name);
+                if (!f || f->code.empty()) Error(t, "super." + ins.name + " has no inherited implementation");
+                stack.push_back(Execute(self, *f, arguments, t));
+                break;
             }
             case Op::SignalCall: {
                 std::vector<Value> arguments(ins.a);
