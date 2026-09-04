@@ -345,10 +345,12 @@ void EditorShell::InitializeRenderer()
 
 void EditorShell::Render()
 {
+    const zengine::profiling::ScopedTimer frameTimer(profiler_.frameMs); // ZE-125
     const auto now=std::chrono::steady_clock::now();
     const double elapsed=std::min(0.1,std::chrono::duration<double>(now-lastTick_).count());
     lastTick_=now;
-    ++framesSinceFps_;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample_).count();if(fpsElapsed>=.5){currentFps_=static_cast<unsigned>(std::lround(framesSinceFps_/fpsElapsed));framesSinceFps_=0;fpsSample_=now;InvalidateRect(window_,&optionsBar_,FALSE);}
+    ++framesSinceFps_;const auto fpsElapsed=std::chrono::duration<double>(now-fpsSample_).count();if(fpsElapsed>=.5){currentFps_=static_cast<unsigned>(std::lround(framesSinceFps_/fpsElapsed));profiler_.fps.Add(framesSinceFps_/fpsElapsed);framesSinceFps_=0;fpsSample_=now;InvalidateRect(window_,&optionsBar_,FALSE);}
+    { const auto tpsElapsed=std::chrono::duration<double>(now-tpsSample_).count(); if(tpsElapsed>=.5){ profiler_.tps.Add(tickCount_/tpsElapsed); tickCount_=0; tpsSample_=now; } } // ZE-125
     CameraTick(static_cast<float>(elapsed));
     PollBuild();
     PollAssetWork();
@@ -375,26 +377,41 @@ void EditorShell::Render()
             rendererHeight_ = requestedViewportHeight_;
         }
     }
+    zengine::profiling::Accumulator inputAcc, scriptAcc, physicsAcc, audioAcc; // ZE-125
     if (Playing())
     {
         if (!paused_)
         {
             tickAccumulator_+=elapsed;
-            while (tickAccumulator_>=1.0/60.0) { TickInput(); scriptHost_.Tick(objects_,1.0f/60.0f);scriptHost_.PhysicsTick(objects_,1.0f/60.0f);physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents());TickPreviewAudio(1.0f/60.0f);tickAccumulator_-=1.0/60.0; }
+            while (tickAccumulator_>=1.0/60.0)
+            {
+                inputAcc.Begin(); TickInput(); inputAcc.End();
+                scriptAcc.Begin(); scriptHost_.Tick(objects_,1.0f/60.0f); scriptAcc.End();
+                physicsAcc.Begin(); scriptHost_.PhysicsTick(objects_,1.0f/60.0f);physicsWorld_->Step(objects_,1.0f/60.0f);scriptHost_.DispatchPhysicsEvents(physicsWorld_->DrainEvents()); physicsAcc.End();
+                audioAcc.Begin(); TickPreviewAudio(1.0f/60.0f); audioAcc.End();
+                tickAccumulator_-=1.0/60.0; ++tickCount_;
+            }
         }
         if (!paused_ || stepDraw_)
+        { scriptAcc.Begin();
             scriptHost_.Draw(objects_,[&](zengine::GameObjectId id) {
                 const auto* object=objects_.Find(id);
                 const auto* mesh=object?object->GetBehavior<zengine::MeshRenderer>():nullptr;
                 const auto bound=meshBindings_.find(id);
                 return mesh && mesh->Enabled() && !mesh->Asset().empty() && bound!=meshBindings_.end() && bound->second.mesh && bound->second.asset==mesh->Asset();
             });
+          scriptAcc.End();
+        }
         stepDraw_=false;
         if (GetTickCount64()-lastInspectorRefresh_>=100)
         { inspectorPanel_->RefreshLiveValues(); ReportScriptErrors(); InvalidateRect(window_,&sceneBrowser_,FALSE); lastInspectorRefresh_=GetTickCount64(); }
     }
-    auto frame=BuildSceneFrame();if(showFps_)frame.fps=currentFps_;
+    inputAcc.Commit(profiler_.inputMs); scriptAcc.Commit(profiler_.scriptMs);
+    physicsAcc.Commit(profiler_.physicsMs); audioAcc.Commit(profiler_.audioMs); // ZE-125
+    ViewportFrame frame;
+    { const zengine::profiling::ScopedTimer t(profiler_.sceneBuildMs); frame=BuildSceneFrame(); }
     {
+        const zengine::profiling::ScopedTimer t(profiler_.render2dMs);
         zengine::ui::UiContext uiContext;
         uiContext.measureText=[&](std::string_view s,float h){return renderer_->MeasureText(s,h);};
         if(!uiViewportAssets_) uiViewportAssets_.emplace(*renderer_,assetsDirectory_);
@@ -420,7 +437,8 @@ void EditorShell::Render()
         }
         uiViewport_.Emit(frame.sprites,frame.texts);
     }
-    renderer_->Render(frame);
+    if (showFps_) BuildStatsOverlay(frame); // ZE-125: collapsible stats stack replaces the FPS readout
+    { const zengine::profiling::ScopedTimer t(profiler_.renderMs); renderer_->Render(frame); }
 }
 bool EditorShell::RouteUiViewportPress(POINT clientPoint)
 {
@@ -752,7 +770,7 @@ void EditorShell::Paint()
         button(6+i,toolNames[i],static_cast<int>(transformTool_)==i);
     }
     DrawTextLabel(bufferContext, project_?WideText(project_->config.name):L"No project open", projectName, MutedTextColor, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    button(11,(showFps_?L"☑ FPS ":L"☐ FPS ")+std::to_wstring(currentFps_),showFps_);
+    button(11,(showFps_?L"☑ Stats ":L"☐ Stats ")+std::to_wstring(currentFps_)+L" fps",showFps_); // ZE-125
     RECT optionLine{0, optionsBar_.bottom - 1, optionsBar_.right, optionsBar_.bottom};
     FillRectangle(bufferContext, optionLine, BorderColor);
 

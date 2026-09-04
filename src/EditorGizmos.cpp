@@ -146,6 +146,7 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
     {
         if(cameraDrag_!=CameraDrag::None)return 0;
         SetFocus(window);
+        if (ToggleStatsGroupAt(POINT{GET_X_LPARAM(l),GET_Y_LPARAM(l)})) { InvalidateRect(window,nullptr,FALSE); return 0; } // ZE-125
         // First, try to grab a transform-gizmo axis of the current selection.
         if (const auto* object=SelectedGameObject(); object && !Playing() && CanEdit(object->Id(),true))
         {

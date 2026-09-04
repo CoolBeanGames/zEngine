@@ -150,6 +150,20 @@ void GizmoTests(bool capture)
         Check(DirectX::XMVectorGetX(DirectX::XMVector3Length(DirectX::XMVectorSubtract(eyeA,eyeB)))<.001f,"Fly look changed camera position");
         SendMessageW(viewport,WM_KEYDOWN,VK_ESCAPE,0);Check(GetCapture()!=viewport && !editor.SceneDirty(),"Camera navigation changed scene data or retained capture");
 
+        // ZE-125: the stats overlay records per-phase timings while Playing and its
+        // groups collapse on a header click.
+        Check(editor.OpenScene(scene),"Cannot reset scene for stats test");
+        Check(editor.Play(),"Play failed for stats test");
+        for (int i=0;i<3;++i) { editor.Step(); editor.Render(); }
+        auto frame=editor.BuildSceneFrame();
+        Check(!editor.Profiler().frameMs.Empty() && !editor.Profiler().scriptMs.Empty(),"Stats overlay did not record per-phase frame times");
+        // The Rates group header sits near the top-left of the viewport; clicking it collapses the group.
+        send(WM_LBUTTONDOWN,{16,17}); send(WM_LBUTTONUP,{16,17});
+        Check(editor.StatsGroupCollapsed("Rates"),"Clicking a stats group header did not collapse it");
+        send(WM_LBUTTONDOWN,{16,17}); send(WM_LBUTTONUP,{16,17});
+        Check(!editor.StatsGroupCollapsed("Rates"),"Clicking a collapsed stats group header did not expand it");
+        editor.Stop();
+
         // ZE-104: click-to-select in the scene view. The default scene has a cube at the origin.
         Check(editor.OpenScene(scene),"Cannot reset scene for pick test");
         const auto cube=editor.SelectedGameObject()->Id();
@@ -160,5 +174,5 @@ void GizmoTests(bool capture)
         Check(editor.SelectedGameObject() && editor.SelectedGameObject()->Id()==cube,"Clicking the cube did not select it");
         Check(!editor.SceneDirty(),"Click-select marked the scene dirty");
     }
-    CoUninitialize(); std::cout<<"PASS: all transform axes, rotation angles, aspect ratios, zero/negative scales, native dragging, cancellation, shortcuts, save and Play guards, click-select\n";
+    CoUninitialize(); std::cout<<"PASS: all transform axes, rotation angles, aspect ratios, zero/negative scales, native dragging, cancellation, shortcuts, save and Play guards, click-select, stats overlay\n";
 }

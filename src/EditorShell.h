@@ -13,6 +13,7 @@
 #include <map>
 #include "RenderScene.h"
 #include "ModelData.h"
+#include "FrameProfiler.h"
 #include "ui/UiSystem.h"
 #include "UiAssetBinding.h"
 #include "core/GameObject.h"
@@ -84,6 +85,8 @@ public:
     static constexpr int MoveToolCommand=3200, RotateToolCommand=3201, ScaleToolCommand=3202;
     void SetTransformTool(gizmo::Mode mode);
     gizmo::Mode TransformTool() const { return transformTool_; }
+    const zengine::profiling::FrameProfiler& Profiler() const noexcept { return profiler_; } // ZE-125 test seam
+    bool StatsGroupCollapsed(const std::string& title) const { return statsCollapsed_.count(title)!=0; }
     void Render();
     bool Play();
     void Stop();
@@ -389,9 +392,17 @@ private:
     HWND renameEdit_=nullptr;
     bool finishingRename_=false;
     ULONGLONG lastBusyPaint_ = 0;
-    bool showFps_=true;
+    bool showFps_=true; // ZE-125: now toggles the full stats overlay
     unsigned currentFps_=0,framesSinceFps_=0;
     std::chrono::steady_clock::time_point fpsSample_=std::chrono::steady_clock::now();
+    // ZE-125: per-phase profiling + collapsible stats overlay
+    zengine::profiling::FrameProfiler profiler_;
+    std::set<std::string> statsCollapsed_;
+    mutable std::vector<std::pair<std::string,RECT>> statsHeaderRects_; // group title -> viewport rect, for click-to-collapse
+    unsigned tickCount_=0;
+    std::chrono::steady_clock::time_point tpsSample_=std::chrono::steady_clock::now();
+    void BuildStatsOverlay(ViewportFrame& frame); // emits the stats text lines
+    bool ToggleStatsGroupAt(POINT viewportPoint); // true if a group header was hit
 
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr;

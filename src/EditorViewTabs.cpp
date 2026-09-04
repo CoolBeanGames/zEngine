@@ -4,6 +4,7 @@
 #include "ScriptAssets.h"
 
 #include <algorithm>
+#include <cstdio>
 
 // The view panel's Scene / Game / Script tab strip and the inline Script tab.
 
@@ -65,6 +66,53 @@ void EditorShell::AppendConsole(HWND console, const std::wstring& line) const
     const auto e = GetWindowTextLengthW(console);
     SendMessageW(console, EM_SETSEL, e, e);
     SendMessageW(console, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>((line + L"\r\n").c_str()));
+}
+
+// ZE-125: the collapsible stats stack, drawn as viewport 2D text lines.
+void EditorShell::BuildStatsOverlay(ViewportFrame& frame)
+{
+    statsHeaderRects_.clear();
+    const float x = 10, lineH = 15, height = 13;
+    float y = 10;
+    const Float4 header{0.85f, 0.92f, 1.0f, 1.0f}, label{0.72f, 0.76f, 0.82f, 1.0f}, value{1.0f, 1.0f, 1.0f, 1.0f};
+    const auto push = [&](std::string text, float px, Float4 color) {
+        TextDraw t; t.text = std::move(text); t.x = px; t.y = y; t.pixelHeight = height; t.color = color;
+        frame.texts.push_back(std::move(t));
+    };
+    for (auto& group : profiler_.Groups())
+    {
+        const bool collapsed = statsCollapsed_.count(group.title) != 0;
+        push((collapsed ? "> " : "v ") + group.title, x, header);
+        statsHeaderRects_.push_back({group.title, RECT{static_cast<LONG>(x), static_cast<LONG>(y),
+                                                       static_cast<LONG>(x + 220), static_cast<LONG>(y + lineH)}});
+        y += lineH;
+        if (collapsed) continue;
+        const bool rate = group.title == "Rates";
+        for (const auto& [name, metric] : group.rows)
+        {
+            char buf[96];
+            if (rate)
+                std::snprintf(buf, sizeof(buf), "%-11s cur %6.1f   avg %6.1f Hz", name.c_str(), metric->Current(), metric->Average());
+            else
+                std::snprintf(buf, sizeof(buf), "%-11s cur %5.2f  avg %5.2f  min %4.2f  max %5.2f ms",
+                              name.c_str(), metric->Current(), metric->Average(), metric->Min(), metric->Max());
+            push(std::string(buf), x + 14, value);
+            (void)label;
+            y += lineH;
+        }
+    }
+}
+
+bool EditorShell::ToggleStatsGroupAt(POINT viewportPoint)
+{
+    if (!showFps_) return false;
+    for (const auto& [title, rect] : statsHeaderRects_)
+        if (PtInRect(&rect, viewportPoint))
+        {
+            if (!statsCollapsed_.insert(title).second) statsCollapsed_.erase(title);
+            return true;
+        }
+    return false;
 }
 
 void EditorShell::EnsureScriptTab()

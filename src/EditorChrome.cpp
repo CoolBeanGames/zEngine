@@ -1,6 +1,6 @@
 #include "EditorShell.h"
 RECT EditorShell::ChromeRectangle(int index) const {
-    if(index==11)return {optionsBar_.right-128,optionsBar_.top+4,optionsBar_.right-10,optionsBar_.bottom-4};
+    if(index==11)return {optionsBar_.right-158,optionsBar_.top+4,optionsBar_.right-10,optionsBar_.bottom-4}; // ZE-125: wider for "Stats"
     if(index==9)return {};
     if(index==10)return {mediaLibrary_.left+12,mediaLibrary_.top+73,mediaLibrary_.left+42,mediaLibrary_.top+99};
     if(index==0)return CreateObjectRectangle();
