@@ -984,6 +984,42 @@ void DataObjects() {
     Error([&]{ Compile("struct Bad { signal ping; }"); }, "cannot declare signals");
     Error([&]{ Compile("struct Thing { int a; } class Host : gameObject { func f(){ getBehavior(Thing); } }"); }, "native component type");
 }
+void VarType() {
+    // ZE-94: `var` is a dynamic local - it takes on whatever type it is assigned.
+    auto p = Compile(R"(class Chameleon : gameObject {
+        func run():string {
+            var a = 1;          // int
+            a += 0.5;           // now a float (1.5)
+            var was_float = a > 1.0 && a < 2.0;
+            a = "value is " + {a}; // {a} stringifies -> a is now a string
+            var b = a;           // var copies whatever a holds
+            if (was_float) { return b; }
+            return "not float";
+        }
+        func numeric():int {
+            var n = 2;
+            n = n * 3;      // 6
+            n = n - 1;      // 5
+            return n;
+        }
+        func holds_object():bool {
+            var x = 5;
+            x = this;       // now a gameObject
+            return x is gameObject;
+        }
+    })");
+    Check(static_cast<bool>(p), "`var` script did not compile");
+    Runtime r(p); auto c = r.Create("Chameleon");
+    { const auto out = std::get<std::string>(r.Call(c, "run"));
+      Check(out.rfind("value is 1.5", 0) == 0, ("`var` did not flow int -> float -> string; got: " + out).c_str()); }
+    Check(Int(r.Call(c, "numeric")) == 5, "`var` arithmetic result wrong");
+    Check(std::get<bool>(r.Call(c, "holds_object")), "`var` could not hold a gameObject");
+    // A genuine type mismatch still errors at runtime.
+    auto bad = Compile(R"(class B : gameObject { func f():int { var s = "text"; return s + 1; } })");
+    Check(static_cast<bool>(bad), "var mismatch fixture compiled");
+    Runtime rb(bad); auto b = rb.Create("B");
+    Error([&]{ rb.Call(b, "f"); }, "arithmetic");
+}
 void DataSheet() {
     // ZE-92: data_sheet is a referenceable value type read as sheet[row, column].
     auto p = Compile(R"(class Loot : gameObject {
@@ -1026,6 +1062,7 @@ int main(int argc, char** argv) {
         {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"UI control classes", UiControlClasses}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
         {"data objects (ZE-91)",DataObjects},
         {"data sheet (ZE-92)",DataSheet},
+        {"var dynamic type (ZE-94)",VarType},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"audioPlayer class",AudioPlayerClass},{"Mathf functions",MathfFunctions},{"Scene service",SceneService},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},

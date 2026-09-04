@@ -41,6 +41,7 @@ std::string Canonical(std::string name) {
         return map;
     }();
     if (name == "GameObject") return "gameObject";
+    if (name == "var") return "any"; // ZE-94: `var` is the dynamic type
     auto lower=name;std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
     if(const auto it=aliases.find(lower);it!=aliases.end())return it->second;
     return name;
@@ -50,6 +51,7 @@ bool Reserved(std::string_view s) {
     return s == "char" || s == "multiline" || s == "signal" || s == "Input" || s == "Physics" || s == "array" || s == "prefab" || s == "is" || s == "not" || s == "and" || s == "or" || s == "nor"
         || s == "static" || s == "private" || s == "abstract" || s == "override" || s == "super" // ZE-79
         || s == "struct" || s == "data" // ZE-91: data objects
+        || s == "var" // ZE-94: dynamic type
         || words.contains(s);
 }
 std::vector<Token> Lex(std::string_view s, const std::string& source) {
@@ -395,7 +397,7 @@ struct Program::Impl {
     std::string source;
     std::map<std::string, Class> classes;
     ProgramStats stats;
-    bool IsType(const std::string& t) const { return t == "char" || t == "array" || t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || t == "Vector2" || classes.contains(t); }
+    bool IsType(const std::string& t) const { return t == "char" || t == "array" || t == "int" || t == "float" || t == "bool" || t == "string" || t == "Vector3" || t == "Vector2" || t == "any" /* ZE-94: var */ || classes.contains(t); }
     // True for anything derived from gameObject OR gameObject2D (both are scene objects
     // with a transform, parent and the built-in lifecycle hooks / helper methods).
     bool IsGameObjectLike(const std::string& name) const {
@@ -860,7 +862,7 @@ class BytecodeCompiler {
             Emit(Op::Return, t); return true;
         }
         auto loop = function.code.size();
-        Require(Expression(*s.expressions[0]) == "bool", t, "Condition must be bool");
+        { const auto ct = Expression(*s.expressions[0]); Require(ct == "bool" || ct == "any", t, "Condition must be bool"); } // ZE-94: `var` conditions checked at runtime
         auto branch = Emit(Op::JumpFalse, t); bool first = Statement(s.children[0]);
         if (s.kind == Stmt::While) { Emit(Op::Jump, t, loop); Patch(branch); return false; }
         auto finish = Emit(Op::Jump, t); Patch(branch);
@@ -1437,6 +1439,7 @@ struct Runtime::Impl {
     }
     Value Coerce(Value value, const std::string& type, const Token& t) const {
         const auto from = Type(value, t);
+        if (type == "any") { if (from == "void") Error(t, "Cannot store a void value"); return value; } // ZE-94: `var`/`any` holds any non-void value as-is
         if (!program->Assignable(type, from)) Error(t, "Cannot assign '" + from + "' to '" + type + "'");
         if (type == "float" && from == "int") value = static_cast<double>(std::get<std::int64_t>(value));
         if(type=="string" && from=="char")value=text::Encode(std::get<char32_t>(value));
