@@ -81,7 +81,7 @@ ScriptEditor::ScriptEditor(HWND owner, const std::filesystem::path& assets, cons
         SendMessageW(source_, EM_SETEVENTMASK, 0, ENM_CHANGE);
         // Reserve a narrow left gutter for per-block +/- fold controls and a right
         // gutter for line numbers. RichEdit keeps text and caret clear of both strips.
-        SendMessageW(source_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(28, LineNumberGutter));
+        SendMessageW(source_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(LeftGutter, 4));
         // Syntax formatting needs rich-text mode; clipboard paste is restricted to plain text below.
         SendMessageW(source_, EM_SETTEXTMODE, TM_RICHTEXT | TM_MULTILEVELUNDO, 0);
         SetWindowSubclass(source_, EditProcedure, 1, reinterpret_cast<DWORD_PTR>(this));
@@ -365,7 +365,7 @@ LRESULT CALLBACK ScriptEditor::EditProcedure(HWND window, UINT message, WPARAM w
 {
     auto* self = reinterpret_cast<ScriptEditor*>(data);
     if(message==WM_PAINT){const auto result=DefSubclassProc(window,message,w,l);self->PaintFoldMarkers(window);self->PaintLineNumbers(window);self->PaintCompletion(window);return result;}
-    if(message==WM_LBUTTONDOWN && GET_X_LPARAM(l)<28) {
+    if(message==WM_LBUTTONDOWN && GET_X_LPARAM(l)>=LineNumberGutter && GET_X_LPARAM(l)<LeftGutter) {
         if(self->ToggleFoldAt({GET_X_LPARAM(l),GET_Y_LPARAM(l)})) return 0;
     }
     if(message==WM_KILLFOCUS || message==WM_LBUTTONDOWN || message==WM_VSCROLL || message==WM_HSCROLL || message==WM_MOUSEWHEEL)self->HideCompletion();
@@ -444,9 +444,10 @@ bool ScriptEditor::ToggleFoldAt(POINT point)
 void ScriptEditor::PaintFoldMarkers(HWND window)
 {
     RECT client{}; GetClientRect(window,&client);
-    HBRUSH gutter=CreateSolidBrush(RGB(30,32,36)); RECT area{0,0,28,client.bottom};
-    // The gutter is repainted separately from RichEdit's text surface.
+    HBRUSH gutter=CreateSolidBrush(RGB(30,32,36)); RECT area{LineNumberGutter,0,LeftGutter,client.bottom};
+    // The fold strip sits between the line numbers and the text; repainted separately from RichEdit.
     HDC dc=GetDC(window); FillRect(dc,&area,gutter); DeleteObject(gutter);
+    const int fx=LineNumberGutter;
     const auto source=Text(), code=scriptTyping::Code(source);
     std::vector<std::pair<std::size_t,std::size_t>> blocks; std::vector<std::size_t> stack;
     for(std::size_t i=0;i<code.size();++i)
@@ -459,23 +460,22 @@ void ScriptEditor::PaintFoldMarkers(HWND window)
     {
         POINTL location{}; SendMessageW(window,EM_POSFROMCHAR,reinterpret_cast<WPARAM>(&location),block.first);
         if(location.y<-20 || location.y>client.bottom) continue;
-        const int top=location.y+4; Rectangle(dc,6,top,20,top+14);
-        MoveToEx(dc,9,top+7,nullptr); LineTo(dc,17,top+7);
-        if(foldedBlocks_.contains(block.first)){MoveToEx(dc,13,top+3,nullptr);LineTo(dc,13,top+11);}
+        const int top=location.y+4; Rectangle(dc,fx+6,top,fx+20,top+14);
+        MoveToEx(dc,fx+9,top+7,nullptr); LineTo(dc,fx+17,top+7);
+        if(foldedBlocks_.contains(block.first)){MoveToEx(dc,fx+13,top+3,nullptr);LineTo(dc,fx+13,top+11);}
     }
     SelectObject(dc,oldPen); DeleteObject(pen); ReleaseDC(window,dc);
 }
 void ScriptEditor::PaintLineNumbers(HWND window)
 {
     RECT client{}; GetClientRect(window,&client);
-    const LONG left=client.right-LineNumberGutter;
-    if(left<=0) return;
+    const LONG left=0;
     HDC dc=GetDC(window);
-    RECT area{left,0,client.right,client.bottom};
+    RECT area{left,0,LineNumberGutter,client.bottom};
     HBRUSH background=CreateSolidBrush(RGB(30,32,36)); FillRect(dc,&area,background); DeleteObject(background);
-    // Thin low-contrast separator, matching the editor's other borders.
+    // Thin low-contrast separator between the gutters and the text, matching the editor's other borders.
     HPEN pen=CreatePen(PS_SOLID,1,RGB(60,63,68)); auto oldPen=SelectObject(dc,pen);
-    MoveToEx(dc,left,0,nullptr); LineTo(dc,left,client.bottom);
+    MoveToEx(dc,LeftGutter-1,0,nullptr); LineTo(dc,LeftGutter-1,client.bottom);
     SelectObject(dc,oldPen); DeleteObject(pen);
     auto oldFont=SelectObject(dc,font_); SetBkMode(dc,TRANSPARENT); SetTextColor(dc,RGB(120,126,136));
     const auto lineCount=static_cast<LONG>(SendMessageW(window,EM_GETLINECOUNT,0,0));
@@ -490,7 +490,7 @@ void ScriptEditor::PaintLineNumbers(HWND window)
         if(havePrevious && location.y<=lastY) continue; // Folded/hidden lines collapse onto the previous row.
         lastY=location.y; havePrevious=true;
         wchar_t number[16]{}; const int length=wsprintfW(number,L"%d",line+1);
-        RECT row{left+4,location.y,client.right-4,location.y+64};
+        RECT row{left+2,location.y,LineNumberGutter-4,location.y+64};
         DrawTextW(dc,number,length,&row,DT_RIGHT|DT_TOP|DT_SINGLELINE|DT_NOPREFIX);
     }
     SelectObject(dc,oldFont); ReleaseDC(window,dc);

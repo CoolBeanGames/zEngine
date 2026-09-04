@@ -15,8 +15,11 @@ class ScriptEditor final
 {
 public:
     static constexpr int SourceControl = 2100, SaveCommand = 2101, ReloadCommand = 2102, ErrorCommand = 2103,FoldCommand=2104,ExpandCommand=2105;
-    // Width in pixels of the right-hand line-number gutter reserved inside the source control.
+    // Left-hand gutters reserved inside the source control: line numbers, then the
+    // fold +/- strip between the numbers and the text (ZE-89: numbers moved to the left).
     static constexpr int LineNumberGutter = 44;
+    static constexpr int FoldGutter = 28;
+    static constexpr int LeftGutter = LineNumberGutter + FoldGutter;
     // Pass a non-null embedIn to build the editor as a borderless child of that window
     // (the inline Script tab) instead of a standalone top-level window.
     ScriptEditor(HWND owner, const std::filesystem::path& assets, const std::filesystem::path& path, HWND embedIn = nullptr);

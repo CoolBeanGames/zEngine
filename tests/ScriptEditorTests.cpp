@@ -198,9 +198,9 @@ int main(int argc, char**)
             SendMessageW(editor.Window(),WM_COMMAND,ScriptEditor::ErrorCommand,0);
             SendMessageW(control,EM_GETSEL,reinterpret_cast<WPARAM>(&start),reinterpret_cast<LPARAM>(&end));
             Check(start==13,"Go to error did not navigate to diagnostic");
-            // Line numbers: a right-hand gutter is reserved and repainting over it is safe.
+            // Line numbers: a left-hand gutter (numbers + fold strip) is reserved; repainting over it is safe. (ZE-89)
             const auto margins=SendMessageW(control,EM_GETMARGINS,0,0);
-            Check(HIWORD(margins)==ScriptEditor::LineNumberGutter && LOWORD(margins)==28,"Line number gutter not reserved");
+            Check(LOWORD(margins)==ScriptEditor::LeftGutter,"Left line-number gutter not reserved");
             SetWindowTextW(control,L"one\r\ntwo\r\nthree\r\nfour\r\nfive");
             SendMessageW(editor.Window(),WM_TIMER,1,0);
             Check(SendMessageW(control,EM_GETLINECOUNT,0,0)==5,"Line count wrong for gutter test");
