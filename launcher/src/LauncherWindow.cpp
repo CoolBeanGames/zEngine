@@ -24,8 +24,8 @@ constexpr int kEdgePad = 16;
 
 constexpr int ID_UPDATE = 100;
 constexpr int ID_NEW = 101;
-constexpr int kRowButtons = 4;    // Play, Edit, Build, Delete
-constexpr int ID_ROW_BASE = 1000; // row i: play = base+i*4, edit +1, build +2, delete +3
+constexpr int kRowButtons = 5;    // Play, Edit, Build, Template, Delete
+constexpr int ID_ROW_BASE = 1000; // row i: play = base+i*5, +1 edit, +2 build, +3 template, +4 delete
 
 std::wstring Widen(const char* text)
 {
@@ -345,6 +345,7 @@ void LauncherWindow::RebuildRows()
         DestroyWindow(row.play);
         DestroyWindow(row.edit);
         DestroyWindow(row.build);
+        DestroyWindow(row.tmpl);
         DestroyWindow(row.del);
     }
     rows_.clear();
@@ -367,7 +368,8 @@ void LauncherWindow::RebuildRows()
         row.play = make(L"Play", base + 0);
         row.edit = make(L"Edit", base + 1);
         row.build = make(L"Build", base + 2);
-        row.del = make(L"Delete", base + 3);
+        row.tmpl = make(L"Template", base + 3);
+        row.del = make(L"Delete", base + 4);
 
         // Play is available only when there is a build to run.
         EnableWindow(row.play, ProjectStore::PlayableExe(projects[i]).has_value());
@@ -375,6 +377,7 @@ void LauncherWindow::RebuildRows()
         {
             EnableWindow(row.edit, FALSE);
             EnableWindow(row.build, FALSE);
+            EnableWindow(row.tmpl, FALSE);
         }
         rows_.push_back(row);
     }
@@ -398,6 +401,8 @@ void LauncherWindow::RepositionRows()
         const int y = top + (kRowHeight - kRowButtonH) / 2;
         int x = width - kEdgePad - kRowButtonW;
         MoveWindow(rows_[i].del, x, y, kRowButtonW, kRowButtonH, TRUE);
+        x -= kRowButtonW + kRowButtonGap;
+        MoveWindow(rows_[i].tmpl, x, y, kRowButtonW, kRowButtonH, TRUE);
         x -= kRowButtonW + kRowButtonGap;
         MoveWindow(rows_[i].build, x, y, kRowButtonW, kRowButtonH, TRUE);
         x -= kRowButtonW + kRowButtonGap;
@@ -733,7 +738,24 @@ void LauncherWindow::OnRowCommand(int commandId)
         else
             SetStatus(std::move(error));
     }
-    else if (action == 3) // Delete
+    else if (action == 3) // Template
+    {
+        std::wstring prompt = L"Copy “" + entry.name +
+                              L"” into the editor's templates folder so it can be used as a "
+                              L"template for new projects?\r\n\r\nBuild outputs are not copied.";
+        if (MessageBoxW(main_, prompt.c_str(), L"Convert to Template", MB_YESNO | MB_ICONQUESTION) ==
+            IDYES)
+        {
+            HCURSOR previous = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+            std::wstring message;
+            const bool ok = store_.CopyToTemplates(entry, message);
+            SetCursor(previous);
+            SetStatus(message);
+            if (!ok)
+                MessageBoxW(main_, message.c_str(), L"Convert to Template", MB_OK | MB_ICONWARNING);
+        }
+    }
+    else if (action == 4) // Delete
     {
         std::wstring prompt = L"Remove “" + entry.name +
                               L"” from the launcher?\r\n\r\nThe project files on disk are not deleted.";

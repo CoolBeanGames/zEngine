@@ -56,6 +56,13 @@ public:
 
     std::vector<ProjectTemplate> Templates() const;
 
+    // Copy an entire project into the editor's "templates/<name>" folder so it
+    // can be picked as a template for a new project. Build outputs and VCS
+    // metadata are skipped. Returns false + fills `message` on any problem
+    // (no editor, name already taken, copy failure); `message` also carries the
+    // success text.
+    bool CopyToTemplates(const ProjectEntry& entry, std::wstring& message) const;
+
     // This launcher's baked-in release number and build date.
     static int LauncherBuildNumber();
     static std::wstring LauncherBuildDate();

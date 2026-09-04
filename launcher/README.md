@@ -22,6 +22,9 @@ CMake solution.
 - **Play** — runs `<project>\builds\current\<exe>` (prefers `<name>.exe`).
   Greyed out when that folder has no executable.
 - **Edit** — opens the project in the editor (same launch path as New Project).
+- **Template** — copies the whole project into the editor's `templates\<name>\`
+  folder (skipping `builds\` and `.git\`) so it can be chosen as a template in
+  **+ New Project**. Fails if a template with that name already exists.
 - **Delete** — removes a project from the launcher list. Never deletes files.
 - **Update** — updates the launcher itself first (see below), then checks GitHub
   for a newer editor: downloads the latest release's `engine_<n>.zip` (or any

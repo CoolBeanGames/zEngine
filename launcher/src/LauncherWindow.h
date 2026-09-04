@@ -53,7 +53,14 @@ private:
 
     ProjectStore store_;
 
-    struct Row { HWND play = nullptr; HWND edit = nullptr; HWND build = nullptr; HWND del = nullptr; };
+    struct Row
+    {
+        HWND play = nullptr;
+        HWND edit = nullptr;
+        HWND build = nullptr;
+        HWND tmpl = nullptr;
+        HWND del = nullptr;
+    };
     std::vector<Row> rows_;
 
     int scroll_ = 0;

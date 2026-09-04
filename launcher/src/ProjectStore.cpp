@@ -1160,6 +1160,87 @@ std::vector<ProjectTemplate> ProjectStore::Templates() const
     return result;
 }
 
+bool ProjectStore::CopyToTemplates(const ProjectEntry& entry, std::wstring& message) const
+{
+    if (!entry.valid || entry.configFile.empty())
+    {
+        message = L"This project has no readable .zproject file.";
+        return false;
+    }
+    auto editor = LocateEditor();
+    if (!editor)
+    {
+        message = L"Could not find the editor, so its templates folder is unknown.";
+        return false;
+    }
+
+    std::error_code ec;
+    const fs::path templatesDir = editor->parent_path() / L"templates";
+    fs::create_directories(templatesDir, ec);
+    const fs::path dest = templatesDir / entry.name;
+    if (fs::exists(dest, ec))
+    {
+        message = L"A template named \"" + entry.name + L"\" already exists in " +
+                  templatesDir.wstring() + L".";
+        return false;
+    }
+    if (!fs::create_directories(dest, ec) || ec)
+    {
+        message = L"Could not create " + dest.wstring() +
+                  L" (the editor's templates folder may be read-only).";
+        return false;
+    }
+
+    int files = 0;
+    int failed = 0;
+    const auto options = fs::directory_options::skip_permission_denied;
+    auto it = fs::recursive_directory_iterator(entry.folder, options, ec);
+    for (; it != fs::recursive_directory_iterator(); it.increment(ec))
+    {
+        if (ec) break;
+        const fs::path rel = fs::relative(it->path(), entry.folder, ec);
+        if (rel.empty()) continue;
+
+        // A template is just source + assets: skip build outputs and VCS data.
+        const std::wstring top = rel.begin()->wstring();
+        std::error_code sec;
+        if (it->is_directory(sec) &&
+            (_wcsicmp(top.c_str(), L"builds") == 0 || _wcsicmp(top.c_str(), L".git") == 0))
+        {
+            it.disable_recursion_pending();
+            continue;
+        }
+        if (_wcsicmp(top.c_str(), L"builds") == 0 || _wcsicmp(top.c_str(), L".git") == 0) continue;
+
+        std::error_code cec;
+        if (it->is_directory(cec))
+        {
+            fs::create_directories(dest / rel, cec);
+            continue;
+        }
+        fs::create_directories((dest / rel).parent_path(), cec);
+        fs::copy_file(it->path(), dest / rel, fs::copy_options::overwrite_existing, cec);
+        if (cec) ++failed;
+        else ++files;
+    }
+
+    if (files == 0)
+    {
+        fs::remove_all(dest, ec);
+        message = L"Nothing was copied from the project folder.";
+        return false;
+    }
+    if (failed > 0)
+    {
+        message = L"Template \"" + entry.name + L"\" created, but " + std::to_wstring(failed) +
+                  L" file(s) could not be copied.";
+        return false;
+    }
+    message = L"Created template \"" + entry.name + L"\" (" + std::to_wstring(files) + L" files) in " +
+              templatesDir.wstring() + L".";
+    return true;
+}
+
 bool ProjectStore::LaunchEntry(const ProjectEntry& entry, std::wstring& error)
 {
     if (!entry.valid || entry.configFile.empty())
