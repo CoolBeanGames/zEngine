@@ -55,6 +55,33 @@ namespace
             const auto reset=mode==gizmo::Mode::Move?restored.Position():mode==gizmo::Mode::Rotate?restored.Rotation():restored.Scale();
             Check(std::abs(Component(reset,axis)-base)<.001f,"Drag back to start did not restore value");
         }
+
+        // ZE-105 / ZE-106: planar (two-axis) handles for Move and Scale. Codes 3=XY, 4=XZ, 5=YZ.
+        for (const auto size:{gizmo::Point{900,650}})
+        for (const auto mode:{gizmo::Mode::Move,gizmo::Mode::Scale})
+        for (int code=3;code<6;++code)
+        {
+            const int a = code==3?0:code==4?0:1, b = code==3?1:code==4?2:2, n = code==3?2:code==4?1:0;
+            const ViewportCamera camera(size.x,size.y); zengine::Transform original;
+            const auto shape=gizmo::Build(camera,original,mode);
+            // Find a projected edge of this plane's square handle and pick its midpoint.
+            gizmo::Point start{}; gizmo::Hit hit{}; bool found=false;
+            for (std::size_t i=0;i<shape.lines.size() && !found;++i) if (shape.lines[i].axis==code)
+            {
+                const auto pa=gizmo::Project(camera,shape.lines[i].a),pb=gizmo::Project(camera,shape.lines[i].b);
+                if (!pa || !pb) continue;
+                start={std::round((pa->x+pb->x)/2),std::round((pa->y+pb->y)/2)};
+                const auto h=gizmo::Pick(camera,shape,start);
+                if (h && h->axis==code) { hit=*h; found=true; }
+            }
+            Check(found,"Could not pick a planar handle edge");
+            gizmo::Drag drag(camera,original,mode,shape,hit,start);
+            const auto next=drag.Update({start.x+45,start.y-45});
+            const auto v=mode==gizmo::Mode::Move?next.Position():next.Scale();
+            const float base=mode==gizmo::Mode::Scale?1.f:0.f;
+            Check(std::abs(Component(v,a)-base)>.01f && std::abs(Component(v,b)-base)>.01f,"Planar handle did not move both plane axes");
+            Check(std::abs(Component(v,n)-base)<.001f,"Planar handle disturbed the off-plane axis");
+        }
         const ViewportCamera camera(800,600); zengine::Transform tiny;
         tiny.SetRotation({15,30,45}); tiny.SetScale({0,-2,.00001f});
         const auto shape=gizmo::Build(camera,tiny,gizmo::Mode::Scale);

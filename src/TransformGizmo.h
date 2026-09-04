@@ -38,7 +38,9 @@ namespace gizmo
         Point start_, tangent_;
         float startParameter_=0, angle_=0, previousAngle_=0;
         bool planar_=false;
+        zengine::Vec3 planeStart_{}; bool planeValid_=false; // ZE-105/106: two-axis handle drag
         std::optional<float> AxisParameter(Point) const;
         std::optional<float> RingAngle(Point) const;
+        std::optional<zengine::Vec3> PlaneHitPoint(Point) const;
     };
 }

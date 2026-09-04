@@ -77,8 +77,27 @@ Shape Build(const ViewportCamera& camera,const zengine::Transform& transform,Mod
             }
         }
     }
+    // ZE-105 / ZE-106: planar (two-axis) drag handles for Move and Scale.
+    // axis codes 3 = XY, 4 = XZ, 5 = YZ (a small square in that plane near the origin).
+    if (mode==Mode::Move || mode==Mode::Scale)
+    {
+        const std::pair<int,int> planes[3]{{0,1},{0,2},{1,2}};
+        for (int p=0;p<3;++p)
+        {
+            const auto& ax=shape.axes[planes[p].first]; const auto& ay=shape.axes[planes[p].second];
+            const float off=shape.length*0.32f, size=shape.length*0.16f;
+            const V o=Add(Add(shape.center,ax,off),ay,off);
+            const V c00=o, c10=Add(o,ax,size), c11=Add(Add(o,ax,size),ay,size), c01=Add(o,ay,size);
+            const int code=3+p;
+            shape.lines.push_back({c00,c10,code}); shape.lines.push_back({c10,c11,code});
+            shape.lines.push_back({c11,c01,code}); shape.lines.push_back({c01,c00,code});
+            if (mode==Mode::Scale) shape.lines.push_back({c00,c11,code}); // diagonal marks the scale plane
+        }
+    }
     return shape;
 }
+namespace { std::pair<int,int> PlaneAxes(int code) { return code==3?std::pair{0,1}:code==4?std::pair{0,2}:std::pair{1,2}; }
+            int PlaneNormal(int code) { return code==3?2:code==4?1:0; } }
 std::optional<Hit> Pick(const ViewportCamera& camera,const Shape& shape,Point point,float tolerance)
 {
     std::optional<Hit> hit; float best=tolerance*tolerance;
@@ -110,9 +129,23 @@ std::optional<float> Drag::RingAngle(Point p) const
     V u,v; Basis(shape_.axes[axis_],u,v);
     return std::atan2(Dot(radial,Load(v)),Dot(radial,Load(u)));
 }
+std::optional<zengine::Vec3> Drag::PlaneHitPoint(Point p) const
+{
+    XMVECTOR o,d; Ray(camera_,p,o,d);
+    const auto n=Load(shape_.axes[PlaneNormal(axis_)]);
+    const float denom=Dot(n,d); if (std::abs(denom)<0.02f) return {};
+    const float t=Dot(Load(shape_.center)-o,n)/denom; if (t<=0) return {};
+    return Store(o+d*t);
+}
 Drag::Drag(const ViewportCamera& camera,const zengine::Transform& transform,Mode mode,const Shape& shape,Hit hit,Point point)
     :camera_(camera),original_(transform),mode_(mode),shape_(shape),axis_(hit.axis),start_(point)
 {
+    if (axis_>=3) // ZE-105/106: planar handle
+    {
+        if (const auto hp=PlaneHitPoint(point)) { planeStart_=*hp; planeValid_=true; }
+        tangent_={0,-1};
+        return;
+    }
     auto a=Project(camera,shape.center),b=Project(camera,Add(shape.center,shape.axes[axis_],shape.length));
     if (mode==Mode::Rotate) { a=Project(camera,shape.lines.at(hit.segment).a); b=Project(camera,shape.lines.at(hit.segment).b); }
     if (a && b)
@@ -130,6 +163,30 @@ zengine::Transform Drag::Update(Point point)
 {
     auto result=original_;
     const float pixels=(point.x-start_.x)*tangent_.x+(point.y-start_.y)*tangent_.y;
+    if (axis_>=3) // ZE-105/106: two-axis planar drag
+    {
+        const auto [a,b]=PlaneAxes(axis_);
+        if (mode_==Mode::Move)
+        {
+            if (!planeValid_) return result;
+            const auto hp=PlaneHitPoint(point); if (!hp) return result;
+            const V delta{hp->x-planeStart_.x,hp->y-planeStart_.y,hp->z-planeStart_.z};
+            auto pos=original_.Position();
+            SetAxis(pos,a,std::clamp(GetAxis(pos,a)+GetAxis(delta,a),-1000000.f,1000000.f));
+            SetAxis(pos,b,std::clamp(GetAxis(pos,b)+GetAxis(delta,b),-1000000.f,1000000.f));
+            result.SetPosition(pos);
+        }
+        else // Scale: drag out grows both plane axes together
+        {
+            const float dragPixels=(point.y-start_.y)*-1.f + (point.x-start_.x); // up / right = larger
+            const float amount=dragPixels/90.f;
+            auto s=original_.Scale();
+            SetAxis(s,a,std::clamp(GetAxis(s,a)+amount,-1000000.f,1000000.f));
+            SetAxis(s,b,std::clamp(GetAxis(s,b)+amount,-1000000.f,1000000.f));
+            result.SetScale(s);
+        }
+        return result;
+    }
     if (mode_==Mode::Rotate)
     {
         if (planar_)
