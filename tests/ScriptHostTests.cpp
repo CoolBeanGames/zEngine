@@ -1,4 +1,5 @@
 #include "ScriptHost.h"
+#include "DataAssets.h"
 #include "ui/UiControl.h"
 #include "audio/AudioSource.h"
 #include "core/Light.h"
@@ -336,6 +337,45 @@ int main()
             h.Tick(s,1.0f/60);
             Check(a.Parent()==panel2.Id(),"script reparent of a ui control did not reach the scene tree");
             h.Stop(s);
+        }
+        {
+            // ZE-129: an exported data-object field bound to a .zdata; save() persists, unsaved edits revert.
+            ObjectStore s; ScriptHost h; h.SetObjectStore(&s);
+            std::string file = "ZDATA 1\r\ntype Ammo\r\nfield rounds int 5\r\nfield kind string \"clip\"\r\n";
+            std::string writtenPath, writtenText;
+            h.SetDataAssetIO(
+                [&](std::string_view p)->std::string { Check(p=="data/ammo.zdata","data reader got the wrong path"); return file; },
+                [&](std::string_view p, std::string_view t){ writtenPath=std::string(p); writtenText=std::string(t); file=std::string(t); });
+            auto& o=s.Create("Gun");
+            auto& sb=o.AddBehavior<ScriptBehavior>("Gun.zsh");
+            const std::string src=R"(struct Ammo { int rounds = 0; string kind = ""; }
+            class Gun : gameObject {
+                export Ammo mag;
+                export int seen = 0;
+                func start() { seen = mag.rounds; mag.rounds = 99; }
+                func fire() { mag.rounds = 1; mag.save(); }
+            })";
+            Check(h.Prepare(sb,src,"Gun"),"data-field fixture compile");
+            h.SetField(sb,"mag","data/ammo.zdata");
+            Check(Value(h,sb,"mag")=="data/ammo.zdata","data-object field did not store its .zdata path");
+            Check(h.Play(s),"Play with a bound data object failed");
+            Check(Value(h,sb,"seen")=="5","start() did not read the bound data object's field");
+            h.Stop(s);
+            Check(writtenPath.empty(),"save() was never called yet the file was written");
+
+            // A script that mutates the bound instance and calls save() -> the writer persists it.
+            const std::string src2=R"(struct Ammo { int rounds = 0; string kind = ""; }
+            class Gun : gameObject {
+                export Ammo mag;
+                func update(float dt) { mag.rounds = 1; mag.save(); }
+            })";
+            Check(h.Prepare(sb,src2,"Gun"),"data-field fixture 2 compile");
+            Check(Value(h,sb,"mag")=="data/ammo.zdata","binding lost across recompile");
+            Check(h.Play(s),"replay 2 failed");
+            h.Tick(s,0.016f);
+            h.Stop(s);
+            Check(writtenPath=="data/ammo.zdata","save() did not reach the writer with the bound path");
+            Check(zengine::dataobj::Decode(writtenText).fields.at(0).value=="1","save() did not persist the live field value");
         }
         std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;

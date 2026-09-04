@@ -238,6 +238,10 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
     inspectorPanel_->SetScriptHost(&scriptHost_);
     scriptHost_.SetObjectStore(&objects_);
+    // ZE-129: data-object fields read/write their bound .zdata under the project's Assets.
+    scriptHost_.SetDataAssetIO(
+        [this](std::string_view rel){ return zengine::dataobj::Encode(zengine::dataobj::Load(zengine::dataobj::Resolve(assetsDirectory_, std::filesystem::path(rel)))); },
+        [this](std::string_view rel, std::string_view text){ zengine::dataobj::Save(assetsDirectory_, std::filesystem::path(rel), zengine::dataobj::Decode(text)); });
     ConfigureScriptOutput();
     inspectorPanel_->SetAddScriptHandler([this]() {
         try { ChooseScript(); }
@@ -1311,6 +1315,9 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     prefabLinks_.clear(); for (const auto& object:authored.objects) if (!object.prefab.empty()) {prefabLinks_[object.id]=object;if(auto* g=zengine::As3D(next.objects.Find(object.id)))prefabLinks_[object.id].transform=g->GetTransform();}
     prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects); scriptHost_.SetObjectStore(&objects_); ConfigureScriptOutput();
+    scriptHost_.SetDataAssetIO( // ZE-129: rebind after the ScriptHost move
+        [this](std::string_view rel){ return zengine::dataobj::Encode(zengine::dataobj::Load(zengine::dataobj::Resolve(assetsDirectory_, std::filesystem::path(rel)))); },
+        [this](std::string_view rel, std::string_view text){ zengine::dataobj::Save(assetsDirectory_, std::filesystem::path(rel), zengine::dataobj::Decode(text)); });
     scenePath_=file; sceneSource_=std::move(source); firstObject_=0; selectedObject_=0;
     sceneOpen_=true;
     status_=L"Opened scene: "+SceneName();

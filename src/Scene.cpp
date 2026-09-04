@@ -92,7 +92,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
             BehaviorData b; b.enabled=behavior.Enabled(); b.priority=behavior.Priority();
             if (const auto* mesh=dynamic_cast<const MeshRenderer*>(&behavior)) { b.asset=mesh->Asset(); b.meshMaterial=mesh->Material(); b.meshStatic=mesh->Static(); b.meshLightmap=mesh->Lightmap(); }
             else if (const auto* script=dynamic_cast<const ScriptBehavior*>(&behavior))
-            { b.kind=BehaviorData::Kind::Script; b.asset=script->Asset(); b.variables=scripts.AuthoredValues(*script); b.objectReferences=scripts.AuthoredReferences(*script); b.arrays=scripts.AuthoredArrays(*script); }
+            { b.kind=BehaviorData::Kind::Script; b.asset=script->Asset(); b.variables=scripts.AuthoredValues(*script); b.objectReferences=scripts.AuthoredReferences(*script); b.arrays=scripts.AuthoredArrays(*script); b.dataBindings=scripts.AuthoredDataAssets(*script); }
             else if(const auto* collider=dynamic_cast<const physics::Collider*>(&behavior)){b.kind=BehaviorData::Kind::Collider;b.shape=collider->Shape();b.colliderOffset=collider->Offset();b.colliderSize=collider->Size();}
             else if(const auto* camera=dynamic_cast<const Camera*>(&behavior)){b.kind=BehaviorData::Kind::Camera;b.cameraFov=camera->FieldOfView();b.cameraNear=camera->NearPlane();b.cameraFar=camera->FarPlane();}
             else if(const auto* uiControl=dynamic_cast<const ui::UiControl*>(&behavior)){b.kind=BehaviorData::Kind::Ui;b.uiType=uiControl->TypeName();b.uiProps=ui::SaveUiControl(*uiControl);}
@@ -139,7 +139,7 @@ Document Capture(const ObjectStore& objects,const ScriptHost& scripts)
 std::string Encode(const Document& scene)
 {
     std::ostringstream out; out.imbue(std::locale::classic()); out<<std::setprecision(17);
-    out<<"ZENGINE_SCENE 16\nobjects "<<scene.objects.size()<<'\n';
+    out<<"ZENGINE_SCENE 17\nobjects "<<scene.objects.size()<<'\n';
     for (const auto& object:scene.objects)
     {
         out<<"object "<<object.id<<' '<<std::quoted(object.name)<<"\ntags "<<object.tags.size();
@@ -221,6 +221,15 @@ std::string Encode(const Document& scene)
                     }
                 }
             }
+            if (!b.dataBindings.empty()) // ZE-129 (scene v17)
+            {
+                out<<"data_bindings "<<b.dataBindings.size()<<'\n';
+                for (const auto& [name,path]:b.dataBindings)
+                {
+                    Require(!name.empty() && !path.empty(),"Invalid data-object binding.");
+                    out<<"binding "<<std::quoted(name)<<' '<<std::quoted(path)<<'\n';
+                }
+            }
         }
     }
     out<<"end\n";
@@ -232,7 +241,7 @@ Document Decode(std::string_view text)
 {
     Require(text.size()<=MaxSceneBytes,"Scene exceeds the 8 MiB limit.");
     std::istringstream in{std::string(text)}; in.imbue(std::locale::classic());
-    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,16); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
+    Token(in,"ZENGINE_SCENE"); const auto version=Count(in,17); Require(version>=1,"Unsupported scene version."); Token(in,"objects");
     Document scene; const auto count=Count(in,10000); std::set<GameObjectId> ids;
     for (std::size_t i=0;i<count;++i)
     {
@@ -354,6 +363,16 @@ Document Decode(std::string_view text)
                         Require(!name.empty() && b.arrays.emplace(std::move(name),std::move(elements)).second,"Duplicate/empty script array.");
                     }
                 }
+                else if (marker=="data_bindings" && version>=17) // ZE-129
+                {
+                    Require(type=="script","Only scripts can bind data objects.");
+                    const auto bindings=Count(in,1024);
+                    for (std::size_t k=0;k<bindings;++k)
+                    {
+                        Token(in,"binding"); auto name=Text(in); auto path=Text(in);
+                        Require(!name.empty() && !path.empty() && b.dataBindings.emplace(std::move(name),std::move(path)).second,"Duplicate/empty data-object binding.");
+                    }
+                }
                 else { in.clear(); in.seekg(markerPosition); Require(static_cast<bool>(in),"Invalid scene stream position."); break; }
             }
             object.behaviors.push_back(std::move(b));
@@ -392,7 +411,7 @@ Instance Instantiate(const Document& scene)
         {
             Behavior* behavior=nullptr;
             if (b.kind==BehaviorData::Kind::Mesh) { auto& m=object.AddBehavior<MeshRenderer>(b.asset); m.SetMaterial(b.meshMaterial); m.SetStatic(b.meshStatic); m.SetLightmap(b.meshLightmap); behavior=&m; }
-            else if(b.kind==BehaviorData::Kind::Script) { auto& script=object.AddBehavior<ScriptBehavior>(b.asset); instance.scripts.RestoreValues(script,b.variables); instance.scripts.RestoreReferences(script,b.objectReferences); instance.scripts.RestoreArrays(script,b.arrays); behavior=&script; }
+            else if(b.kind==BehaviorData::Kind::Script) { auto& script=object.AddBehavior<ScriptBehavior>(b.asset); instance.scripts.RestoreValues(script,b.variables); instance.scripts.RestoreReferences(script,b.objectReferences); instance.scripts.RestoreArrays(script,b.arrays); instance.scripts.RestoreDataAssets(script,b.dataBindings); behavior=&script; }
             else if(b.kind==BehaviorData::Kind::Collider){auto* existing=object.GetBehavior<physics::Collider>();auto& v=existing?*existing:object.AddBehavior<physics::Collider>();v.SetShape(b.shape);v.SetOffset(b.colliderOffset);v.SetSize(b.colliderSize);behavior=&v;}
             else if(b.kind==BehaviorData::Kind::Camera){auto& v=object.AddBehavior<Camera>();v.SetFieldOfView(b.cameraFov);v.SetNearPlane(b.cameraNear);v.SetFarPlane(b.cameraFar);behavior=&v;}
             else if(b.kind==BehaviorData::Kind::Ui){auto& v=ui::AddUiControl(object,b.uiType);for(const auto& [key,value]:b.uiProps)ui::LoadUiProperty(v,key,value);behavior=&v;}

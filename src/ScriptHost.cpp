@@ -8,6 +8,7 @@
 #include "core/Decal.h"
 #include "zscript/Text.h"
 #include "zscript/NativeTypes.h"
+#include "DataAssets.h"
 #include <algorithm>
 #include <functional>
 #include <cmath>
@@ -281,14 +282,57 @@ namespace
         if (!stream.eof()) throw std::invalid_argument("Unexpected text after value.");
         return value;
     }
+    // ZE-129: instantiate a data object on `rt` from its saved doc.
+    ObjectRef BuildDataInstance(script::Runtime& rt, const dataobj::DataDoc& doc)
+    {
+        const auto ref = rt.Create(doc.type);
+        for (const auto& f : doc.fields)
+        {
+            if (f.value.empty() || !dataobj::IsStorableType(f.type)) continue;
+            try { rt.Set(ref, f.name, Parse(f.type, f.value)); } catch (const std::exception&) {}
+        }
+        return ref;
+    }
+    // Capture a data instance's current fields back into a doc (for data_object.save()).
+    dataobj::DataDoc CaptureDataDoc(script::Runtime& rt, ObjectRef ref, const std::string& type,
+                                   const std::vector<std::pair<std::string,std::string>>& schema)
+    {
+        dataobj::DataDoc doc; doc.type = type;
+        for (const auto& [name, ftype] : schema)
+        {
+            if (!dataobj::IsStorableType(ftype)) continue;
+            try { doc.fields.push_back({name, ftype, Format(rt.Get(ref, name))}); } catch (const std::exception&) {}
+        }
+        return doc;
+    }
     class BoundScript final : public ScriptInstance
     {
     public:
-        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const std::map<std::string,std::vector<ScriptArrayElement>>& arrays, const InputFrame& inputFrame,const MouseFrame& mouseFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output,const ScriptHost::SceneLoader& sceneLoader,std::string sceneName,int* mouseMode /* ZE-84 */)
+        BoundScript(std::shared_ptr<const Program> p, const std::string& name, const std::map<std::string,Value>& overrides, const std::map<std::string,GameObjectId>& references, const std::map<std::string,std::vector<ScriptArrayElement>>& arrays, const InputFrame& inputFrame,const MouseFrame& mouseFrame,ObjectStore& objects,GameObjectId owner,physics::World* physicsWorld,const ScriptHost::PrefabSpawner& prefabSpawner,const std::function<void(std::string_view)>& output,const ScriptHost::SceneLoader& sceneLoader,std::string sceneName,int* mouseMode /* ZE-84 */,
+                    const std::map<std::string,std::string>& dataAssets={},const ScriptHost::DataAssetReader& dataReader={},const ScriptHost::DataAssetWriter& dataWriter={})
             : program(std::move(p)), runtime(program), object(runtime.Create(name)),
               draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),mouse(mouseFrame),scene(objects),ownerId(owner)
         {
             runtime.SetInput(input,false);runtime.SetMouse(mouse,false);BindNative(owner,object);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
+            // ZE-129: bind each data-object field to its .zdata, and route save() back to the writer.
+            for(const auto& [field,path]:dataAssets)
+            {
+                if(path.empty()||!dataReader)continue;
+                try {
+                    const auto doc=dataobj::Decode(dataReader(path));
+                    const auto inst=BuildDataInstance(runtime,doc);
+                    runtime.Set(object,field,inst);
+                    dataInstances.emplace(inst.id,std::make_pair(path,doc.type));
+                } catch(const std::exception&) {}
+            }
+            if(dataWriter)runtime.SetDataSaveCallback([this,dataWriter](ObjectRef ref){
+                const auto it=dataInstances.find(ref.id); if(it==dataInstances.end())return;
+                try {
+                    const auto schema=program->DataObjectFields(it->second.second);
+                    const auto doc=CaptureDataDoc(runtime,ref,it->second.second,schema);
+                    dataWriter(it->second.first,dataobj::Encode(doc));
+                } catch(const std::exception&) {}
+            });
             printHandler=output;runtime.SetPrintCallback([this](std::string_view text){if(printHandler)printHandler(text);});
             proxies.emplace(owner,object);
             runtime.SetObjectLookup([this](std::string_view name){
@@ -411,6 +455,8 @@ namespace
         Runtime runtime;
         ObjectRef object;
         std::function<void(std::string_view)> printHandler;
+        // ZE-129: data-object instances built from a bound .zdata - id -> {path, struct type}.
+        std::map<std::size_t, std::pair<std::string,std::string>> dataInstances;
     private:
         ObjectRef Proxy(GameObjectId id) {
             if(!id)return {};
@@ -548,6 +594,26 @@ bool ScriptHost::IsReferenceType(std::string_view type)
 {
     return ReferenceTypeName(type);
 }
+bool ScriptHost::IsDataField(const script::Program& program, std::string_view type)
+{
+    return program.IsDataObject(type);
+}
+void ScriptHost::ApplyRecordDataAssets(Record& record)
+{
+    if (!record.preview || !record.program) return;
+    for (const auto& entry : record.program->InspectorLayout(record.className))
+    {
+        if (entry.kind != script::InspectorEntry::Kind::Field || !IsDataField(*record.program, entry.type)) continue;
+        const auto it = record.dataAssets.find(entry.name);
+        if (it == record.dataAssets.end() || it->second.empty() || !dataReader_) continue;
+        try
+        {
+            const auto doc = zengine::dataobj::Decode(dataReader_(it->second));
+            record.preview->Set(record.object, entry.name, BuildDataInstance(*record.preview, doc));
+        }
+        catch (const std::exception&) {}
+    }
+}
 
 bool ScriptHost::ObjectMatchesReferenceType(const ObjectCore& object, std::string_view type)
 {
@@ -638,11 +704,21 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
                     catch (const script::ScriptError&) {} // Changed field type: use its new default.
                 }
         std::map<std::string, GameObjectId> keptReferences;
+        std::map<std::string, std::string> keptDataAssets; // ZE-129
         for (const auto& entry : compiled.program->InspectorLayout(record.className))
-            if (entry.kind == script::InspectorEntry::Kind::Field && IsReferenceType(entry.type))
+        {
+            if (entry.kind != script::InspectorEntry::Kind::Field) continue;
+            if (IsDataField(*compiled.program, entry.type))
+            {
+                if (const auto it = record.dataAssets.find(entry.name); it != record.dataAssets.end() && !it->second.empty())
+                    keptDataAssets.emplace(entry.name, it->second);
+            }
+            else if (IsReferenceType(entry.type))
                 if (const auto it = record.references.find(entry.name); it != record.references.end() && it->second)
                     keptReferences.emplace(entry.name, it->second);
+        }
         record.references=std::move(keptReferences);
+        record.dataAssets=std::move(keptDataAssets);
         std::map<std::string,std::vector<ScriptArrayElement>> keptArrays;
         for (const auto& entry : compiled.program->InspectorLayout(record.className))
             if (entry.kind==script::InspectorEntry::Kind::Field && entry.type=="array")
@@ -672,8 +748,9 @@ bool ScriptHost::Prepare(ScriptBehavior& behavior, std::string source, std::stri
         record.overrides=std::move(kept); record.object=ref;
         record.preview=std::move(preview); record.program=compiled.program;
         ApplyPreviewReferences(record);
+        ApplyRecordDataAssets(record); // ZE-129
         for (const auto& [field, elements] : record.arrays) { (void)elements; SyncPreviewArray(record, field); }
-        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,record.arrays,input_,mouse_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_,sceneLoader_,sceneName_,&mouseMode_));}
+        if(playing_){if(!playingObjects_)throw std::logic_error("Missing running object store.");behavior.BindInstance(std::make_unique<BoundScript>(record.program,record.className,record.overrides,record.references,record.arrays,input_,mouse_,*playingObjects_,behavior.Owner().Id(),playingPhysics_,prefabSpawner_,printHandler_,sceneLoader_,sceneName_,&mouseMode_,record.dataAssets,dataReader_,dataWriter_));}
         return true;
     }
     catch (const std::exception& e) { record.overrides=std::move(previousValues); record.error=e.what(); return false; }
@@ -714,6 +791,13 @@ std::vector<ScriptHost::Field> ScriptHost::Fields(ScriptBehavior& behavior)
                     result.push_back({entry.name,type,entry.name,Format(element.value),true,false,false,false,static_cast<int>(i),count});
                 }
             }
+        }
+        else if (IsDataField(*r.program, entry.type)) // ZE-129: a bound ".zdata" path
+        {
+            const auto it = r.dataAssets.find(entry.name);
+            Field f{entry.name, entry.type, {}, it != r.dataAssets.end() ? it->second : std::string{}, true, false, false};
+            f.dataAsset = true;
+            result.push_back(std::move(f));
         }
         else if (IsReferenceType(entry.type))
         {
@@ -864,7 +948,18 @@ void ScriptHost::SetArrayElementReference(ScriptBehavior& behavior, const std::s
 void ScriptHost::SetField(ScriptBehavior& behavior, const std::string& name, const std::string& text)
 {
     auto& r=records_.at(&behavior);
-    for (const auto& field:Fields(behavior)) if (field.name==name && field.editable && field.arrayIndex<0 && !field.array)
+    for (const auto& field:Fields(behavior)) if (field.name==name && field.dataAsset) // ZE-129
+    {
+        if (playing_) throw std::logic_error("Stop Play before binding a data object.");
+        if (text.empty())
+        {
+            r.dataAssets.erase(name);
+            if (r.preview) try { r.preview->Set(r.object, name, script::ObjectRef{}); } catch (...) {}
+        }
+        else { r.dataAssets[name]=text; ApplyRecordDataAssets(r); }
+        return;
+    }
+    for (const auto& field:Fields(behavior)) if (field.name==name && field.editable && field.arrayIndex<0 && !field.array && !field.dataAsset)
     {
         const auto value=Parse(field.type,text);
         if (auto* live=dynamic_cast<BoundScript*>(behavior.Instance())) live->runtime.Set(live->object,name,std::holds_alternative<script::PrefabRef>(value)?script::Value{live->runtime.CreatePrefab(std::get<script::PrefabRef>(value).asset)}:value);
@@ -927,6 +1022,18 @@ void ScriptHost::RestoreReferences(ScriptBehavior& behavior, std::map<std::strin
         throw std::logic_error("Restore scene references before compiling or playing.");
     records_[&behavior].references=std::move(references);
 }
+std::map<std::string,std::string> ScriptHost::AuthoredDataAssets(const ScriptBehavior& behavior) const // ZE-129
+{
+    const auto it=records_.find(&behavior);
+    return it==records_.end()?std::map<std::string,std::string>{}:it->second.dataAssets;
+}
+void ScriptHost::RestoreDataAssets(ScriptBehavior& behavior, std::map<std::string,std::string> dataAssets)
+{
+    auto found=records_.find(&behavior);
+    if (found!=records_.end() && found->second.program)
+        throw std::logic_error("Restore scene data-object bindings before compiling or playing.");
+    records_[&behavior].dataAssets=std::move(dataAssets);
+}
 bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
 {
     if (playing_) return true;
@@ -939,7 +1046,7 @@ bool ScriptHost::Play(ObjectStore& objects,physics::World* physicsWorld)
             auto it=records_.find(script);
             if (it==records_.end() || !it->second.program || !it->second.error.empty()) return false;
             auto& r=it->second;
-            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,r.arrays,input_,mouse_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_,sceneLoader_,sceneName_,&mouseMode_)); }
+            try { ready.emplace_back(script,std::make_unique<BoundScript>(r.program,r.className,r.overrides,r.references,r.arrays,input_,mouse_,objects,script->Owner().Id(),physicsWorld,prefabSpawner_,printHandler_,sceneLoader_,sceneName_,&mouseMode_,r.dataAssets,dataReader_,dataWriter_)); }
             catch (const std::exception& e) { r.error=e.what(); return false; }
         }
     transforms_.clear();

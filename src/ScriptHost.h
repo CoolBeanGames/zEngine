@@ -26,7 +26,15 @@ namespace zengine
         // array: header row for an exported `array` field (arrayCount elements follow).
         // arrayIndex>=0: one element row of the array named `name`.
         struct Field { std::string name, type, label, value; bool editable = false; bool multiline=false; bool reference=false;
-            bool array=false; int arrayIndex=-1; std::size_t arrayCount=0; };
+            bool array=false; int arrayIndex=-1; std::size_t arrayCount=0;
+            bool dataAsset=false; }; // ZE-129: value is a project-relative ".zdata" path bound to a data-object field
+        // ZE-129: how the host reads/writes a ".zdata" file's text (project-relative path).
+        // The reader is used to instantiate a bound data object at Play; the writer backs
+        // data_object.save(). Both may be null (data-object fields then stay unbound).
+        using DataAssetReader = std::function<std::string(std::string_view)>;
+        using DataAssetWriter = std::function<void(std::string_view, std::string_view)>;
+        void SetDataAssetIO(DataAssetReader reader, DataAssetWriter writer)
+        { if(playing_)throw std::logic_error("Stop before changing data asset I/O."); dataReader_=std::move(reader); dataWriter_=std::move(writer); }
         // Element types the inspector's "add element" picker offers, value types first.
         static const std::vector<std::string>& ArrayElementTypes();
         void SetObjectStore(ObjectStore* objects) noexcept { objectStore_ = objects; }
@@ -50,6 +58,8 @@ namespace zengine
         std::map<std::string,std::vector<ScriptArrayElement>> AuthoredArrays(const ScriptBehavior&) const;
         void RestoreValues(ScriptBehavior&, std::map<std::string,script::Value> values);
         void RestoreReferences(ScriptBehavior&, std::map<std::string,GameObjectId> references);
+        std::map<std::string,std::string> AuthoredDataAssets(const ScriptBehavior&) const; // ZE-129
+        void RestoreDataAssets(ScriptBehavior&, std::map<std::string,std::string> dataAssets);
         void RestoreArrays(ScriptBehavior&, std::map<std::string,std::vector<ScriptArrayElement>> arrays);
         void Forget(ScriptBehavior& behavior) { if(playing_)throw std::logic_error("Stop before forgetting a script.");records_.erase(&behavior); }
         bool Play(ObjectStore&, physics::World* physicsWorld=nullptr);
@@ -86,8 +96,11 @@ namespace zengine
             std::map<std::string, script::Value> overrides;
             std::map<std::string, GameObjectId> references;
             std::map<std::string, std::vector<ScriptArrayElement>> arrays;
+            std::map<std::string, std::string> dataAssets; // ZE-129: data-object field name -> bound ".zdata" path
             std::map<GameObjectId, script::ObjectRef> previewProxies;
         };
+        static bool IsDataField(const script::Program&, std::string_view type);
+        void ApplyRecordDataAssets(Record&);
         static bool IsReferenceType(std::string_view type);
         script::ObjectRef PreviewReference(Record&, GameObjectId, std::string_view type);
         void ApplyPreviewReferences(Record&);
@@ -103,6 +116,8 @@ namespace zengine
         script::InputFrame input_;
         script::MouseFrame mouse_;
         PrefabSpawner prefabSpawner_;
+        DataAssetReader dataReader_;
+        DataAssetWriter dataWriter_;
         std::function<void(std::string_view)> printHandler_;
         SceneLoader sceneLoader_;
         std::string sceneName_;
