@@ -78,6 +78,15 @@ int main()
         Check(orderedHost.Play(ordered) && object.GetTransform().Position().x==2,"Start priority order failed");
         orderedHost.Tick(ordered,0.1f); Check(object.GetTransform().Position().x==6,"Scripts did not synchronize shared owner in priority order");
         orderedHost.Stop(ordered);
+
+        // ZE-84: Input.set_mouse_mode reaches ScriptHost::MouseMode() and resets on Stop.
+        ObjectStore mmObjects; ScriptHost mmHost;
+        auto& mmLooker=mmObjects.Create(); auto& mmLk=mmLooker.AddBehavior<ScriptBehavior>("Look.zsh");
+        Check(mmHost.Prepare(mmLk,"class Look : gameObject { func start(){ Input.set_mouse_mode(Mouse.captured); } func update(float dt){} }","Look"),"mouse-mode compile");
+        Check(mmHost.MouseMode()==0,"mouse mode not 0 before Play");
+        Check(mmHost.Play(mmObjects) && mmHost.MouseMode()==4,"Input.set_mouse_mode(Mouse.captured) did not reach the host");
+        mmHost.Stop(mmObjects);
+        Check(mmHost.MouseMode()==0,"mouse mode not reset on Stop");
         auto empty=script::Compiler::Compile("class Base : gameObject { func start() { int a=1; } } class Empty : Base { func start() {} func update(float dt) {} }");
         Check(empty && empty.program->HasCode("Base","start") && !empty.program->HasCode("Empty","start") && !empty.program->HasCode("Empty","update"),"Empty override must suppress inherited hooks");
         ObjectStore signals; ScriptHost signalHost; auto& signalObject=signals.Create();
