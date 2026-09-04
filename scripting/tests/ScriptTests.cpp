@@ -472,13 +472,18 @@ void TextAndGlobalTransforms() {
     Error([&]{Compile("class A {func f(){multiline export string s;}}");},"class scope");
     Error([&]{Compile("class A {char bad='ab';}");},"one Unicode character");
     Error([&]{Compile("class A {string bad=1 & 2;}");},"Concatenation");
-    Error([&]{Compile("class A : gameObject {func f(){transform.global_position.x=1;}}");},"read-only");
+    Check(Compile("class A : gameObject {func f(){transform.global_position.x=1;}}") != nullptr, "ZE-83: global fields are writable");
     const auto at=TransformOf(r,a),pt=TransformOf(r,parent);r.Set(a,"parent",parent);
     r.Set(pt,"position",Vector3{10,0,0});r.Set(pt,"rotation",Vector3{0,0,90});r.Set(pt,"scale",Vector3{2,3,4});r.Set(at,"position",Vector3{1,0,0});
     auto position=std::get<Vector3>(r.Get(at,"global_position")),rotation=std::get<Vector3>(r.Get(at,"global_rotation")),scale=std::get<Vector3>(r.Get(at,"global_scale"));
     Check(std::abs(position.x-10)<1e-8 && std::abs(position.y-2)<1e-8 && std::abs(rotation.z-90)<1e-8 && scale==Vector3{2,3,4},"Global TRS does not compose local-to-parent transforms");
-    r.Set(a,"parent",ObjectRef{});Check(std::get<Vector3>(r.Get(at,"global_position"))==Vector3{1,0,0},"Global transform cached stale parent");
-    Error([&]{r.Set(at,"global_scale",Vector3{});},"read-only");
+    // ZE-83: writing a global component sets the local value that produces it, whatever the parent does.
+    r.Set(at,"global_position",Vector3{5,7,0});
+    { const auto g=std::get<Vector3>(r.Get(at,"global_position")); Check(std::abs(g.x-5)<1e-6 && std::abs(g.y-7)<1e-6, "global_position write did not round-trip through the parent"); }
+    r.Set(at,"global_rotation",Vector3{0,0,0});
+    { const auto g=std::get<Vector3>(r.Get(at,"global_rotation")); Check(std::abs(g.z)<1e-6, "global_rotation write did not cancel the parent rotation"); }
+    r.Set(a,"parent",ObjectRef{});Check(std::get<Vector3>(r.Get(at,"global_position"))==std::get<Vector3>(r.Get(at,"position")),"Detached: global == local");
+    r.Set(at,"global_scale",Vector3{3,3,3});Check(std::get<Vector3>(r.Get(at,"scale"))==Vector3{3,3,3},"global_scale write with no parent == local scale");
     r.Set(at,"scale",Vector3{0,-2,3});Check(std::get<Vector3>(r.Get(at,"global_scale"))==Vector3{0,2,3},"Zero scale global read failed");
     Error([&]{r.Set(a,"initial",char32_t{0xd800});},"Unicode");
     Error([&]{r.Set(a,"description",std::string("\xc0\xaf"));},"UTF-8");

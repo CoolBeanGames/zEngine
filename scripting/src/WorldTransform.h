@@ -28,4 +28,30 @@ inline Vector3 Scale(const Matrix& m){
     const double det=m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])-m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])+m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
     return {length(0)*(det<0?-1:1),length(1),length(2)};
 }
+// ZE-83: helpers to turn a desired GLOBAL transform component into the LOCAL one
+// that produces it under a given parent world matrix (row-vector convention:
+// world = Local(child) * parentWorld).
+inline Matrix Transpose3(const Matrix& m){Matrix r=Identity();for(int i=0;i<3;++i)for(int j=0;j<3;++j)r[i][j]=m[j][i];return r;}
+inline Matrix Inverse3(const Matrix& m){
+    const double det=m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])-m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])+m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+    Matrix r=Identity();
+    if(std::abs(det)<1e-12)return r; // singular parent scale -> fall back to identity
+    const double inv=1.0/det;
+    r[0][0]=(m[1][1]*m[2][2]-m[1][2]*m[2][1])*inv; r[0][1]=(m[0][2]*m[2][1]-m[0][1]*m[2][2])*inv; r[0][2]=(m[0][1]*m[1][2]-m[0][2]*m[1][1])*inv;
+    r[1][0]=(m[1][2]*m[2][0]-m[1][0]*m[2][2])*inv; r[1][1]=(m[0][0]*m[2][2]-m[0][2]*m[2][0])*inv; r[1][2]=(m[0][2]*m[1][0]-m[0][0]*m[1][2])*inv;
+    r[2][0]=(m[1][0]*m[2][1]-m[1][1]*m[2][0])*inv; r[2][1]=(m[0][1]*m[2][0]-m[0][0]*m[2][1])*inv; r[2][2]=(m[0][0]*m[1][1]-m[0][1]*m[1][0])*inv;
+    return r;
+}
+inline Matrix AffineInverse(const Matrix& m){
+    Matrix r=Inverse3(m); // fills the 3x3; translation row below
+    r[3][0]=-(m[3][0]*r[0][0]+m[3][1]*r[1][0]+m[3][2]*r[2][0]);
+    r[3][1]=-(m[3][0]*r[0][1]+m[3][1]*r[1][1]+m[3][2]*r[2][1]);
+    r[3][2]=-(m[3][0]*r[0][2]+m[3][1]*r[1][2]+m[3][2]*r[2][2]);
+    return r;
+}
+inline Vector3 TransformPoint(Vector3 v,const Matrix& m){
+    return {v.x*m[0][0]+v.y*m[1][0]+v.z*m[2][0]+m[3][0],
+            v.x*m[0][1]+v.y*m[1][1]+v.z*m[2][1]+m[3][1],
+            v.x*m[0][2]+v.y*m[1][2]+v.z*m[2][2]+m[3][2]};
+}
 }

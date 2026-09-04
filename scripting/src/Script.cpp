@@ -750,7 +750,7 @@ class BytecodeCompiler {
         Require(receiver != "InputAction" && receiver != "Mouse",e.token,"Input state is read-only");
         const auto nativeAccessor=[&](const std::string& field){for(const auto& n:NativeTypes())if(!n.accessor.empty()&&n.accessor!="transform"&&n.accessor==field)return true;return false;};
         Require(!(program.Assignable("gameObject",receiver) && nativeAccessor(e.token.text)),e.token,"Native behavior references are read-only");
-            Require(!(program.Assignable("Transform",receiver) && GlobalField(e.token.text)),e.token,"Global transform fields are read-only");
+        // ZE-83: global_position/global_rotation/global_scale are now writable (the VM converts to the local value).
         return {FieldType(receiver, e.token), true, 0, e.token.text, {}};
     }
     void Load(const Slot& slot, const Token& t) {
@@ -1391,6 +1391,30 @@ struct Runtime::Impl {
         else {const int row=name=="right"?0:name=="up"?1:2;result={rotation[row][0],rotation[row][1],rotation[row][2]};}
         return Coerce(result,"Vector3",t);
     }
+    // ZE-83: the parent's world matrix + world rotation for `transform`'s owner (identity if it has no parent).
+    std::pair<world::Matrix,world::Matrix> ParentWorld(ObjectRef transform, const Token& t) const {
+        auto matrix=world::Identity(),rotation=world::Identity();
+        const auto owner=Resolve(transform,t).transformOwner;
+        auto parent=owner.id?std::get<ObjectRef>(Get(owner,"parent",t)):ObjectRef{};
+        unsigned ancestors=0;
+        while(parent.id){
+            const auto pt=std::get<ObjectRef>(Get(parent,"transform",t));
+            const auto p=std::get<Vector3>(Get(pt,"position",t)),r=std::get<Vector3>(Get(pt,"rotation",t)),s=std::get<Vector3>(Get(pt,"scale",t));
+            matrix=world::Multiply(matrix,world::Local(p,r,s));rotation=world::Multiply(rotation,world::Rotation(r));
+            if(++ancestors>64)Error(t,"Global transform hierarchy exceeds 64 levels");
+            parent=std::get<ObjectRef>(Get(parent,"parent",t));
+        }
+        return {matrix,rotation};
+    }
+    // Convert a desired GLOBAL position/rotation/scale into the LOCAL value to store.
+    Vector3 LocalFromGlobal(ObjectRef transform, const std::string& name, Vector3 desired, const Token& t) const {
+        const auto [parentMatrix,parentRotation]=ParentWorld(transform,t);
+        if(name=="global_position") return world::TransformPoint(desired,world::AffineInverse(parentMatrix));
+        if(name=="global_rotation") return world::Euler(world::Multiply(world::Rotation(desired),world::Transpose3(parentRotation)));
+        const auto ps=world::Scale(parentMatrix); // global_scale
+        auto div=[](double a,double b){return std::abs(b)<1e-9?a:a/b;};
+        return {div(desired.x,ps.x),div(desired.y,ps.y),div(desired.z,ps.z)};
+    }
     Vector3 DirectionRotation(ObjectRef transform, const std::string& name, Vector3 direction, const Token& t) const {
         const auto length=std::hypot(direction.x,std::hypot(direction.y,direction.z));
         if(length<=1e-12 || !std::isfinite(length)) Error(t,"Transform direction must be non-zero");
@@ -1422,7 +1446,13 @@ struct Runtime::Impl {
         auto field = program->FindField(o.type->name, fieldName, &index);
         if (!field) Error(t, "Unknown field '" + name + "'");
         if(o.type->name=="InputAction" || o.type->name=="Mouse")Error(t,"Input state is read-only");
-        if(program->Assignable("Transform",o.type->name) && GlobalField(fieldName))Error(t,"Global transform fields are read-only");
+        if(program->Assignable("Transform",o.type->name) && GlobalField(fieldName)) { // ZE-83: writable - store the local value that yields this global
+            value=Coerce(std::move(value),"Vector3",t);
+            const auto local=LocalFromGlobal(ref,fieldName,std::get<Vector3>(value),t);
+            const std::string localName=fieldName=="global_position"?"position":fieldName=="global_rotation"?"rotation":"scale";
+            auto localIndex=std::size_t{}; program->FindField(o.type->name,localName,&localIndex);
+            value=local; fieldName=localName; index=localIndex; field=program->FindField(o.type->name,localName);
+        }
         if(program->Assignable("Transform",o.type->name) && DirectionField(fieldName)) {
             value=Coerce(std::move(value),"Vector3",t);
             const auto rotation=DirectionRotation(ref,fieldName,std::get<Vector3>(value),t);
