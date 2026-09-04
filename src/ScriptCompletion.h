@@ -6,7 +6,7 @@
 
 namespace scriptCompletion {
 // signature: the parameter list shown in hover tooltips, e.g. L"float delta" (empty = no params).
-struct Item { std::wstring name, type; bool function=false; std::wstring signature; };
+struct Item { std::wstring name, type; bool function=false; std::wstring signature; bool isPrivate=false, isStatic=false; };
 struct Type { std::wstring base; std::map<std::wstring,Item> members; };
 struct Result { std::size_t start=0; std::wstring prefix; bool members=false; std::vector<Item> items; };
 // Tolerant source index: completion works while a declaration is incomplete.

@@ -67,6 +67,9 @@ int main(int argc, char**)
             Check(has(complete(L"class A { func f() { Other obj; obj."),L"speed"),"Typed member completion missing");
             Check(has(complete(L"class A { func f() { Other obj; obj."),L"ping"),"Inherited signal missing");
             Check(!has(complete(L"class A { func f() { Vector3 v; v."),L"speed"),"Unrelated member leaked into list");
+            // ZE-79: a private member is offered inside its own class but not through another value.
+            Check(has(complete(L"class Sec { private int _key; func f() { _"),L"_key"),"private member missing from its own class");
+            Check(!has(complete(L"class Sec { private int _key; } class B { func f() { Sec s; s._"),L"_key"),"private member leaked through another value");
             Check(has(complete(L"class A { func f() { Other obj; obj.work()."),L"x"),"Return-type chain completion missing");
             Check(has(complete(L"class A { func f() { Input.action(\"move_left\")."),L"just_pressed"),"Input action chain missing");
             Check(has(complete(L"class A { func f() { Input.is_action_pressed(\"move_"),L"move_left"),"Input name completion missing");

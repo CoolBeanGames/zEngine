@@ -109,6 +109,11 @@ void Index::AddSource(const std::wstring& source) {
         if(c.begin>=2 && t[c.begin-2].text==L":")type.base=t[c.begin-1].text;
         for(auto i=c.begin+1;i<c.end && i<t.size();) {
             if(t[i].text==L"{"){i=Closing(t,i,L"{",L"}");if(i<t.size())++i;continue;}
+            // ZE-79: consume any member modifiers so `func` / fields still parse, and remember them.
+            bool modStatic=false,modPrivate=false;
+            while(i<c.end && i<t.size() && (t[i].text==L"static"||t[i].text==L"private"||t[i].text==L"abstract"||t[i].text==L"override")) {
+                if(t[i].text==L"static")modStatic=true; if(t[i].text==L"private")modPrivate=true; ++i;
+            }
             if(i+2<t.size() && t[i].text==L"func") {
                 const auto close=Closing(t,i+2,L"(",L")");std::wstring result=L"void";
                 if(close+2<t.size() && t[close+1].text==L":")result=t[close+2].text;
@@ -117,11 +122,15 @@ void Index::AddSource(const std::wstring& source) {
                     if(!signature.empty())signature+=L", ";
                     signature+=t[j].text; if(j+1<close)signature+=L' '+t[j+1].text;
                 }
-                type.members[t[i+1].text]={t[i+1].text,result,true,signature};i=std::min(close+1,t.size());continue;
+                const bool priv=modPrivate || (!t[i+1].text.empty() && t[i+1].text[0]==L'_');
+                type.members[t[i+1].text]={t[i+1].text,result,true,signature,priv,modStatic};
+                i=std::min(close+1,t.size());continue;
             }
             if(i+2<t.size() && t[i].text==L"signal")type.members[t[i+1].text]={t[i+1].text,L"signal"};
-            else if(i+2<t.size() && Word(t[i].text[0]) && Word(t[i+1].text[0]) && (t[i+2].text==L"="||t[i+2].text==L";"))
-                type.members[t[i+1].text]={t[i+1].text,t[i].text};
+            else if(i+2<t.size() && Word(t[i].text[0]) && Word(t[i+1].text[0]) && (t[i+2].text==L"="||t[i+2].text==L";")) {
+                const bool priv=modPrivate || (!t[i+1].text.empty() && t[i+1].text[0]==L'_');
+                type.members[t[i+1].text]={t[i+1].text,t[i].text,false,{},priv,modStatic};
+            }
             ++i;
         }
     }
@@ -177,7 +186,12 @@ Result Index::Complete(const std::wstring& source,std::size_t caret) const {
             if(auto it=variables.find(t[last].text);it!=variables.end())return it->second.type;
             return index.types_.contains(t[last].text)?t[last].text:L"";
         };
-        candidates=members(resolve(end,0));
+        const auto receiverType=resolve(end,0);
+        const bool selfReceiver=end>=0 && (t[end].text==L"this" || t[end].text==receiverType);
+        candidates=members(receiverType);
+        // ZE-79: a private member is only offered when completing inside its own class.
+        if(receiverType!=currentClass && !selfReceiver)
+            for(auto it=candidates.begin();it!=candidates.end();) it->second.isPrivate ? it=candidates.erase(it) : ++it;
     } else {
         if(result.prefix.empty())return result;
         candidates=variables;
