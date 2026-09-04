@@ -107,6 +107,11 @@ public:
 
     static std::filesystem::path RegistryFile();
     static std::optional<std::filesystem::path> LocateEditor();
+    // The folder of the editor the launcher manages: the flat
+    // "<Program Files>\zEngine" when present, else the newest per-user
+    // "<LocalAppData>\zEngine\Engine\Downloads\<n>". `outNumber` gets its build
+    // number (-1 if unknown / nothing installed).
+    static std::optional<std::filesystem::path> InstalledEditorDir(int* outNumber);
     // Best-effort editor version string ("" when it cannot be determined): a
     // `version.txt` next to the editor, else the exe's version resource.
     static std::wstring EditorVersion();

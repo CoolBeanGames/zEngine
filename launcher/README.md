@@ -29,12 +29,15 @@ CMake solution.
   new `C:\Program Files\z engine\versions\<n>\` folder alongside any existing
   versions, writing `version.txt`. The Start-menu and Desktop shortcuts are then
   repointed at the newest installed editor.
-- **Editor install / shortcuts** — on startup the launcher looks for an editor
-  under `C:\Program Files\z engine\versions\`. When that folder is empty it
-  offers to download the latest release and unzip it into `versions\<n>\`;
-  otherwise it does a quick update check. Either way it (re)creates a
-  `zEngine Editor.lnk` in the Start menu and on the Desktop pointing at the
-  newest installed editor.
+- **Editor install / shortcuts** — the launcher looks for the editor at
+  `C:\Program Files\zEngine\zEngine.exe`, then the newest `<n>` folder under
+  `%LOCALAPPDATA%\zEngine\Engine\Downloads\`. When nothing is installed it
+  offers to download the latest `engine_<n>.zip` release; it installs to
+  `C:\Program Files\zEngine\` when it can write there, otherwise it falls back
+  to `%LOCALAPPDATA%\zEngine\Engine\Downloads\<n>\` (no administrator rights
+  needed). Either way it (re)creates a `zEngine Editor.lnk` in the Start menu
+  and on the Desktop pointing at the newest editor, and the outcome of an
+  explicit download is always reported in a dialog.
 - **`.zlaunch` files** — one per project folder (`ZLAUNCH 1`: name / version /
   icon / created / launched). On first run the launcher back-fills them into
   existing projects and registers a per-user file association so double-clicking
@@ -53,8 +56,9 @@ uploading `builds/release/launcher_<n>.zip` (the two exes) as a release asset.
 
 ## Finding the editor
 
-The launcher looks for the override file first, then the newest `<n>` folder
-under `C:\Program Files\z engine\versions\`, then `zEngine.exe` next to itself,
+The launcher looks for the override file first, then
+`C:\Program Files\zEngine\zEngine.exe`, then the newest `<n>` folder under
+`%LOCALAPPDATA%\zEngine\Engine\Downloads\`, then `zEngine.exe` next to itself,
 then in `Release\` / `Debug\` subfolders, then one folder up, and finally walks
 up looking for the engine's `builds\release\Release` / `builds\debug\Debug`
 output (dev convenience). To point it somewhere explicit, create

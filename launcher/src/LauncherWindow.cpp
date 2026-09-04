@@ -98,11 +98,15 @@ HWND LauncherWindow::Create(int showCommand)
         std::wstring message;
         bool changed = false;
         HCURSOR previous = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
-        store_.EnsureEditorInstalled(message, changed, allowDownload);
+        const bool ok = store_.EnsureEditorInstalled(message, changed, allowDownload);
         SetCursor(previous);
         // Only surface this at rest when it is actionable: we just installed
         // something, or there is no editor at all.
         if (!message.empty() && (changed || !haveEditor)) status_ = message;
+        // Never fail an explicit download silently - report the outcome.
+        if (allowDownload && !message.empty())
+            MessageBoxW(main_, message.c_str(), L"Install zEngine",
+                        (ok && changed) ? MB_OK | MB_ICONINFORMATION : MB_OK | MB_ICONWARNING);
     }
 
     editorVersion_ = ProjectStore::EditorVersion();
@@ -627,8 +631,8 @@ void LauncherWindow::OnUpdate()
 
     if (MessageBoxW(main_,
                     L"The launcher is up to date. Check GitHub for a newer editor build and "
-                    L"install it under \"C:\\Program Files\\z engine\\versions\"?\r\n\r\nClose the "
-                    L"editor first.",
+                    L"install it to \"C:\\Program Files\\zEngine\" (or your user folder if that "
+                    L"needs administrator rights)?\r\n\r\nClose the editor first.",
                     L"Update Editor", MB_YESNO | MB_ICONQUESTION) != IDYES)
     {
         SetStatus(L"Ready.");
