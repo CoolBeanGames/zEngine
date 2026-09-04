@@ -85,6 +85,19 @@ public:
     // when there is nothing to run or it could not start.
     static bool PlayProject(const ProjectEntry& entry, std::wstring& error);
 
+    // Make sure an editor is installed under "C:\Program Files\z engine\versions".
+    // When that location is empty this downloads the latest editor release and
+    // unzips a new "<n>" version folder there; otherwise it checks GitHub for a
+    // higher-numbered build and installs it alongside. Either way it (re)creates
+    // the Start-menu and Desktop shortcuts that point at the newest installed
+    // editor. `allowDownload` gates the (possibly large) network download;
+    // `changed` is set when files were installed. `message` always carries a
+    // human-readable result.
+    bool EnsureEditorInstalled(std::wstring& message, bool& changed, bool allowDownload) const;
+
+    // The editor-versions root: "<Program Files>\z engine\versions".
+    static std::filesystem::path EngineVersionsRoot();
+
     // Reserved: headless standalone build. Not wired up yet.
     bool BuildProject(const ProjectEntry& entry, std::wstring& error) const;
     // Download the most recent GitHub release of the editor, unzip it and replace

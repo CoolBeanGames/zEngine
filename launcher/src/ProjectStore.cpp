@@ -2,6 +2,8 @@
 
 #include <windows.h>
 #include <shlobj.h>
+#include <shlguid.h>
+#include <shobjidl.h>
 #include <shellapi.h>
 #include <winver.h>
 #include <winhttp.h>
@@ -510,6 +512,233 @@ bool RunAndWait(const std::wstring& commandLine, DWORD timeoutMs, DWORD& exitCod
     return wait == WAIT_OBJECT_0 && exitCode == 0;
 }
 
+// --- editor install location: "<Program Files>\z engine\versions\<n>" --------
+fs::path EngineVersionsRootImpl()
+{
+    PWSTR dir = nullptr;
+    fs::path base;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, nullptr, &dir)) && dir)
+        base = dir;
+    if (dir) CoTaskMemFree(dir);
+    if (base.empty()) base = L"C:\\Program Files";
+    return base / L"z engine" / L"versions";
+}
+
+// The newest editor sitting under `versionsRoot`: each direct subfolder that
+// contains a "zEngine.exe" is a candidate; a folder whose name is all digits is
+// treated as a build number and the highest one wins, otherwise the most
+// recently written exe wins. `outNumber` receives the winning build number, or
+// -1 when the winner has a non-numeric folder name / nothing was found.
+std::optional<fs::path> NewestEditorUnder(const fs::path& versionsRoot, int* outNumber)
+{
+    if (outNumber) *outNumber = -1;
+    std::error_code ec;
+    if (!fs::is_directory(versionsRoot, ec)) return std::nullopt;
+
+    std::optional<fs::path> best;
+    int bestNumber = -1;
+    FILETIME bestTime{};
+    for (const auto& e : fs::directory_iterator(versionsRoot, ec))
+    {
+        if (ec) break;
+        if (!e.is_directory()) continue;
+
+        fs::path exe = e.path() / L"zEngine.exe";
+        if (!fs::is_regular_file(exe, ec))
+        {
+            exe.clear();
+            for (const auto& candidate :
+                 { e.path() / L"Release" / L"zEngine.exe", e.path() / L"bin" / L"zEngine.exe" })
+                if (fs::is_regular_file(candidate, ec)) { exe = candidate; break; }
+            if (exe.empty()) continue;
+        }
+
+        const std::wstring folderName = e.path().filename().wstring();
+        int number = -1;
+        if (!folderName.empty() &&
+            std::all_of(folderName.begin(), folderName.end(),
+                        [](wchar_t c) { return c >= L'0' && c <= L'9'; }))
+            number = _wtoi(folderName.c_str());
+
+        bool take = false;
+        if (number >= 0)
+        {
+            take = number > bestNumber;
+        }
+        else if (bestNumber < 0)
+        {
+            WIN32_FILE_ATTRIBUTE_DATA data{};
+            if (GetFileAttributesExW(exe.c_str(), GetFileExInfoStandard, &data))
+            {
+                if (!best || CompareFileTime(&data.ftLastWriteTime, &bestTime) > 0)
+                {
+                    take = true;
+                    bestTime = data.ftLastWriteTime;
+                }
+            }
+            else if (!best)
+            {
+                take = true;
+            }
+        }
+
+        if (take)
+        {
+            best = exe;
+            if (number >= 0) bestNumber = number;
+        }
+    }
+    if (outNumber) *outNumber = bestNumber;
+    return best;
+}
+
+// Download a release archive from `url`, unzip it with the system `tar`, and copy
+// its contents into `destDir` (created if needed). GitHub source archives that
+// wrap everything in one top-level folder are unwrapped. Returns false and fills
+// `message` on any failure.
+bool DownloadArchiveInto(const std::wstring& url, const fs::path& destDir, std::wstring& message)
+{
+    std::wstring error;
+    std::string archiveBytes;
+    if (!HttpGet(url, archiveBytes, error))
+    {
+        message = L"Could not download the release: " + error;
+        return false;
+    }
+
+    std::error_code ec;
+    const fs::path work = LocalAppData() / L"zLauncher" / L"editor-download";
+    fs::remove_all(work, ec);
+    fs::create_directories(work, ec);
+
+    const fs::path zipPath = work / L"release.zip";
+    {
+        std::ofstream out(zipPath, std::ios::binary | std::ios::trunc);
+        out.write(archiveBytes.data(), static_cast<std::streamsize>(archiveBytes.size()));
+        if (!out)
+        {
+            fs::remove_all(work, ec);
+            message = L"Could not write the downloaded archive to disk.";
+            return false;
+        }
+    }
+
+    const fs::path extractDir = work / L"extracted";
+    fs::create_directories(extractDir, ec);
+    wchar_t systemDir[MAX_PATH]{};
+    GetSystemDirectoryW(systemDir, MAX_PATH);
+    const std::wstring command = L"\"" + std::wstring(systemDir) + L"\\tar.exe\" -xf \"" +
+                                 zipPath.wstring() + L"\" -C \"" + extractDir.wstring() + L"\"";
+    DWORD exitCode = 0;
+    if (!RunAndWait(command, 180000, exitCode))
+    {
+        fs::remove_all(work, ec);
+        message = L"Could not unzip the release (tar exit " + std::to_wstring(exitCode) + L").";
+        return false;
+    }
+
+    fs::path source = extractDir;
+    {
+        std::vector<fs::path> entries;
+        for (const auto& e : fs::directory_iterator(extractDir, ec)) entries.push_back(e.path());
+        if (entries.size() == 1 && fs::is_directory(entries.front(), ec)) source = entries.front();
+    }
+
+    fs::create_directories(destDir, ec);
+    int copied = 0;
+    int failed = 0;
+    for (const auto& e : fs::recursive_directory_iterator(source, ec))
+    {
+        const fs::path relative = fs::relative(e.path(), source, ec);
+        if (relative.empty()) continue;
+        const fs::path destination = destDir / relative;
+        std::error_code cec;
+        if (e.is_directory())
+        {
+            fs::create_directories(destination, cec);
+            continue;
+        }
+        fs::create_directories(destination.parent_path(), cec);
+        fs::copy_file(e.path(), destination, fs::copy_options::overwrite_existing, cec);
+        if (cec) ++failed;
+        else ++copied;
+    }
+    fs::remove_all(work, ec);
+
+    if (copied == 0)
+    {
+        message = L"The downloaded release contained no files.";
+        return false;
+    }
+    if (failed > 0)
+    {
+        message = std::to_wstring(failed) + L" file(s) could not be written under " +
+                  destDir.wstring() + L" (try running the launcher as administrator).";
+        return false;
+    }
+    return true;
+}
+
+// Create/overwrite a .lnk shortcut at `linkFile` pointing at `target`.
+bool WriteShortcut(const fs::path& target, const fs::path& linkFile, const std::wstring& description)
+{
+    IShellLinkW* link = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))))
+        return false;
+
+    link->SetPath(target.c_str());
+    link->SetWorkingDirectory(target.parent_path().c_str());
+    link->SetIconLocation(target.c_str(), 0);
+    if (!description.empty()) link->SetDescription(description.c_str());
+
+    bool ok = false;
+    IPersistFile* file = nullptr;
+    if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file))))
+    {
+        std::error_code ec;
+        fs::create_directories(linkFile.parent_path(), ec);
+        ok = SUCCEEDED(file->Save(linkFile.c_str(), TRUE));
+        file->Release();
+    }
+    link->Release();
+    return ok;
+}
+
+// (Re)create the Start-menu and Desktop shortcuts to the newest installed editor.
+void RefreshEditorShortcuts(const fs::path& editorExe)
+{
+    std::error_code ec;
+    if (editorExe.empty() || !fs::is_regular_file(editorExe, ec)) return;
+
+    auto place = [&](REFKNOWNFOLDERID id) {
+        PWSTR dir = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(id, KF_FLAG_CREATE, nullptr, &dir)) && dir)
+            WriteShortcut(editorExe, fs::path(dir) / L"zEngine Editor.lnk", L"zEngine editor");
+        if (dir) CoTaskMemFree(dir);
+    };
+    place(FOLDERID_Programs);
+    place(FOLDERID_Desktop);
+}
+
+// Which GitHub repo to pull the editor/launcher from. Overridable via
+// <launcher data>/repo.txt ("owner/repo").
+void ResolveRepo(std::string& owner, std::string& repo)
+{
+    owner = "CoolBeanGames";
+    repo = "zEngine";
+    if (auto text = ReadTextFile(LocalAppData() / L"zLauncher" / L"repo.txt", 4096))
+    {
+        std::string line = *text;
+        line.erase(0, line.find_first_not_of(" \t\r\n"));
+        if (const auto end = line.find_first_of(" \t\r\n"); end != std::string::npos) line.erase(end);
+        if (const auto slash = line.find('/'); slash != std::string::npos && slash + 1 < line.size())
+        {
+            owner = line.substr(0, slash);
+            repo = line.substr(slash + 1);
+        }
+    }
+}
+
 // Per-user association: double-clicking a ".zlaunch" runs `zLauncher.exe "<file>"`.
 // Idempotent, and a no-op once it already points at this exe.
 void RegisterFileAssociation()
@@ -547,6 +776,10 @@ std::optional<fs::path> ProjectStore::LocateEditor()
         std::error_code ec;
         if (!line.empty() && fs::is_regular_file(fs::path(line), ec)) return fs::path(line);
     }
+
+    // The installed editor: the newest "<n>" folder under
+    // "<Program Files>\z engine\versions".
+    if (auto installed = NewestEditorUnder(EngineVersionsRootImpl(), nullptr)) return installed;
 
     const fs::path candidates[] = {
         here / L"zEngine.exe",
@@ -1095,6 +1328,96 @@ bool ProjectStore::PlayProject(const ProjectEntry& entry, std::wstring& error)
         error = L"Could not start " + exe->wstring() + L".";
         return false;
     }
+    return true;
+}
+
+fs::path ProjectStore::EngineVersionsRoot() { return EngineVersionsRootImpl(); }
+
+bool ProjectStore::EnsureEditorInstalled(std::wstring& message, bool& changed, bool allowDownload) const
+{
+    changed = false;
+    const fs::path versionsRoot = EngineVersionsRootImpl();
+    int installed = -1;
+    auto current = NewestEditorUnder(versionsRoot, &installed);
+
+    std::string owner;
+    std::string repo;
+    ResolveRepo(owner, repo);
+
+    std::string json;
+    std::wstring error;
+    const bool online = HttpGet(
+        L"https://api.github.com/repos/" + Wide(owner) + L"/" + Wide(repo) + L"/releases", json, error);
+
+    int remote = -1;
+    std::string url;
+    if (online)
+    {
+        HighestNumberedAsset(json, "engine", remote, url);
+        if (url.empty()) url = FirstZipAssetUrl(json);
+    }
+
+    auto installNewVersion = [&](int number) -> bool {
+        const fs::path dest = versionsRoot / std::to_wstring(number);
+        std::error_code ec;
+        fs::create_directories(dest, ec);
+        if (!DownloadArchiveInto(Wide(url), dest, message)) return false;
+        try { WriteTextFileAtomic(dest / L"version.txt", "engine_" + std::to_string(number)); }
+        catch (const std::exception&) {}
+        auto newest = NewestEditorUnder(versionsRoot, nullptr);
+        RefreshEditorShortcuts(newest ? *newest : (dest / L"zEngine.exe"));
+        changed = true;
+        return true;
+    };
+
+    // An editor is already installed under Program Files: keep it current.
+    if (current)
+    {
+        if (online && !url.empty() && remote > installed)
+        {
+            if (!allowDownload)
+            {
+                RefreshEditorShortcuts(*current);
+                message = L"A newer editor (build " + std::to_wstring(remote) +
+                          L") is available - use Update to install it.";
+                return true;
+            }
+            if (!installNewVersion(remote)) return false;
+            message = L"Editor updated to build " + std::to_wstring(remote) + L".";
+            return true;
+        }
+
+        RefreshEditorShortcuts(*current);
+        if (!online)
+            message = L"Editor update check skipped: " + error;
+        else if (installed >= 0)
+            message = L"The editor is up to date (build " + std::to_wstring(installed) + L").";
+        else
+            message = L"The editor is up to date.";
+        return true;
+    }
+
+    // Nothing installed under Program Files yet.
+    if (!allowDownload)
+    {
+        message = L"No editor is installed under " + versionsRoot.wstring() + L".";
+        return false;
+    }
+    if (!online)
+    {
+        message = L"Cannot reach GitHub to download the editor: " + error;
+        return false;
+    }
+    if (url.empty())
+    {
+        message = L"No downloadable editor release was found on GitHub.";
+        return false;
+    }
+
+    const int number = remote > 0 ? remote : 1;
+    if (!installNewVersion(number)) return false;
+    message = L"Installed the zEngine editor (build " + std::to_wstring(number) + L") to " +
+              (versionsRoot / std::to_wstring(number)).wstring() + L".";
     return true;
 }
 

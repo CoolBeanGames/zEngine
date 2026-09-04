@@ -13,6 +13,8 @@ constexpr wchar_t kMainClass[] = L"zLauncherMain";
 constexpr wchar_t kListClass[] = L"zLauncherList";
 
 constexpr int kTopBar = 58;
+constexpr int kSectionBar = 26;      // uppercase accent section header strip
+constexpr int kListTop = kTopBar + kSectionBar;
 constexpr int kStatusBar = 26;
 constexpr int kRowHeight = 86;
 constexpr int kRowButtonW = 76;
@@ -45,8 +47,9 @@ HFONT MakeFont(int height, int weight)
 LauncherWindow::LauncherWindow(HINSTANCE instance) : instance_(instance)
 {
     titleFont_ = MakeFont(-20, FW_SEMIBOLD);
-    nameFont_ = MakeFont(-16, FW_SEMIBOLD);
+    nameFont_ = MakeFont(-14, FW_SEMIBOLD);
     bodyFont_ = MakeFont(-12, FW_NORMAL);
+    headerFont_ = MakeFont(-11, FW_SEMIBOLD);
     status_ = L"Ready.";
 
 #ifdef ZLAUNCHER_VERSION
@@ -79,6 +82,29 @@ HWND LauncherWindow::Create(int showCommand)
 
     store_.Load();
     store_.RunFirstTimeSetup();
+
+    // Make sure an editor is installed under "C:\Program Files\z engine\versions"
+    // and the Start-menu / Desktop shortcuts point at it. A fresh download only
+    // happens automatically when there is no editor anywhere yet (and the user
+    // agrees); an already-installed editor just gets a quick, non-fatal check.
+    {
+        const bool haveEditor = ProjectStore::LocateEditor().has_value();
+        bool allowDownload = false;
+        if (!haveEditor)
+            allowDownload = MessageBoxW(main_,
+                                        L"No zEngine editor is installed yet.\r\n\r\nDownload the "
+                                        L"latest editor release from GitHub now?",
+                                        L"Install zEngine", MB_YESNO | MB_ICONQUESTION) == IDYES;
+        std::wstring message;
+        bool changed = false;
+        HCURSOR previous = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+        store_.EnsureEditorInstalled(message, changed, allowDownload);
+        SetCursor(previous);
+        // Only surface this at rest when it is actionable: we just installed
+        // something, or there is no editor at all.
+        if (!message.empty() && (changed || !haveEditor)) status_ = message;
+    }
+
     editorVersion_ = ProjectStore::EditorVersion();
     RebuildRows();
 
@@ -124,7 +150,7 @@ LRESULT LauncherWindow::OnMain(UINT m, WPARAM wp, LPARAM lp)
     {
         list_ = CreateWindowExW(0, kListClass, nullptr,
                                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_VSCROLL,
-                                0, kTopBar, 100, 100, main_, nullptr, instance_, nullptr);
+                                0, kListTop, 100, 100, main_, nullptr, instance_, nullptr);
         SetWindowLongPtrW(list_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
         btnUpdate_ = CreateWindowExW(0, L"BUTTON", L"Update",
@@ -170,6 +196,7 @@ LRESULT LauncherWindow::OnMain(UINT m, WPARAM wp, LPARAM lp)
         RECT client;
         GetClientRect(main_, &client);
         PaintTopBar(dc, client);
+        PaintSection(dc, client);
         PaintStatus(dc, client);
         EndPaint(main_, &ps);
         return 0;
@@ -187,6 +214,7 @@ LRESULT LauncherWindow::OnMain(UINT m, WPARAM wp, LPARAM lp)
         DeleteObject(titleFont_);
         DeleteObject(nameFont_);
         DeleteObject(bodyFont_);
+        DeleteObject(headerFont_);
         PostQuitMessage(0);
         return 0;
     }
@@ -212,6 +240,30 @@ LRESULT LauncherWindow::OnList(UINT m, WPARAM wp, LPARAM lp)
         EndPaint(list_, &ps);
         return 0;
     }
+
+    case WM_MOUSEMOVE:
+    {
+        const int y = static_cast<short>(HIWORD(lp));
+        const int count = static_cast<int>(store_.Projects().size());
+        int row = (y + scroll_) / kRowHeight;
+        if (row < 0 || row >= count) row = -1;
+        if (row != hoverRow_)
+        {
+            hoverRow_ = row;
+            InvalidateRect(list_, nullptr, FALSE);
+        }
+        TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, list_, 0 };
+        TrackMouseEvent(&track);
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        if (hoverRow_ != -1)
+        {
+            hoverRow_ = -1;
+            InvalidateRect(list_, nullptr, FALSE);
+        }
+        return 0;
 
     case WM_MOUSEWHEEL:
     {
@@ -279,7 +331,7 @@ void LauncherWindow::LayoutChildren()
     right -= 130 + kRowButtonGap;
     MoveWindow(btnUpdate_, right - 90, by, 90, 32, TRUE);
 
-    MoveWindow(list_, 0, kTopBar, width, std::max(0, height - kTopBar - kStatusBar), TRUE);
+    MoveWindow(list_, 0, kListTop, width, std::max(0, height - kListTop - kStatusBar), TRUE);
 }
 
 void LauncherWindow::RebuildRows()
@@ -390,6 +442,25 @@ void LauncherWindow::PaintTopBar(HDC dc, const RECT& client)
     SelectObject(dc, old);
 }
 
+void LauncherWindow::PaintSection(HDC dc, const RECT& client)
+{
+    RECT bar{ 0, kTopBar, client.right, kListTop };
+    lstyle::Fill(dc, bar, lstyle::Window);
+    // The "underline rule" beneath the header, drawn in the accent colour.
+    RECT rule{ 0, kListTop - 1, client.right, kListTop };
+    lstyle::Fill(dc, rule, lstyle::Accent);
+
+    SetBkMode(dc, TRANSPARENT);
+    auto old = SelectObject(dc, headerFont_);
+    SetTextColor(dc, lstyle::Accent);
+    RECT label{ kEdgePad, kTopBar, client.right - kEdgePad, kListTop - 1 };
+    const int count = static_cast<int>(store_.Projects().size());
+    std::wstring header = L"PROJECTS";
+    if (count > 0) header += L"  (" + std::to_wstring(count) + L")";
+    DrawTextW(dc, header.c_str(), -1, &label, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
+    SelectObject(dc, old);
+}
+
 void LauncherWindow::PaintStatus(HDC dc, const RECT& client)
 {
     RECT bar{ 0, client.bottom - kStatusBar, client.right, client.bottom };
@@ -458,6 +529,15 @@ void LauncherWindow::PaintList(HDC target)
         if (top + kRowHeight < 0 || top > height) continue;
 
         const auto& project = projects[i];
+
+        // Blue-tinted selection with a left accent bar for the hovered row.
+        if (static_cast<int>(i) == hoverRow_)
+        {
+            RECT rowRect{ 0, top, width, top + kRowHeight - 1 };
+            lstyle::Fill(dc, rowRect, lstyle::Selection);
+            RECT accentBar{ 0, top, 3, top + kRowHeight - 1 };
+            lstyle::Fill(dc, accentBar, lstyle::Accent);
+        }
 
         const int textRight = width - kEdgePad - kRowButtons * (kRowButtonW + kRowButtonGap);
 
@@ -546,8 +626,9 @@ void LauncherWindow::OnUpdate()
     }
 
     if (MessageBoxW(main_,
-                    L"The launcher is up to date. Download the most recent editor release from "
-                    L"GitHub and replace the installed editor files?\r\n\r\nClose the editor first.",
+                    L"The launcher is up to date. Check GitHub for a newer editor build and "
+                    L"install it under \"C:\\Program Files\\z engine\\versions\"?\r\n\r\nClose the "
+                    L"editor first.",
                     L"Update Editor", MB_YESNO | MB_ICONQUESTION) != IDYES)
     {
         SetStatus(L"Ready.");
@@ -559,7 +640,8 @@ void LauncherWindow::OnUpdate()
 
     HCURSOR previous = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
     std::wstring message;
-    const bool ok = store_.UpdateEditor(message);
+    bool changed = false;
+    const bool ok = store_.EnsureEditorInstalled(message, changed, true);
     SetCursor(previous);
 
     editorVersion_ = ProjectStore::EditorVersion();

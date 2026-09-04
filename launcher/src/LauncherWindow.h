@@ -29,6 +29,7 @@ private:
     void RepositionRows();
     void UpdateScrollBar();
     void PaintTopBar(HDC dc, const RECT& client);
+    void PaintSection(HDC dc, const RECT& client);
     void PaintStatus(HDC dc, const RECT& client);
     void PaintList(HDC dc);
     void SetStatus(std::wstring text);
@@ -46,6 +47,9 @@ private:
     HFONT titleFont_ = nullptr;
     HFONT nameFont_ = nullptr;
     HFONT bodyFont_ = nullptr;
+    HFONT headerFont_ = nullptr;
+
+    int hoverRow_ = -1;   // project row under the cursor, or -1
 
     ProjectStore store_;
 

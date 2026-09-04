@@ -5,22 +5,24 @@
 #include <string_view>
 #include <algorithm>
 
-// Self-contained dark visuals for the launcher. The palette and the flat button
-// treatment deliberately mirror the engine editor's shared style so the two
-// applications look like one product, but nothing here depends on the engine.
+// Self-contained dark visuals for the launcher. This is the "holo" identity from
+// design.txt (PART 2 - VISUAL DESIGN STANDARD): dark chrome, Holo-blue accent,
+// thin low-contrast dividers, uppercase accent section headers, blue-tinted
+// selection with a left accent bar. Nothing here depends on the engine.
 namespace lstyle
 {
-inline constexpr COLORREF Window = RGB(32, 33, 37);
-inline constexpr COLORREF Panel  = RGB(40, 42, 47);
-inline constexpr COLORREF Face   = RGB(52, 54, 60);
-inline constexpr COLORREF Border = RGB(20, 21, 24);
-inline constexpr COLORREF Text   = RGB(214, 216, 221);
-inline constexpr COLORREF Muted  = RGB(145, 149, 158);
-inline constexpr COLORREF Accent = RGB(108, 166, 232);
-inline constexpr COLORREF Hover  = RGB(65, 69, 77);
-inline constexpr COLORREF Pressed = RGB(42, 64, 91);
-inline constexpr COLORREF Disabled = RGB(44, 46, 51);
-inline constexpr COLORREF RowLine = RGB(58, 60, 66);
+inline constexpr COLORREF Window   = RGB(12, 12, 12);   // #0c0c0c app ground
+inline constexpr COLORREF Panel    = RGB(27, 27, 27);   // #1b1b1b surfaces (bars)
+inline constexpr COLORREF Face     = RGB(34, 34, 34);   // very light control fill
+inline constexpr COLORREF Border   = RGB(44, 44, 44);   // #2c2c2c dividers
+inline constexpr COLORREF Text     = RGB(230, 230, 230);
+inline constexpr COLORREF Muted    = RGB(150, 150, 150);
+inline constexpr COLORREF Accent   = RGB(51, 181, 229); // Holo blue #33b5e5
+inline constexpr COLORREF Hover    = RGB(38, 38, 38);
+inline constexpr COLORREF Pressed  = RGB(30, 46, 54);   // blue-tinted press
+inline constexpr COLORREF Disabled = RGB(22, 22, 22);
+inline constexpr COLORREF RowLine  = RGB(44, 44, 44);
+inline constexpr COLORREF Selection = RGB(22, 40, 48);  // blue-tinted row selection
 
 struct Resources
 {
