@@ -674,20 +674,23 @@ void GetBehavior() {
     Error([&]{Compile("class A : gameObject { func f(){ getBehavior(gameObject); } }");},"native component type");
 }
 void FindAndTags() {
-    auto p=Compile(R"(class Q : gameObject {
-        func by_type():gameObject { return find_by_type(RigidBody); }
-        func by_type_static():gameObject { return GameObject.find_by_type(Collider); }
+    auto p=Compile(R"(class Target : rigidbody {}
+    class Q : gameObject {
+        func by_type():rigidbody { return find_by_type(RigidBody); }   // ZE-86: returns the behavior, not the gameObject
+        func by_type_is_body():bool { return find_by_type(RigidBody) is PhysicsBody; }
+        func by_type_static():collider { return GameObject.find_by_type(Collider); }
         func by_name():gameObject { return GameObject.find("Target"); }
         func first_tag():string { array t=get_tags(); return t[0]; }
         func tag_count():int { return get_tags().size(); }
         func is_boss():bool { return has_tag("boss"); }
         func is_minion():bool { return has_tag("minion"); }
     })");
-    Runtime r(p); auto q=r.Create("Q"); auto target=r.Create("gameObject");
+    Runtime r(p); auto q=r.Create("Q"); auto target=r.Create("Target");   // rigidbody accessor self-binds on create
     r.SetObjectLookup([&](std::string_view n){ return n=="Target"?target:ObjectRef{}; });
     r.SetTypeLookup([&](std::string_view type){ return type=="RigidBody"?target:ObjectRef{}; });
     r.SetTagLookup([&](ObjectRef){ return std::vector<std::string>{"boss","elite"}; });
-    Check(std::get<ObjectRef>(r.Call(q,"by_type"))==target,"find_by_type did not use the host type lookup");
+    Check(std::get<ObjectRef>(r.Call(q,"by_type"))==target,"find_by_type did not resolve to the searched behavior on the found object");
+    Check(std::get<bool>(r.Call(q,"by_type_is_body")),"find_by_type(RigidBody) should be a PhysicsBody reference");
     Check(std::get<ObjectRef>(r.Call(q,"by_type_static")).id==0,"find_by_type(Collider) should be null here");
     Check(std::get<ObjectRef>(r.Call(q,"by_name"))==target,"GameObject.find did not resolve");
     Check(Int(r.Call(q,"tag_count"))==2 && std::get<std::string>(r.Call(q,"first_tag"))=="boss","get_tags did not return the host tags");

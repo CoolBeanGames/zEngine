@@ -644,8 +644,11 @@ class BytecodeCompiler {
                 const auto* nt = FindNativeType(typeName);
                 Require(nt && (nt->component || nt->name == "PhysicsBody" || nt->name == "Behavior"), e.children[1]->token,
                         "find_by_type needs a native component type (RigidBody, KinematicBody, StaticBody, Area, Collider, Camera, PhysicsBody, Behavior)");
-                Emit(Op::FindType, t, 0, std::string(nt->name));
-                return "gameObject";
+                // ZE-86: return a reference to the behavior we searched for (not the owning gameObject).
+                // Types with a native accessor (RigidBody, Collider, Camera, ...) resolve to that component;
+                // the generic PhysicsBody/Behavior have no single accessor and still yield the gameObject.
+                Emit(Op::FindType, t, 0, std::string(nt->name), Value{std::string(nt->accessor)});
+                return nt->accessor.empty() ? std::string("gameObject") : typeName;
             }
             if(receiver=="string" || (receiver=="any" && (callee.token.text=="truncate" || callee.token.text=="substr"))) {
                 const auto& method=callee.token.text;
@@ -1919,7 +1922,11 @@ struct Runtime::Impl {
             }
             case Op::FindType: {
                 Tick(t); pop(); // discard the implicit receiver
-                stack.push_back(Coerce(typeLookup ? Value{typeLookup(ins.name)} : Value{ObjectRef{}}, "gameObject", t)); break;
+                const ObjectRef found = typeLookup ? typeLookup(ins.name) : ObjectRef{};
+                // ZE-86: resolve to the searched-for behavior via its native accessor; a miss stays null.
+                const auto* accessor = std::get_if<std::string>(&ins.value);
+                if (found.id && accessor && !accessor->empty()) { stack.push_back(Get(found, *accessor, t)); break; }
+                stack.push_back(Coerce(Value{found}, "gameObject", t)); break;
             }
             case Op::MakeVector: {
                 if (ins.name == "Vector2") {
