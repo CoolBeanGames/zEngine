@@ -33,6 +33,7 @@ namespace zengine
         {
             instance_ = std::move(instance);
             ResetLifecycle();
+            Owner().InvalidateSchedule(); // ZE-78: HasUpdate/HasDraw just flipped
             if (instance_) Instantiate();
         }
     protected:

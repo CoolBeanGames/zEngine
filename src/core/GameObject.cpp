@@ -34,6 +34,7 @@ void zengine::Behavior::SetPriority(float value)
 {
     if (!std::isfinite(value)) throw std::invalid_argument("Behavior priority must be finite.");
     priority_ = value;
+    owner_.InvalidateSchedule(); // ZE-78: re-sort the cached lists
 }
 void zengine::Behavior::Instantiate()
 {
@@ -84,12 +85,13 @@ bool zengine::ObjectCore::RemoveBehavior(Behavior& behavior)
 {
     const auto found=std::find_if(behaviors_.begin(),behaviors_.end(),[&](const auto& candidate){return candidate.get()==&behavior;});
     if(found==behaviors_.end())return false;
-    behaviors_.erase(found); return true;
+    behaviors_.erase(found); InvalidateSchedule(); return true;
 }
+void zengine::ObjectCore::InvalidateSchedule() noexcept { if(store_) store_->MarkStructureChanged(); }
 void zengine::ObjectCore::SetParent(GameObjectId parent){store_->SetParents({{id_,parent}});}
 zengine::ObjectStore::ObjectStore(ObjectStore&& other) noexcept {*this=std::move(other);}
 zengine::ObjectStore& zengine::ObjectStore::operator=(ObjectStore&& other) noexcept {
-    if(this!=&other){objects_=std::move(other.objects_);index_=std::move(other.index_);nextId_=other.nextId_;other.nextId_=1;for(auto& object:objects_)object->store_=this;}return *this;
+    if(this!=&other){objects_=std::move(other.objects_);index_=std::move(other.index_);nextId_=other.nextId_;other.nextId_=1;structureRevision_=other.structureRevision_+1;for(auto& object:objects_)object->store_=this;}return *this;
 }
 void zengine::ObjectStore::SetParents(const std::map<GameObjectId,GameObjectId>& changes) {
     if(changes.empty())return;
@@ -97,6 +99,7 @@ void zengine::ObjectStore::SetParents(const std::map<GameObjectId,GameObjectId>&
     for(const auto& [id,parent]:changes){if(!parents.contains(id) || (parent && !parents.contains(parent)))throw std::invalid_argument("Parent and child must belong to this scene.");parents[id]=parent;}
     for(const auto& [id,parent]:parents){auto current=parent;unsigned depth=0;while(current){if(current==id || ++depth>64)throw std::invalid_argument("Parenting would create a cycle or exceed 64 levels.");current=parents.at(current);}}
     for(auto& object:objects_)if(auto it=changes.find(object->Id());it!=changes.end())object->parent_=it->second;
+    MarkStructureChanged();
 }
 std::vector<zengine::GameObjectId> zengine::ObjectStore::HierarchyOrder() const {
     std::map<GameObjectId,std::vector<GameObjectId>> children;for(const auto& object:objects_)children[object->Parent()].push_back(object->Id());
@@ -133,6 +136,7 @@ template<class T> T& zengine::ObjectStore::Add(GameObjectId id, std::string name
     objects_.push_back(std::move(object));
     index_.emplace(id,&result);
     nextId_=std::max(nextId_,id+1);
+    MarkStructureChanged();
     return result;
 }
 zengine::GameObject& zengine::ObjectStore::Create(std::string name) { return Add<GameObject>(nextId_,std::move(name)); }
@@ -145,6 +149,7 @@ void zengine::ObjectStore::Remove(const std::set<GameObjectId>& ids)
     for(const auto& object:objects_)if(object->Parent() && ids.contains(object->Parent()) && !ids.contains(object->Id()))throw std::invalid_argument("Cannot remove a parent without its children.");
     std::erase_if(objects_,[&](const auto& object){return ids.contains(object->Id());});
     for(const auto id:ids)index_.erase(id);
+    MarkStructureChanged();
 }
 zengine::ObjectCore* zengine::ObjectStore::Find(GameObjectId id) noexcept
 {

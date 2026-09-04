@@ -126,6 +126,11 @@ namespace zengine
         Behavior& BehaviorAt(std::size_t index) { return *behaviors_.at(index); }
         bool RemoveBehavior(Behavior& behavior);
         bool Is2D() const noexcept { return is2D_; }
+        // ZE-78: tell the owning store its behavior schedule changed (a behavior was
+        // added/removed, re-prioritised, or gained/lost update/draw code), so the
+        // BehaviorLifecycle rebuilds its cached lists. Cheap; over-calling only costs
+        // one list rebuild.
+        void InvalidateSchedule() noexcept;
 
         template<class T, class... Args> T& AddBehavior(Args&&... args)
         {
@@ -133,6 +138,7 @@ namespace zengine
             auto behavior = std::make_unique<T>(*this, std::forward<Args>(args)...);
             T& result = *behavior;
             behaviors_.push_back(std::move(behavior));
+            InvalidateSchedule(); // ZE-78: invalidate the lifecycle's cached behavior lists
             if constexpr (std::is_same_v<T, physics::RigidBody> || std::is_same_v<T, physics::KinematicBody> || std::is_same_v<T, physics::StaticBody>)
                 EnsureCollider();
             result.Instantiate();
@@ -212,9 +218,14 @@ namespace zengine
         std::size_t Size() const noexcept { return objects_.size(); }
         ObjectCore& At(std::size_t index) { return *objects_.at(index); }
         const ObjectCore& At(std::size_t index) const { return *objects_.at(index); }
+        // ZE-78: monotonically increases whenever the object / behavior graph changes,
+        // so the BehaviorLifecycle can cache its ordered + filtered lists between frames.
+        std::uint64_t StructureRevision() const noexcept { return structureRevision_; }
+        void MarkStructureChanged() noexcept { ++structureRevision_; }
     private:
         template<class T> T& Add(GameObjectId id, std::string name);
         GameObjectId nextId_ = 1;
+        std::uint64_t structureRevision_ = 1;
         std::vector<std::unique_ptr<ObjectCore>> objects_;
         // ID -> object lookup. Objects are heap-owned by objects_, so these raw
         // pointers stay valid across vector growth and store moves.

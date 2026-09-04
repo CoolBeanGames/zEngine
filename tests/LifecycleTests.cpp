@@ -65,14 +65,22 @@ int main()
         auto& d=objects.Create().AddBehavior<Probe>(events,"d",-1.0f);
         Check(events==std::vector<std::string>({"aS","bS","cS","dS"}),"Start must run immediately once per construction");
         a.Instantiate(); Check(events.size()==4,"Start ran twice");
+        // ZE-78: the schedule is cached between frames, so the equal-priority (a, c)
+        // order is arbitrary but STABLE until the behavior graph changes - not
+        // reshuffled every tick.
+        events.clear(); lifecycle.Tick(objects,0.25f);
+        Check(events.size()==4 && events.front()=="bU" && events.back()=="dU","Priority must be descending, including negatives");
+        const std::string tie=events[1];
+        for (int i=0;i<16;++i) { events.clear(); lifecycle.Tick(objects,0.25f); Check(events[1]==tie,"Equal-priority order must be stable between frames"); }
+        // Across fresh lifecycles the tie is still randomised (both orders occur).
         std::set<std::string> ties;
-        for (int i=0;i<64;++i)
+        for (int seed=0;seed<64 && ties.size()<2;++seed)
         {
-            events.clear(); lifecycle.Tick(objects,0.25f);
-            Check(events.size()==4 && events.front()=="bU" && events.back()=="dU","Priority must be descending, including negatives");
-            ties.insert(events[1]);
+            ObjectStore s; BehaviorLifecycle lc(seed); std::vector<std::string> ev;
+            s.Create().AddBehavior<Probe>(ev,"x",0.0f); s.Create().AddBehavior<Probe>(ev,"y",0.0f);
+            ev.clear(); lc.Tick(s,0.25f); ties.insert(ev.front());
         }
-        Check(ties.size()==2,"Equal priorities must be randomly reordered");
+        Check(ties.size()==2,"Equal priorities must be randomised per schedule build");
         bool rejected=false;
         try { a.SetPriority(std::numeric_limits<float>::quiet_NaN()); } catch (...) { rejected=true; }
         Check(rejected && a.Priority()==0,"Nonfinite priorities must be rejected");
@@ -106,7 +114,16 @@ int main()
         a.action=[&]() { if (!added) { added=true; objects.Create().AddBehavior<Probe>(events,"new"); } };
         events.clear(); lifecycle.Tick(objects,0.25f);
         Check(std::find(events.begin(),events.end(),"newS")!=events.end() && std::find(events.begin(),events.end(),"newU")==events.end(),"New behavior must Start immediately but wait for the next tick snapshot");
-        std::cout<<"PASS: immediate Start, empty hooks, priority/tie ordering, tick snapshots, draw gating, enable state, failure isolation\n";
+        events.clear(); lifecycle.Tick(objects,0.25f);
+        Check(std::find(events.begin(),events.end(),"newU")!=events.end(),"ZE-78: a spawned behavior must join the schedule on the next tick (cache invalidation)");
+        // ZE-78: a scene of behaviors with no update code does zero per-tick work.
+        {
+            ObjectStore idle; BehaviorLifecycle idleLife(1);
+            for (int i=0;i<50;++i) idle.Create().AddBehavior<Empty>();
+            idleLife.Tick(idle,0.25f); idleLife.PhysicsTick(idle,0.25f);
+            idleLife.Draw(idle,[](GameObjectId){ return true; }); // Empty::OnUpdate/OnDraw throw if ever called
+        }
+        std::cout<<"PASS: immediate Start, empty hooks, priority/tie ordering, tick snapshots, draw gating, enable state, failure isolation, cached schedule\n";
         return 0;
     }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
