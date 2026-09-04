@@ -629,16 +629,17 @@ class BytecodeCompiler {
             // getBehavior(RigidBody) / this.getBehavior(...) / obj.getBehavior(...) -
             // compile-time sugar for the native accessor field on a gameObject.
             if (callee.token.text == "getBehavior" && (callee.kind == Expr::Name || callee.kind == Expr::Member)
-                && program.Assignable("gameObject", receiver) && !program.Method(receiver, "getBehavior")) {
+                && (program.Assignable("gameObject", receiver) || program.Assignable("gameObject2D", receiver)) && !program.Method(receiver, "getBehavior")) {
                 Require(e.children.size() == 2 && e.children[1]->kind == Expr::Name, t, "getBehavior takes one component type, e.g. getBehavior(RigidBody)");
                 const auto typeName = Canonical(e.children[1]->token.text);
                 const auto* nt = FindNativeType(typeName);
                 Require(nt && !nt->accessor.empty(), e.children[1]->token, "getBehavior needs a native component type (RigidBody, KinematicBody, StaticBody, Area, Collider, Camera, PhysicsBody, Transform)");
+                Require(nt->accessor != "ui_control" || program.Assignable("gameObject2D", receiver), e.children[1]->token, "UI controls are gameObject2D behaviors; call getBehavior on a gameObject2D");
                 Emit(Op::LoadField, t, 0, std::string(nt->accessor));
                 return typeName;
             }
             // find_by_type(RigidBody) - first scene object carrying that native component.
-            if (callee.token.text == "find_by_type" && program.Assignable("gameObject", receiver) && !program.Method(receiver, "find_by_type")) {
+            if (callee.token.text == "find_by_type" && (program.Assignable("gameObject", receiver) || program.Assignable("gameObject2D", receiver)) && !program.Method(receiver, "find_by_type")) {
                 Require(e.children.size() == 2 && e.children[1]->kind == Expr::Name, t, "find_by_type takes one component type, e.g. find_by_type(RigidBody)");
                 const auto typeName = Canonical(e.children[1]->token.text);
                 const auto* nt = FindNativeType(typeName);
@@ -914,8 +915,9 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     gameObject.fields.push_back({Token{Token::Identifier, "transform"}, "Transform"});
     gameObject.fields.push_back({Token{Token::Identifier, "parent"}, "gameObject"});
     // Read-only accessor field per native component type (physics, rigidbody, collider, ...).
+    // ui_control lives on gameObject2D (added below), not here.
     for(const auto& native:NativeTypes())
-        if(!native.accessor.empty() && native.accessor!="transform")
+        if(!native.accessor.empty() && native.accessor!="transform" && native.accessor!="ui_control")
             gameObject.fields.push_back({Token{Token::Identifier,std::string(native.accessor)},std::string(native.name)});
     Function find;find.params={"string"};find.result="gameObject";gameObject.methods.emplace("find",std::move(find));
     Function makeTimer;makeTimer.params={"float"};makeTimer.result="Timer";gameObject.methods.emplace("make_timer",std::move(makeTimer));
@@ -934,6 +936,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     Class gameObject2D; gameObject2D.name = "gameObject2D";
     gameObject2D.fields.push_back({Token{Token::Identifier, "transform"}, "Transform2D"});
     gameObject2D.fields.push_back({Token{Token::Identifier, "parent"}, "gameObject2D"});
+    gameObject2D.fields.push_back({Token{Token::Identifier, "ui_control"}, "uiControl"}); // ZE-87: getBehavior(uiButton) / find_by_type(uiPanel) / export uiText
     gameObject2D.methods.emplace("find", [] { Function f; f.params={"string"}; f.result="gameObject2D"; return f; }());
     gameObject2D.methods.emplace("make_timer", [] { Function f; f.params={"float"}; f.result="Timer"; return f; }());
     gameObject2D.methods.emplace("print", [] { Function f; f.params={"string"}; f.result="void"; return f; }());
@@ -1569,13 +1572,14 @@ struct Runtime::Impl {
             }
             else if (program->Assignable("gameObject2D", name)) {
                 const auto transform=Create("Transform2D",t);Resolve(transform,t).transformOwner=ref;Set(ref,"transform",transform,t);
+                if(program->Assignable("uiControl",name))Set(ref,"ui_control",ref,t,false); // ZE-87: a class : uiPanel is its own control
             }
             for (auto it = bases.rbegin(); it != bases.rend(); ++it) Execute(ref, (*it)->initializer, {}, t);
         } catch (...) { objects[ref.id - 1]->failed = true; throw; }
         return ref;
     }
     void BindNativeBehavior(ObjectRef ownerRef,const std::string& type,const Token& t={}) {
-        auto& owner=Resolve(ownerRef,t);if(!program->Assignable("gameObject",owner.type->name))Error(t,"Native behaviors require a gameObject owner");
+        auto& owner=Resolve(ownerRef,t);if(!program->Assignable("gameObject",owner.type->name) && !program->Assignable("gameObject2D",owner.type->name))Error(t,"Native behaviors require a gameObject owner");
         const auto* native=FindNativeType(type);
         if(!native||!native->component)Error(t,"Unknown native behavior type '"+type+"'");
         ObjectRef behavior=program->Assignable(type,owner.type->name)?ownerRef:Create(type,t);

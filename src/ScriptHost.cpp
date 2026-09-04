@@ -22,6 +22,40 @@ namespace zengine
 namespace
 {
     using namespace script;
+    // ZE-87: map a ui::UiControl::TypeName() token to its zScript native type name.
+    std::string_view UiScriptType(std::string_view token)
+    {
+        static const std::pair<std::string_view,std::string_view> map[] = {
+            {"control","uiControl"},{"container","uiContainer"},{"hbox","uiHTileBox"},{"vbox","uiVTileBox"},
+            {"center","uiCenterBox"},{"margin","uiMarginBox"},{"panel","uiPanel"},{"text","uiText"},
+            {"longText","uiLongText"},{"textEntry","uiTextEntry"},{"textureRect","uiTextureRect"},
+            {"colorRect","uiColorRect"},{"progressBar","uiProgressBar"},{"scroll","uiScroll"},
+            {"button","uiButton"},{"video","uiVideo"},{"html","uiHtml"},
+        };
+        for (const auto& [k,v] : map) if (k == token) return v;
+        return {};
+    }
+    // The concrete zScript ui type an object's control is, or "" when it has no ui::UiControl.
+    std::string_view ObjectUiScriptType(const ObjectCore& object)
+    {
+        const auto* control = object.GetBehavior<ui::UiControl>();
+        return control ? UiScriptType(control->TypeName()) : std::string_view{};
+    }
+    // Is `concrete` (a ui native type) the same as, or a subtype of, `target`?
+    bool UiTypeAssignable(std::string_view concrete, std::string_view target)
+    {
+        for (std::string_view c = concrete; !c.empty();)
+        {
+            if (c == target) return true;
+            const auto* nt = script::FindNativeType(c);
+            c = nt ? nt->base : std::string_view{};
+        }
+        return false;
+    }
+    bool IsUiScriptType(std::string_view type)
+    {
+        return type.size() > 2 && type[0] == 'u' && type[1] == 'i' && script::FindNativeType(type) != nullptr;
+    }
     Vector3 ToScript(Vec3 v) { return {v.x,v.y,v.z}; }
     Vector2 ToScript(Vec2 v) { return {v.x,v.y}; }
     Vec2 ToNative2(Vector2 v)
@@ -166,6 +200,7 @@ namespace
     // Most-specific reference type an object satisfies, for auto-typing a dragged element.
     std::string BestReferenceType(const ObjectCore& object)
     {
+        if (const auto ct = ObjectUiScriptType(object); !ct.empty()) return std::string(ct); // ZE-87
         for (const char* type : {"RigidBody","KinematicBody","StaticBody","Area","Camera","Collider","PhysicsBody"})
             if (ScriptHost::ObjectMatchesReferenceType(object, type)) return type;
         return "gameObject";
@@ -358,6 +393,17 @@ namespace
             auto* owner=scene.Find(ownerId); if(!owner) return;
             Invoke(*owner,[&]{ runtime.Emit({object,std::string(name)},{}); });
         }
+        // ZE-87: a UI control this script only holds a reference to (export uiButton ok)
+        // fired a signal - deliver it to the referenced-control proxy so `ok.clicked` connects.
+        void EmitReferencedSignal(GameObjectId id,std::string_view name) {
+            auto it=proxies.find(id); if(it==proxies.end()||it->second==object) return;
+            auto* target=scene.Find(id); if(!target||!target->GetBehavior<ui::UiControl>()) return;
+            auto* owner=scene.Find(ownerId); if(!owner) return;
+            Invoke(*owner,[&]{
+                const auto control=std::get<ObjectRef>(runtime.Get(it->second,"ui_control"));
+                if(control.id) runtime.Emit({control,std::string(name)},{});
+            });
+        }
         void PhysicsEvent(ObjectCore& owner,const physics::ContactEvent& event) {
             Invoke(owner,[&]{const auto body=std::get<ObjectRef>(runtime.Get(object,"physics"));const char* phase=event.phase==physics::ContactPhase::Entered?"entered":event.phase==physics::ContactPhase::Stayed?"stayed":"exited";runtime.Emit({body,std::string(event.area?"area_":"collision_")+phase},{Proxy(event.other)});});
         }
@@ -386,6 +432,11 @@ namespace
                 if(native->GetBehavior<physics::Collider>())return std::get<ObjectRef>(runtime.Get(proxy,"collider"));
                 return {};
             }
+            if(IsUiScriptType(type)) { // ZE-87
+                const auto ct=ObjectUiScriptType(*native);
+                return (!ct.empty() && UiTypeAssignable(ct,type))?std::get<ObjectRef>(runtime.Get(proxy,"ui_control")):ObjectRef{};
+            }
+            if(type=="gameObject2D")return proxy;
             throw std::runtime_error("Only native GameObject, Transform, and physics references can be assigned from the scene tree.");
         }
         void BindNative(GameObjectId id,ObjectRef ref) {
@@ -397,6 +448,7 @@ namespace
                 if(info && info->physicsBody){ if(!boundBody){runtime.BindNativeBehavior(ref,std::string(binding.type));boundBody=true;} }
                 else runtime.BindNativeBehavior(ref,std::string(binding.type));
             }
+            if(const auto ct=ObjectUiScriptType(*native);!ct.empty())runtime.BindNativeBehavior(ref,std::string(ct)); // ZE-87
         }
         GameObjectId NativeId(ObjectRef ref) const {
             if(!ref.id)return 0;
@@ -501,6 +553,7 @@ bool ScriptHost::ObjectMatchesReferenceType(const ObjectCore& object, std::strin
 {
     if (type == "gameObject" || type == "Transform") return true;
     if (type == "Behavior") return object.GetBehavior<physics::Body>() != nullptr || object.GetBehavior<physics::Collider>() != nullptr;
+    if (IsUiScriptType(type)) { const auto ct = ObjectUiScriptType(object); return !ct.empty() && UiTypeAssignable(ct, type); } // ZE-87
     if (const auto* binding = FindBinding(type)) return binding->present(object);
     return false;
 }
@@ -515,7 +568,7 @@ script::ObjectRef ScriptHost::PreviewReference(Record& record, GameObjectId id, 
     if (found != record.previewProxies.end()) proxy = found->second;
     else
     {
-        proxy = record.preview->Create("gameObject");
+        proxy = record.preview->Create(As2D(native) ? "gameObject2D" : "gameObject");
         record.previewProxies.emplace(id, proxy);
         bool boundBody = false;
         for (const auto& binding : NativeBindings())
@@ -525,8 +578,14 @@ script::ObjectRef ScriptHost::PreviewReference(Record& record, GameObjectId id, 
             if (info && info->physicsBody) { if (!boundBody) { record.preview->BindNativeBehavior(proxy, binding.type); boundBody = true; } }
             else record.preview->BindNativeBehavior(proxy, binding.type);
         }
+        if (const auto ct = ObjectUiScriptType(*native); !ct.empty()) record.preview->BindNativeBehavior(proxy, std::string(ct)); // ZE-87
     }
-    if (type == "gameObject") return proxy;
+    if (type == "gameObject" || type == "gameObject2D") return proxy;
+    if (IsUiScriptType(type))
+    {
+        const auto ct = ObjectUiScriptType(*native);
+        return (!ct.empty() && UiTypeAssignable(ct, type)) ? std::get<script::ObjectRef>(record.preview->Get(proxy, "ui_control")) : script::ObjectRef{};
+    }
     if (type == "Transform") return std::get<script::ObjectRef>(record.preview->Get(proxy, "transform"));
     if (const auto* binding = FindBinding(type))
         return binding->present(*native) ? std::get<script::ObjectRef>(record.preview->Get(proxy, std::string(binding->field))) : script::ObjectRef{};
@@ -695,6 +754,9 @@ const std::vector<std::string>& ScriptHost::ArrayElementTypes()
         "int","float","bool","string","char","Vector3","Vector2","prefab",
         "gameObject","Transform","RigidBody","KinematicBody","StaticBody","Area","Collider","Camera","PhysicsBody","Behavior",
         "audioPlayer","audioArea","lightSource","decalProjector",
+        "gameObject2D","uiControl","uiContainer","uiHTileBox","uiVTileBox","uiCenterBox","uiMarginBox",
+        "uiPanel","uiText","uiLongText","uiTextEntry","uiTextureRect","uiColorRect","uiProgressBar",
+        "uiScroll","uiButton","uiVideo","uiHtml",
     };
     return types;
 }
@@ -898,9 +960,11 @@ void ScriptHost::EmitSignal(GameObjectId owner, std::string_view signal)
 {
     if(!playing_) return;
     for(const auto& [behavior,_]:records_)
-        if(behavior->Owner().Id()==owner)
-            if(auto* live=dynamic_cast<BoundScript*>(const_cast<ScriptBehavior*>(behavior)->Instance()))
-                live->EmitOwnSignal(signal);
+        if(auto* live=dynamic_cast<BoundScript*>(const_cast<ScriptBehavior*>(behavior)->Instance()))
+        {
+            if(behavior->Owner().Id()==owner) live->EmitOwnSignal(signal);
+            else live->EmitReferencedSignal(owner,signal); // ZE-87
+        }
 }
 void ScriptHost::Stop(ObjectStore& objects)
 {

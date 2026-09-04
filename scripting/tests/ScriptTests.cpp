@@ -715,8 +715,10 @@ void NativeTypeAliases() {
         if (!native.scriptClass) continue;
         Check(program->HasClass(std::string(native.name)), "Registered native type not a known class: " + std::string(native.name));
         if (!native.accessor.empty()) {
-            auto check = Compile("class Probe : gameObject { func start(){ " + std::string(native.accessor) + "; } }");
-            Check(static_cast<bool>(check), "gameObject." + std::string(native.accessor) + " accessor for " + std::string(native.name) + " did not resolve");
+            // ui_control lives on gameObject2D; every other accessor on gameObject.
+            const std::string base = native.accessor == "ui_control" ? "gameObject2D" : "gameObject";
+            auto check = Compile("class Probe : " + base + " { func start(){ " + std::string(native.accessor) + "; } }");
+            Check(static_cast<bool>(check), base + "." + std::string(native.accessor) + " accessor for " + std::string(native.name) + " did not resolve");
         }
         if (native.component) {
             auto derived = Compile("class Derived : " + std::string(native.name) + " { func start(){} }");
@@ -849,6 +851,29 @@ void UiControlClasses() {
 
     Error([&] { Compile("class X { func f(){ int uiColorRect; } }"); }, "type keywords");
     Error([&] { Compile("class Bad : uiContainer { func f(){ transform.position = Vector3(1,2,3); } }"); }, "Cannot assign 'Vector3'");
+
+    // ZE-87: a plain script references UI controls - typed export field, find_by_type, getBehavior.
+    auto ref = Compile(R"(class Panel2 : uiPanel {}
+    class Hud : gameObject {
+        export uiButton start_button;
+        uiPanel root;
+        int taps = 0;
+        func start() {
+            root = find_by_type(uiPanel);
+            start_button.clicked.connect(on_tap);
+        }
+        func on_tap() { taps += 1; }
+        func is_panel():bool { return find_by_type(uiPanel) is uiControl; }
+    })");
+    Check(static_cast<bool>(ref), "a script could not reference UI controls (ZE-87)");
+    {
+        Runtime u(ref);
+        auto hud = u.Create("Hud");
+        auto panel = u.Create("Panel2");
+        u.SetTypeLookup([&](std::string_view t){ return t=="uiPanel" ? panel : ObjectRef{}; });
+        Check(std::get<bool>(u.Call(hud,"is_panel")), "find_by_type(uiPanel) did not resolve to the control");
+    }
+    Error([&]{ Compile("class A : gameObject { func f(){ getBehavior(uiButton); } }"); }, "gameObject2D");
 }
 void MouseInput() {
     auto program=Compile(R"(class Cursor : gameObject {

@@ -47,7 +47,9 @@ Index::Index() {
     add(L"gameObject",L"find_by_type",L"gameObject",true);add(L"gameObject",L"get_tags",L"array",true);add(L"gameObject",L"has_tag",L"bool",true);
     for(const auto& native:zengine::script::NativeTypes())
         if(!native.accessor.empty() && native.accessor!=std::string_view("transform"))
-            types_[L"gameObject"].members[Wide(native.accessor)]={Wide(native.accessor),Wide(native.name),false};
+            types_[native.accessor==std::string_view("ui_control")?L"gameObject2D":L"gameObject"].members[Wide(native.accessor)]={Wide(native.accessor),Wide(native.name),false};
+    // ZE-87: reference UI controls from a script - accessor + find_by_type on any gameObject2D.
+    add(L"gameObject2D",L"getBehavior",L"Behavior",true);add(L"gameObject2D",L"find_by_type",L"gameObject2D",true);
     for(const auto name:{L"position",L"rotation",L"scale"})add(L"Transform",name,L"Vector3");
     for(const auto name:{L"global_position",L"global_rotation",L"global_scale"})add(L"Transform",name,L"Vector3");
     for(const auto name:{L"forward",L"up",L"right"})add(L"Transform",name,L"Vector3");
