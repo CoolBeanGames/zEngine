@@ -1,5 +1,6 @@
 #include "LauncherWindow.h"
 #include "NewProjectDialog.h"
+#include "Resource.h"
 #include "Style.h"
 
 #include <windowsx.h>
@@ -63,11 +64,20 @@ LauncherWindow::LauncherWindow(HINSTANCE instance) : instance_(instance)
 
 HWND LauncherWindow::Create(int showCommand)
 {
+    const HICON appIcon =
+        static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON, 0, 0,
+                                      LR_DEFAULTSIZE | LR_SHARED));
+    const HICON appIconSmall = static_cast<HICON>(
+        LoadImageW(instance_, MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
+                   GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
+
     WNDCLASSEXW main{ sizeof(main) };
     main.lpfnWndProc = &LauncherWindow::MainProc;
     main.hInstance = instance_;
     main.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     main.hbrBackground = lstyle::Shared().panel;
+    main.hIcon = appIcon;
+    main.hIconSm = appIconSmall ? appIconSmall : appIcon;
     main.lpszClassName = kMainClass;
     RegisterClassExW(&main);
 
@@ -156,6 +166,13 @@ LRESULT LauncherWindow::OnMain(UINT m, WPARAM wp, LPARAM lp)
     {
     case WM_CREATE:
     {
+        if (HICON icon = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(IDI_APPICON),
+                                                       IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED)))
+        {
+            SendMessageW(main_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+            SendMessageW(main_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+        }
+
         list_ = CreateWindowExW(0, kListClass, nullptr,
                                 WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_VSCROLL,
                                 0, kListTop, 100, 100, main_, nullptr, instance_, nullptr);

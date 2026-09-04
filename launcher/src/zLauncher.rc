@@ -1,0 +1,5 @@
+#include "Resource.h"
+
+// The application icon. Kept as the only icon resource so Explorer, the taskbar
+// and Alt-Tab all use it. zLauncher and zLauncherUpdate both compile this.
+IDI_APPICON ICON "zLauncher.ico"

@@ -14,7 +14,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 # "launcher_<number>.zip"; the running launcher offers to self-update when it
 # sees a release asset whose number is higher than its own. Bump this when
 # cutting a release. The build date is kept for display only.
-set(ZLAUNCHER_BUILD_NUMBER "5" CACHE STRING "Monotonic launcher release number")
+set(ZLAUNCHER_BUILD_NUMBER "6" CACHE STRING "Monotonic launcher release number")
 string(TIMESTAMP ZLAUNCHER_BUILD_DATE "%Y-%m-%d" UTC)
 
 add_executable(zLauncher WIN32
@@ -26,6 +26,8 @@ add_executable(zLauncher WIN32
     src/ProjectStore.h
     src/NewProjectDialog.h
     src/Style.h
+    src/Resource.h
+    src/zLauncher.rc
 )
 
 target_compile_features(zLauncher PRIVATE cxx_std_20)
@@ -36,7 +38,7 @@ target_link_libraries(zLauncher PRIVATE comctl32 shell32 ole32 shlwapi advapi32 
 
 # Tiny helper that swaps the launcher exe while the launcher is closed, then
 # relaunches it. The launcher spawns this and exits when a newer build is found.
-add_executable(zLauncherUpdate WIN32 updater/Main.cpp)
+add_executable(zLauncherUpdate WIN32 updater/Main.cpp src/zLauncher.rc)
 target_compile_features(zLauncherUpdate PRIVATE cxx_std_20)
 target_compile_definitions(zLauncherUpdate PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(zLauncherUpdate PRIVATE shell32 winhttp)

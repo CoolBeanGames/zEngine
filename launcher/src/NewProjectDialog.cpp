@@ -1,4 +1,5 @@
 #include "NewProjectDialog.h"
+#include "Resource.h"
 #include "Style.h"
 
 #include <shlobj.h>
@@ -99,6 +100,13 @@ INT_PTR CALLBACK Procedure(HWND dialog, UINT message, WPARAM w, LPARAM l)
             context = reinterpret_cast<Context*>(l);
             SetWindowLongPtrW(dialog, DWLP_USER, reinterpret_cast<LONG_PTR>(context));
             SetWindowTextW(dialog, L"New Project");
+            if (HICON icon = static_cast<HICON>(
+                    LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON, 0,
+                               0, LR_DEFAULTSIZE | LR_SHARED)))
+            {
+                SendMessageW(dialog, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+                SendMessageW(dialog, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+            }
 
             RECT outer{ 0, 0, 560, 290 };
             AdjustWindowRectEx(&outer, static_cast<DWORD>(GetWindowLongPtrW(dialog, GWL_STYLE)), FALSE,
