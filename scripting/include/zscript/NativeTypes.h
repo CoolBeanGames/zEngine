@@ -67,6 +67,7 @@ inline const std::vector<NativeType>& NativeTypes() {
         {"lightSource",    "gameObject",  "light_source",    true,  false, true },
         {"decalProjector", "gameObject",  "decal_projector", true,  false, true },
         {"prefab",         "",            "",               false, false, true },
+        {"data_sheet",     "",            "",               false, false, true }, // ZE-92: a table of data objects, read sheet[row, column]
         {"InputService",   "",            "",               false, false, true },
         {"InputAction",    "",            "",               false, false, true },
         {"Mouse",          "",            "",               false, false, true },

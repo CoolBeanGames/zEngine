@@ -193,6 +193,9 @@ public:
     // ZE-91: a data object's save() call - the host writes the instance back to its
     // backing asset so the edit survives past the current Play session.
     void SetDataSaveCallback(std::function<void(ObjectRef)> callback);
+    // ZE-92: resolves sheet[row, column] against a bound ".zsheet". row/column are
+    // each an int index or a string name; the return is the cell value (as `any`).
+    void SetDataSheetCallback(std::function<Value(ObjectRef, const Value& row, const Value& col)> callback);
     // Start is once per instance. Update/Draw ensure Start first. Empty hooks are skipped.
     void Start(ObjectRef object);
     void Update(ObjectRef object, double delta);

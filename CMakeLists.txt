@@ -72,8 +72,8 @@ target_include_directories(zEngineUi PUBLIC src)
 target_compile_definitions(zEngineUi PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(zEngineUi PUBLIC zEngineCore)
 
-# ZE-128: pure (no UI) data-object asset codec, shared by the editor tools and the script host.
-add_library(zEngineData STATIC src/DataAssets.cpp)
+# ZE-128/92: pure (no UI) data-object + data-sheet asset codecs, shared by the editor tools and the script host.
+add_library(zEngineData STATIC src/DataAssets.cpp src/DataSheetAssets.cpp)
 target_compile_features(zEngineData PUBLIC cxx_std_20)
 target_include_directories(zEngineData PUBLIC src)
 target_compile_definitions(zEngineData PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -146,6 +146,8 @@ add_executable(zEngine WIN32
     src/InspectorPanel.h
     src/MaterialEditor.cpp
     src/MaterialEditor.h
+    src/DataSheetEditor.cpp
+    src/DataSheetEditor.h
     src/ObjectPicker.cpp
     src/ObjectPicker.h
     src/ProjectDialog.cpp
@@ -262,7 +264,7 @@ if(BUILD_TESTING)
     add_executable(zEngineAudioTests tests/AudioTests.cpp)
     target_link_libraries(zEngineAudioTests PRIVATE zEngineAudio)
     add_test(NAME AudioToolkit COMMAND zEngineAudioTests)
-    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/MaterialEditor.cpp src/ObjectPicker.cpp src/ProjectDialog.cpp)
+    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/MaterialEditor.cpp src/DataSheetEditor.cpp src/ObjectPicker.cpp src/ProjectDialog.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineRenderer zEngineGameRuntime)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorInput.cpp)
@@ -298,6 +300,7 @@ if(BUILD_TESTING)
     add_test(NAME GameObjectHierarchy COMMAND zEngineAssetTests --hierarchy)
     add_test(NAME MultilineTextInspector COMMAND zEngineAssetTests --text)
     add_test(NAME DataObjectAsset COMMAND zEngineAssetTests --data)
+    add_test(NAME DataSheetAsset COMMAND zEngineAssetTests --datasheet)
     set_tests_properties(MultilineTextInspector PROPERTIES TIMEOUT 45)
     set_tests_properties(GameObjectHierarchy PROPERTIES TIMEOUT 45)
     add_test(NAME StandaloneGameBuild COMMAND zEngineAssetTests --build)

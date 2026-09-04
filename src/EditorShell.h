@@ -129,6 +129,9 @@ public:
     std::filesystem::path CreateDataObject(const std::string& structType);
     void OpenDataObject(const std::filesystem::path& path); // edit it in the Inspector
     std::vector<std::string> ProjectDataObjectTypes() const;
+    // ZE-92: data sheet assets (.zsheet) - a table of data objects.
+    std::filesystem::path CreateDataSheet(const std::string& structType);
+    void OpenDataSheet(const std::filesystem::path& path); // opens a pop-up spreadsheet
     // ZE-97: encode the images in a folder (sorted by name) into a .zvid clip.
     std::filesystem::path BuildVideoClipFromImages();
     bool AttachScript(zengine::GameObjectId object, const std::filesystem::path& path);
@@ -281,6 +284,7 @@ private:
     void TickInput();
     std::unique_ptr<InputMapEditor> inputEditor_;
     std::unique_ptr<MaterialEditor> materialEditor_;
+    std::unique_ptr<class DataSheetEditor> dataSheetEditor_; // ZE-92
     zengine::input::System inputSystem_;
     std::optional<zengine::projects::Project> project_;
     std::filesystem::path recentSessionFile_;

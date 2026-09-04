@@ -14,6 +14,8 @@
 #include "core/Decal.h"
 #include "LightmapAssets.h"
 #include "DataAssets.h"
+#include "DataSheetAssets.h"
+#include "DataSheetEditor.h"
 #include "RenderTransform.h"
 #include "WindowCapture.h"
 #include "ScriptAssets.h"
@@ -1591,6 +1593,50 @@ void DataObjectEditorTests()
     CoUninitialize();
     std::cout << "PASS: data object asset + inspector editing\n";
 }
+// ZE-92: .zsheet data sheet asset + pop-up spreadsheet editor.
+void DataSheetEditorTests()
+{
+    namespace ds = zengine::datasheet;
+    ds::SheetDoc doc; doc.type = "Weapon";
+    doc.rows = {
+        {"sword", {{"damage","int","10"},{"name","string","Long Sword"}}},
+        {"axe",   {{"damage","int","25"},{"name","string","War Axe"}}},
+    };
+    Require(ds::Decode(ds::Encode(doc)) == doc, "DataSheet Encode/Decode round-trip changed the document");
+    const std::vector<std::string> cols{"damage","name"};
+    std::string type;
+    Require(ds::Cell(doc, cols, "sword", "damage", &type) == "10" && type == "int", "Cell(name,name) lookup failed");
+    Require(ds::Cell(doc, cols, "1", "1") == "War Axe", "Cell(index,index) lookup failed");
+    try { ds::Cell(doc, cols, "bow", "damage"); Require(false, "missing row accepted"); } catch (const std::exception&) {}
+
+    TestDirectory test;
+    Require(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM init failed");
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        editor.Create(SW_HIDE, test.path); editor.InitializeRenderer();
+        const auto root = editor.AssetsDirectory();
+        const auto scriptPath = editor.CreateScriptAsset();
+        zengine::scripts::Save(root, scriptPath, "struct Weapon {\r\n    int damage = 1;\r\n    string name = \"?\";\r\n}\r\n");
+
+        const auto path = editor.CreateDataSheet("Weapon");
+        Require(ds::IsSheet(path) && ds::Load(path).type == "Weapon", "CreateDataSheet did not write a valid .zsheet");
+        editor.OpenDataSheet(path);
+        const HWND sheetWin = FindWindowExW(nullptr, nullptr, L"zEngineDataSheetEditor", nullptr);
+        Require(sheetWin != nullptr, "Data sheet pop-up window did not open");
+        // Add a row, type into it, save, verify on disk.
+        SendMessageW(sheetWin, WM_COMMAND, MAKEWPARAM(DataSheetEditor::AddRow, BN_CLICKED), 0);
+        const HWND key = GetDlgItem(sheetWin, DataSheetEditor::FirstCell);
+        const HWND dmg = GetDlgItem(sheetWin, DataSheetEditor::FirstCell + 1);
+        Require(key && dmg, "Data sheet grid cells missing after Add Row");
+        SetWindowTextW(key, L"dagger"); SetWindowTextW(dmg, L"4");
+        SendMessageW(sheetWin, WM_COMMAND, MAKEWPARAM(DataSheetEditor::Save, BN_CLICKED), 0);
+        const auto saved = ds::Load(path);
+        Require(saved.rows.size() == 1 && saved.rows[0].key == "dagger", "Data sheet row was not saved");
+        Require(!saved.rows[0].cells.empty() && saved.rows[0].cells[0].value == "4", "Data sheet cell value was not saved");
+    }
+    CoUninitialize();
+    std::cout << "PASS: data sheet asset + spreadsheet editor\n";
+}
 int main(int argc, char** argv)
 {
     try
@@ -1617,6 +1663,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--prefabs") PrefabTests();
         else if (argc > 1 && (std::string(argv[1]) == "--project-recovery" || std::string(argv[1]) == "--project-dialog" || std::string(argv[1]) == "--project-missing")) ProjectStartupTests(argv[1],argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--data") DataObjectEditorTests();
+        else if (argc > 1 && std::string(argv[1]) == "--datasheet") DataSheetEditorTests();
         else if (argc == 1) ImportTests();
         else throw std::runtime_error("Unknown test mode");
         return 0;

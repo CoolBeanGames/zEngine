@@ -984,6 +984,37 @@ void DataObjects() {
     Error([&]{ Compile("struct Bad { signal ping; }"); }, "cannot declare signals");
     Error([&]{ Compile("struct Thing { int a; } class Host : gameObject { func f(){ getBehavior(Thing); } }"); }, "native component type");
 }
+void DataSheet() {
+    // ZE-92: data_sheet is a referenceable value type read as sheet[row, column].
+    auto p = Compile(R"(class Loot : gameObject {
+        export data_sheet weapons;
+        int dmg = 0;
+        string who = "";
+        func start() {
+            dmg = weapons["sword", "damage"];
+            who = weapons[0, 1];
+        }
+    })");
+    Check(static_cast<bool>(p), "data_sheet script did not compile");
+    Runtime r(p);
+    r.SetDataSheetCallback([](ObjectRef, const Value& row, const Value& col) -> Value {
+        const auto rk = std::holds_alternative<std::string>(row) ? std::get<std::string>(row) : std::to_string(std::get<std::int64_t>(row));
+        const auto ck = std::holds_alternative<std::string>(col) ? std::get<std::string>(col) : std::to_string(std::get<std::int64_t>(col));
+        if (ck == "damage" || ck == "0") return static_cast<std::int64_t>(7);
+        if (ck == "1" || ck == "name") return std::string("Excalibur");
+        return {};
+    });
+    auto loot = r.Create("Loot");
+    auto sheet = r.Create("data_sheet"); // a bare sheet ref stands in for a bound asset
+    r.Set(loot, "weapons", sheet);
+    r.Start(loot);
+    Check(Int(r.Get(loot, "dmg")) == 7, "sheet[row, column] int cell did not reach the script");
+    Check(std::get<std::string>(r.Get(loot, "who")) == "Excalibur", "sheet[int, int] string cell failed");
+
+    Error([&]{ Compile("class A : gameObject { export data_sheet s; func f(){ int x = s[0]; } }"); }, "sheet[row, column]");
+    Error([&]{ Compile("class A : gameObject { export data_sheet s; func f(){ s[0,1] = 3; } }"); }, "read-only");
+    Error([&]{ Compile("class A : data_sheet { }"); }, "Cannot inherit native service types");
+}
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "regen") {
         std::ofstream(ZSCRIPT_TYPES_JSON, std::ios::binary) << zengine::script::TypeManifest();
@@ -994,6 +1025,7 @@ int main(int argc, char** argv) {
         {"type manifest is current (ZE-79)", TypeManifestIsCurrent},
         {"Vector2 type", Vector2Type}, {"gameObject2D scripts", GameObject2DScript}, {"UI control classes", UiControlClasses}, {"mouse input", MouseInput}, {"getBehavior", GetBehavior}, {"find_by_type and tags", FindAndTags},
         {"data objects (ZE-91)",DataObjects},
+        {"data sheet (ZE-92)",DataSheet},
         {"native type aliases",NativeTypeAliases},{"timers",Timers},{"audioPlayer class",AudioPlayerClass},{"Mathf functions",MathfFunctions},{"Scene service",SceneService},{"prefab references",PrefabReferences},{"text and global transforms", TextAndGlobalTransforms},
         {"parenting and native object lookup", Parenting},
         {"arrays, type tests, local variables", ArraysTypesAndLocals},

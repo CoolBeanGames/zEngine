@@ -206,7 +206,9 @@ class Parser {
             if (Match(".")) { next->kind = Expr::Member; next->token = Identifier(); next->children.push_back(std::move(e)); }
             else if (Is("[")) {
                 next->kind = Expr::Index; next->token = Expect("[");
-                next->children.push_back(std::move(e)); next->children.push_back(Expression()); Expect("]");
+                next->children.push_back(std::move(e)); next->children.push_back(Expression());
+                if (Match(",")) next->children.push_back(Expression()); // ZE-92: data_sheet[row, column]
+                Expect("]");
             }
             else {
                 next->kind = Expr::Call; next->token = Expect("("); next->children.push_back(std::move(e));
@@ -347,7 +349,7 @@ public:
         return classes;
     }
 };
-enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, Scene, LoadLocal, StoreLocal, LoadField, StoreField, LoadStatic, StoreStatic, Call, CallSuper, CallStatic, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
+enum class Op { Constant, Duplicate, DuplicatePair, MakeArray, ArrayGet, ArraySet, ArrayCall, TextCall, Concat, Stringify, IsType, FindType, MakeVector, SetComponent, Self, Input, Physics, Math, Scene, SheetGet, LoadLocal, StoreLocal, LoadField, StoreField, LoadStatic, StoreStatic, Call, CallSuper, CallStatic, SignalCall, New, Pop, Return, Negate, Not, Add, Subtract, Multiply, Divide, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Jump, JumpFalse };
 struct Instruction { Op op; Token token; std::size_t a = 0; std::string name; Value value; };
 struct Function {
     Token token;
@@ -497,7 +499,14 @@ class BytecodeCompiler {
             Emit(Op::Stringify, t); return "string";
         }
         if (e.kind == Expr::Index) {
-            const auto receiver=Expression(*e.children[0]);Require(receiver=="array" || receiver=="string" || receiver=="any",t,"Indexing requires an array or string");
+            const auto receiver=Expression(*e.children[0]);
+            if (receiver == "data_sheet") { // ZE-92: sheet[row, column] -> the cell value
+                Require(e.children.size() == 3, t, "A data_sheet is read as sheet[row, column]");
+                for (std::size_t i = 1; i < 3; ++i) { const auto kt = Expression(*e.children[i]); Require(kt == "int" || kt == "string" || kt == "any", e.children[i]->token, "data_sheet row/column must be an int index or a string name"); }
+                Emit(Op::SheetGet, t); return "any";
+            }
+            Require(receiver=="array" || receiver=="string" || receiver=="any",t,"Indexing requires an array or string");
+            Require(e.children.size()==2, t, "Indexing takes one key: value[i]");
             Compatible("int", Expression(*e.children[1]), t);
             Emit(Op::ArrayGet, t); return receiver=="string"?"char":"any";
         }
@@ -809,6 +818,7 @@ class BytecodeCompiler {
         if (s.kind == Stmt::Assignment) {
             const auto& target = *s.expressions[0];
             if (target.kind == Expr::Index) {
+                Require(target.children.size() == 2, t, "A data_sheet is read-only: sheet[row, column] cannot be assigned");
                 Compatible("array", Expression(*target.children[0]), t);
                 Compatible("int", Expression(*target.children[1]), t);
                 if (s.operation != "=") { Emit(Op::DuplicatePair, t); Emit(Op::ArrayGet, t); }
@@ -923,6 +933,8 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
     for(const auto& name:{"add_force","add_impulse","add_torque","add_angular_impulse"}){Function f;f.params={"Vector3"};physicsBody.methods.emplace(name,std::move(f));}
     program.classes.emplace(physicsBody.name,std::move(physicsBody));
     Class prefab;prefab.name="prefab";Function spawn;spawn.result="gameObject";prefab.methods.emplace("spawn",std::move(spawn));program.classes.emplace(prefab.name,std::move(prefab));
+    // ZE-92: data_sheet is a value type read only through sheet[row, column] (Expr::Index).
+    { Class ds; ds.name="data_sheet"; program.classes.emplace("data_sheet",std::move(ds)); }
     Class transform; transform.name = "Transform";
     transform.signals = {"was_moved", "was_rotated", "was_scaled"};
     for (const auto& name : {"position", "rotation", "scale"}) transform.fields.push_back({Token{Token::Identifier, name}, "Vector3"});
@@ -1082,7 +1094,7 @@ void BuildDeclarations(Program::Impl& program, const std::vector<ClassAst>& asts
         if (depth > 128) Fail(program.source, ast.name, "Inheritance depth limit exceeded");
         state[name] = 1;
         if (!c.base.empty()) {
-            if(c.base=="InputService" || c.base=="InputAction" || c.base=="Mouse" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="SceneService" || c.base=="Timer" || c.base=="prefab")Fail(program.source,ast.name,"Cannot inherit native service types");
+            if(c.base=="InputService" || c.base=="InputAction" || c.base=="Mouse" || c.base=="PhysicsService" || c.base=="Mathf" || c.base=="SceneService" || c.base=="Timer" || c.base=="prefab" || c.base=="data_sheet")Fail(program.source,ast.name,"Cannot inherit native service types");
             if (!program.classes.contains(c.base)) Fail(program.source, ast.name, "Unknown base class '" + c.base + "'");
             self(self, c.base, depth + 1); c.fields = program.classes.at(c.base).fields;
             c.inspector = program.classes.at(c.base).inspector;
@@ -1367,6 +1379,7 @@ struct Runtime::Impl {
     std::function<std::string()> sceneCurrentCall;
     std::function<void(int)> mouseModeCall; // ZE-84: Input.set_mouse_mode
     std::function<void(ObjectRef)> dataSaveCall; // ZE-91: <data object>.save() - persist to the backing asset
+    std::function<Value(ObjectRef,const Value&,const Value&)> dataSheetCall; // ZE-92: sheet[row, column]
     std::map<std::string, std::map<std::string, Value>> statics; // ZE-79: class name -> static field values
     static std::uint64_t NextIdentity() { static std::atomic<std::uint64_t> next{1}; return next.fetch_add(1); }
     Impl(std::shared_ptr<const Program::Impl> p, RuntimeLimits l) : program(std::move(p)), limits(l), identity(NextIdentity()) {
@@ -1952,6 +1965,12 @@ struct Runtime::Impl {
                 auto value = pop(), index = pop(); auto& items = arrays[ArrayId(pop(),t)];
                 items[Index(index,items.size(),t)] = Coerce(value,Type(value,t),t); break;
             }
+            case Op::SheetGet: { // ZE-92: sheet[row, column]
+                Tick(t); const auto col = pop(), row = pop(), sheet = pop();
+                if (!std::holds_alternative<ObjectRef>(sheet) || !std::get<ObjectRef>(sheet).id) Error(t, "Assign a data sheet asset before reading it");
+                if (!dataSheetCall) Error(t, "Data sheets are not available in this runtime");
+                stack.push_back(dataSheetCall(std::get<ObjectRef>(sheet), row, col)); break;
+            }
             case Op::ArrayCall: {
                 Value argument; if (ins.a) argument = pop();auto receiver=pop();
                 if(std::holds_alternative<std::string>(receiver)){stack.push_back(TextOperation(receiver,ins.name,ins.a?std::vector<Value>{argument}:std::vector<Value>{},t));break;}
@@ -2223,6 +2242,7 @@ void Runtime::SetDecalCallback(std::function<void(ObjectRef,std::string_view,flo
 void Runtime::SetSceneCallbacks(std::function<void(std::string_view)> load,std::function<std::string()> current){impl_->sceneLoadCall=std::move(load);impl_->sceneCurrentCall=std::move(current);}
 void Runtime::SetMouseModeCallback(std::function<void(int)> callback){impl_->mouseModeCall=std::move(callback);}
 void Runtime::SetDataSaveCallback(std::function<void(ObjectRef)> callback){impl_->dataSaveCall=std::move(callback);}
+void Runtime::SetDataSheetCallback(std::function<Value(ObjectRef,const Value&,const Value&)> callback){impl_->dataSheetCall=std::move(callback);}
 void Runtime::Connect(SignalRef signal, CallableRef callback) { impl_->Reset(); impl_->Signal(signal, "connect", {callback}, {}); }
 void Runtime::Emit(SignalRef signal, const std::vector<Value>& arguments) { impl_->Reset(); impl_->Signal(signal, "emit", arguments, {}); }
 void Runtime::SetInput(const InputFrame& frame,bool emitEvents) {impl_->Reset();impl_->SetInput(frame,emitEvents);}

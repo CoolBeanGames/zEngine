@@ -2,6 +2,7 @@
 #include "EditorStyle.h"
 #include "input/InputMapEditor.h"
 #include "MaterialEditor.h"
+#include "DataSheetEditor.h"
 
 #include "Renderer.h"
 #include "FbxImporter.h"
@@ -22,6 +23,7 @@
 #include "SceneLights.h"
 #include "LightmapAssets.h"
 #include "DataAssets.h"
+#include "DataSheetAssets.h"
 #include "zscript/Script.h"
 #include "CubeModel.h"
 #include "ui/UiSerialize.h"
@@ -69,6 +71,7 @@ namespace
         case assetLibrary::Kind::Material: return L"Material";
         case assetLibrary::Kind::Audio: return L"Audio";
         case assetLibrary::Kind::Data: return L"Data Object";
+        case assetLibrary::Kind::DataSheet: return L"Data Sheet";
         case assetLibrary::Kind::Folder: return L"Folder";
         default: return L"File";
         }
@@ -240,8 +243,12 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     scriptHost_.SetObjectStore(&objects_);
     // ZE-129: data-object fields read/write their bound .zdata under the project's Assets.
     scriptHost_.SetDataAssetIO(
-        [this](std::string_view rel){ return zengine::dataobj::Encode(zengine::dataobj::Load(zengine::dataobj::Resolve(assetsDirectory_, std::filesystem::path(rel)))); },
-        [this](std::string_view rel, std::string_view text){ zengine::dataobj::Save(assetsDirectory_, std::filesystem::path(rel), zengine::dataobj::Decode(text)); });
+        [this](std::string_view rel)->std::string{ const std::filesystem::path rp(rel);
+            if(zengine::datasheet::IsSheet(rp)) return zengine::datasheet::Encode(zengine::datasheet::Load(zengine::datasheet::Resolve(assetsDirectory_, rp)));
+            return zengine::dataobj::Encode(zengine::dataobj::Load(zengine::dataobj::Resolve(assetsDirectory_, rp))); },
+        [this](std::string_view rel, std::string_view text){ const std::filesystem::path wp(rel);
+            if(zengine::datasheet::IsSheet(wp)) zengine::datasheet::Save(assetsDirectory_, wp, zengine::datasheet::Decode(text));
+            else zengine::dataobj::Save(assetsDirectory_, wp, zengine::dataobj::Decode(text)); });
     ConfigureScriptOutput();
     inspectorPanel_->SetAddScriptHandler([this]() {
         try { ChooseScript(); }
@@ -1316,8 +1323,12 @@ void EditorShell::ApplyScene(const std::filesystem::path& file,std::string sourc
     prefabGenerated_=expanded.generated; prefabSources_=expanded.sources;
     scriptHost_=std::move(next.scripts); objects_=std::move(next.objects); scriptHost_.SetObjectStore(&objects_); ConfigureScriptOutput();
     scriptHost_.SetDataAssetIO( // ZE-129: rebind after the ScriptHost move
-        [this](std::string_view rel){ return zengine::dataobj::Encode(zengine::dataobj::Load(zengine::dataobj::Resolve(assetsDirectory_, std::filesystem::path(rel)))); },
-        [this](std::string_view rel, std::string_view text){ zengine::dataobj::Save(assetsDirectory_, std::filesystem::path(rel), zengine::dataobj::Decode(text)); });
+        [this](std::string_view rel)->std::string{ const std::filesystem::path rp(rel);
+            if(zengine::datasheet::IsSheet(rp)) return zengine::datasheet::Encode(zengine::datasheet::Load(zengine::datasheet::Resolve(assetsDirectory_, rp)));
+            return zengine::dataobj::Encode(zengine::dataobj::Load(zengine::dataobj::Resolve(assetsDirectory_, rp))); },
+        [this](std::string_view rel, std::string_view text){ const std::filesystem::path wp(rel);
+            if(zengine::datasheet::IsSheet(wp)) zengine::datasheet::Save(assetsDirectory_, wp, zengine::datasheet::Decode(text));
+            else zengine::dataobj::Save(assetsDirectory_, wp, zengine::dataobj::Decode(text)); });
     scenePath_=file; sceneSource_=std::move(source); firstObject_=0; selectedObject_=0;
     sceneOpen_=true;
     status_=L"Opened scene: "+SceneName();
@@ -1366,6 +1377,12 @@ bool EditorShell::TranslateShortcut(const MSG& message)
             SendMessageW(materialEditor_->Window(),WM_COMMAND,MAKEWPARAM(MaterialEditor::Save,BN_CLICKED),0);return true;
         }
         MSG copy=message;return IsDialogMessageW(materialEditor_->Window(),&copy)!=FALSE;
+    }
+    if(dataSheetEditor_ && (message.hwnd==dataSheetEditor_->Window() || IsChild(dataSheetEditor_->Window(),message.hwnd))) {
+        if(message.message==WM_KEYDOWN && (GetKeyState(VK_CONTROL)&0x8000) && message.wParam=='S') {
+            SendMessageW(dataSheetEditor_->Window(),WM_COMMAND,MAKEWPARAM(DataSheetEditor::Save,BN_CLICKED),0);return true;
+        }
+        MSG copy=message;return IsDialogMessageW(dataSheetEditor_->Window(),&copy)!=FALSE;
     }
     if (message.message!=WM_KEYDOWN || message.wParam!='S' || !(GetKeyState(VK_CONTROL)&0x8000) ||
         (message.hwnd!=window_ && !IsChild(window_,message.hwnd))) return false;
@@ -1497,6 +1514,38 @@ void EditorShell::OpenDataObject(const std::filesystem::path& path)
     selectedObject_ = 0;
     status_ = L"Editing data object " + file.filename().wstring();
     InvalidateRect(window_, nullptr, FALSE);
+}
+std::filesystem::path EditorShell::CreateDataSheet(const std::string& structType)
+{
+    RequireProject();
+    if (Playing()) throw std::runtime_error("Stop Play before creating a data sheet.");
+    const auto path = zengine::datasheet::Create(AssetFolder(), structType);
+    RefreshAssets();
+    selectedAsset_ = static_cast<int>(std::find(assets_.begin(), assets_.end(), path) - assets_.begin());
+    status_ = L"Created " + path.filename().wstring() + L" - double-click to edit its rows";
+    InvalidateRect(window_, nullptr, FALSE);
+    BeginAssetRename(path);
+    return path;
+}
+void EditorShell::OpenDataSheet(const std::filesystem::path& path)
+{
+    RequireProject();
+    if (Playing()) throw std::runtime_error("Stop Play before editing a data sheet.");
+    const auto file = zengine::datasheet::Resolve(assetsDirectory_, path);
+    const auto doc = zengine::datasheet::Load(file);
+    const auto program = ProgramDefiningStruct(assetsDirectory_, ProjectScriptPaths(), doc.type);
+    if (!program) throw std::runtime_error("No script defines the data object 'struct " + doc.type + "'.");
+    std::vector<std::pair<std::string, std::string>> columns;
+    for (const auto& [name, type] : program->DataObjectFields(doc.type))
+        if (zengine::dataobj::IsStorableType(type)) columns.push_back({name, type});
+
+    if (dataSheetEditor_ && dataSheetEditor_->File() != file)
+    {
+        if (!dataSheetEditor_->ConfirmClose()) return;
+        dataSheetEditor_.reset();
+    }
+    if (!dataSheetEditor_) dataSheetEditor_ = std::make_unique<DataSheetEditor>(window_, assetsDirectory_, file, std::move(columns));
+    dataSheetEditor_->Show();
 }
 void EditorShell::OpenMaterial(const std::filesystem::path& path)
 {
@@ -2164,6 +2213,11 @@ LRESULT EditorShell::HandleMessage(
                 AppendMenuW(sub, MF_STRING, 6000 + static_cast<UINT>(i), WideText(types[i]).c_str());
             AppendMenuW(menu, MF_POPUP|((Playing()||types.empty())?MF_GRAYED:0), reinterpret_cast<UINT_PTR>(sub),
                         types.empty() ? L"Create Data Object (define a `struct` first)" : L"Create Data Object (.zdata)");
+            HMENU sheet = CreatePopupMenu(); // ZE-92: Create Data Sheet > <struct type>
+            for (std::size_t i = 0; i < types.size() && i < 90; ++i)
+                AppendMenuW(sheet, MF_STRING, 6100 + static_cast<UINT>(i), WideText(types[i]).c_str());
+            AppendMenuW(menu, MF_POPUP|((Playing()||types.empty())?MF_GRAYED:0), reinterpret_cast<UINT_PTR>(sheet),
+                        L"Create Data Sheet (.zsheet)");
         }
         AppendMenuW(menu, MF_STRING|(Playing()?MF_GRAYED:0), 5, L"Build Video Clip (.zvid) from Images...");
         AppendMenuW(menu, MF_STRING, 2, L"Refresh Assets");
@@ -2177,6 +2231,8 @@ LRESULT EditorShell::HandleMessage(
         if (command == 4) CreateMaterialAsset();
         if (command >= 6000 && command < 6090) { const auto types=ProjectDataObjectTypes(); const std::size_t i=command-6000;
             if (i<types.size()) try { CreateDataObject(types[i]); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
+        if (command >= 6100 && command < 6190) { const auto types=ProjectDataObjectTypes(); const std::size_t i=command-6100;
+            if (i<types.size()) try { CreateDataSheet(types[i]); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
         if (command == 5) { try { BuildVideoClipFromImages(); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
         if (command == 2) { RefreshAssets(); InvalidateRect(window_, &mediaLibrary_, FALSE); }
         if (command==NewSceneCommand) NewScene();
@@ -2201,6 +2257,7 @@ LRESULT EditorShell::HandleMessage(
                 else if (zengine::shaders::IsShader(asset)) OpenShader(asset);
                 else if (zengine::materials::IsMaterial(asset)) OpenMaterial(asset);
                 else if (zengine::dataobj::IsData(asset)) { try { OpenDataObject(asset); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
+                else if (zengine::datasheet::IsSheet(asset)) { try { OpenDataSheet(asset); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
                 else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
                 else if (zengine::scenes::IsScene(asset)) OpenScene(asset);
             }

@@ -377,6 +377,36 @@ int main()
             Check(writtenPath=="data/ammo.zdata","save() did not reach the writer with the bound path");
             Check(zengine::dataobj::Decode(writtenText).fields.at(0).value=="1","save() did not persist the live field value");
         }
+        {
+            // ZE-92: an exported data_sheet field bound to a .zsheet; sheet[row, column] reads a cell.
+            ObjectStore s; ScriptHost h; h.SetObjectStore(&s);
+            const std::string sheet =
+                "ZSHEET 1\r\ntype Weapon\r\nrow \"sword\"\r\nfield damage int 10\r\nfield reach float 1.5\r\n"
+                "row \"axe\"\r\nfield damage int 25\r\n";
+            h.SetDataAssetIO(
+                [&](std::string_view p)->std::string { Check(p=="data/loot.zsheet","sheet reader path wrong"); return sheet; },
+                [&](std::string_view, std::string_view){});
+            auto& o=s.Create("Hero");
+            auto& sb=o.AddBehavior<ScriptBehavior>("Hero.zsh");
+            const std::string src=R"(struct Weapon { int damage = 3; float reach = 1; }
+            class Hero : gameObject {
+                export data_sheet loot;
+                export int dmg = 0;
+                export int axedmg = 0;
+                export string reach_missing_ok = "";
+                func start() {
+                    dmg = loot["sword", "damage"];
+                    axedmg = loot[1, 0];
+                }
+            })";
+            Check(h.Prepare(sb,src,"Hero"),"data_sheet fixture compile");
+            h.SetField(sb,"loot","data/loot.zsheet");
+            Check(Value(h,sb,"loot")=="data/loot.zsheet","data_sheet field did not store its .zsheet path");
+            Check(h.Play(s),"Play with a bound data sheet failed");
+            Check(Value(h,sb,"dmg")=="10","sheet[\"sword\",\"damage\"] did not reach the script");
+            Check(Value(h,sb,"axedmg")=="25","sheet[1, 0] index addressing failed");
+            h.Stop(s);
+        }
         std::cout<<"PASS: Play/Stop, movement, values, signals, hierarchy, prefab spawning, script global transforms and text metadata\n";
         return 0;
     }

@@ -9,6 +9,7 @@
 #include "zscript/Text.h"
 #include "zscript/NativeTypes.h"
 #include "DataAssets.h"
+#include "DataSheetAssets.h"
 #include <algorithm>
 #include <functional>
 #include <cmath>
@@ -314,15 +315,22 @@ namespace
               draw(program->HasCode(name,"draw")), physicsUpdate(program->HasCode(name,"physicsUpdate")), input(inputFrame),mouse(mouseFrame),scene(objects),ownerId(owner)
         {
             runtime.SetInput(input,false);runtime.SetMouse(mouse,false);BindNative(owner,object);for(const auto& [field,value]:overrides)runtime.Set(object,field,std::holds_alternative<PrefabRef>(value)?Value{runtime.CreatePrefab(std::get<PrefabRef>(value).asset)}:value);
-            // ZE-129: bind each data-object field to its .zdata, and route save() back to the writer.
+            // ZE-129 / ZE-92: bind each data-object / data-sheet field to its asset.
             for(const auto& [field,path]:dataAssets)
             {
                 if(path.empty()||!dataReader)continue;
+                const bool isSheet = path.size()>7 && path.substr(path.size()-7)==".zsheet";
                 try {
-                    const auto doc=dataobj::Decode(dataReader(path));
-                    const auto inst=BuildDataInstance(runtime,doc);
-                    runtime.Set(object,field,inst);
-                    dataInstances.emplace(inst.id,std::make_pair(path,doc.type));
+                    if(isSheet) {
+                        const auto sheet=runtime.Create("data_sheet");
+                        runtime.Set(object,field,sheet);
+                        sheetPaths.emplace(sheet.id,path);
+                    } else {
+                        const auto doc=dataobj::Decode(dataReader(path));
+                        const auto inst=BuildDataInstance(runtime,doc);
+                        runtime.Set(object,field,inst);
+                        dataInstances.emplace(inst.id,std::make_pair(path,doc.type));
+                    }
                 } catch(const std::exception&) {}
             }
             if(dataWriter)runtime.SetDataSaveCallback([this,dataWriter](ObjectRef ref){
@@ -332,6 +340,24 @@ namespace
                     const auto doc=CaptureDataDoc(runtime,ref,it->second.second,schema);
                     dataWriter(it->second.first,dataobj::Encode(doc));
                 } catch(const std::exception&) {}
+            });
+            if(dataReader)runtime.SetDataSheetCallback([this,dataReader](ObjectRef ref,const Value& row,const Value& col)->Value{
+                const auto it=sheetPaths.find(ref.id);
+                if(it==sheetPaths.end()) throw std::runtime_error("Assign a data sheet asset before reading it.");
+                const auto sheet=datasheet::Decode(dataReader(it->second));
+                std::vector<std::string> columns; std::string columnType;
+                for(const auto& [n,tp]:program->DataObjectFields(sheet.type)) columns.push_back(n);
+                const auto key=[](const Value& v){ return std::holds_alternative<std::string>(v)?std::get<std::string>(v):std::to_string(std::get<std::int64_t>(v)); };
+                std::string cellType;
+                auto text=datasheet::Cell(sheet,columns,key(row),key(col),&cellType);
+                if(cellType.empty()){ // cell absent -> the struct's declared default for that column
+                    std::string want = std::holds_alternative<std::string>(col)?std::get<std::string>(col):std::string{};
+                    if(want.empty()){ const auto idx=static_cast<std::size_t>(std::get<std::int64_t>(col)); if(idx<columns.size()) want=columns[idx]; }
+                    for(const auto& [n,tp]:program->DataObjectFields(sheet.type)) if(n==want){ cellType=tp; break; }
+                    if(cellType.empty()) return {};
+                    return Parse(cellType, cellType=="string"?std::string{}: cellType=="bool"?std::string("false"): cellType=="Vector3"?std::string("0, 0, 0"): cellType=="Vector2"?std::string("0, 0"): std::string("0"));
+                }
+                return Parse(cellType,text);
             });
             printHandler=output;runtime.SetPrintCallback([this](std::string_view text){if(printHandler)printHandler(text);});
             proxies.emplace(owner,object);
@@ -457,6 +483,7 @@ namespace
         std::function<void(std::string_view)> printHandler;
         // ZE-129: data-object instances built from a bound .zdata - id -> {path, struct type}.
         std::map<std::size_t, std::pair<std::string,std::string>> dataInstances;
+        std::map<std::size_t, std::string> sheetPaths; // ZE-92: data_sheet obj id -> bound .zsheet path
     private:
         ObjectRef Proxy(GameObjectId id) {
             if(!id)return {};
@@ -596,7 +623,7 @@ bool ScriptHost::IsReferenceType(std::string_view type)
 }
 bool ScriptHost::IsDataField(const script::Program& program, std::string_view type)
 {
-    return program.IsDataObject(type);
+    return program.IsDataObject(type) || type == "data_sheet"; // ZE-129 data object, ZE-92 data sheet - both bind an asset path
 }
 void ScriptHost::ApplyRecordDataAssets(Record& record)
 {
@@ -608,8 +635,8 @@ void ScriptHost::ApplyRecordDataAssets(Record& record)
         if (it == record.dataAssets.end() || it->second.empty() || !dataReader_) continue;
         try
         {
-            const auto doc = zengine::dataobj::Decode(dataReader_(it->second));
-            record.preview->Set(record.object, entry.name, BuildDataInstance(*record.preview, doc));
+            if (entry.type == "data_sheet") record.preview->Set(record.object, entry.name, record.preview->Create("data_sheet"));
+            else record.preview->Set(record.object, entry.name, BuildDataInstance(*record.preview, zengine::dataobj::Decode(dataReader_(it->second))));
         }
         catch (const std::exception&) {}
     }

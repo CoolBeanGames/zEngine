@@ -93,6 +93,19 @@
       "signals": []
     },
     {
+      "type_name": "Data_sheet",
+      "instance_name": "data_sheet",
+      "canonical": "data_sheet",
+      "kind": "native",
+      "base": null,
+      "abstract": false,
+      "attachable_component": false,
+      "fields": [],
+      "methods": [],
+      "static_members": [],
+      "signals": []
+    },
+    {
       "type_name": "DecalProjector",
       "instance_name": "decalProjector",
       "canonical": "decalProjector",
