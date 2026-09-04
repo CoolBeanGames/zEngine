@@ -475,6 +475,28 @@ class BytecodeCompiler {
                 for (std::size_t i = 1; i < e.children.size(); ++i) Require(Numeric(Expression(*e.children[i])), t, "Vector2 components must be numeric");
                 Emit(Op::MakeVector, t, e.children.size() - 1, "Vector2"); return "Vector2";
             }
+            // ZE-79: static factory members on the value types. `Vector3.zero()` etc. are
+            // members of the *type* (capitalised), never of an instance.
+            if (callee.kind == Expr::Member && callee.children[0]->kind == Expr::Name
+                && (callee.children[0]->token.text == "Vector3" || callee.children[0]->token.text == "Vector2")
+                && Local(callee.children[0]->token.text) == std::numeric_limits<std::size_t>::max()
+                && program.FindField(owner.name, callee.children[0]->token.text) == nullptr) {
+                const bool v3 = callee.children[0]->token.text == "Vector3";
+                static const std::map<std::string, Vector3> named3 = {
+                    {"zero", {0,0,0}}, {"one", {1,1,1}}, {"up", {0,1,0}}, {"down", {0,-1,0}},
+                    {"left", {-1,0,0}}, {"right", {1,0,0}}, {"forward", {0,0,1}}, {"back", {0,0,-1}}};
+                static const std::map<std::string, Vector2> named2 = {
+                    {"zero", {0,0}}, {"one", {1,1}}, {"up", {0,1}}, {"down", {0,-1}}, {"left", {-1,0}}, {"right", {1,0}}};
+                Require(e.children.size() == 1, t, callee.token.text + "() takes no arguments");
+                if (v3) {
+                    const auto it = named3.find(callee.token.text);
+                    Require(it != named3.end(), callee.token, "Unknown static member 'Vector3." + callee.token.text + "'");
+                    Emit(Op::Constant, t, 0, {}, it->second); return "Vector3";
+                }
+                const auto it = named2.find(callee.token.text);
+                Require(it != named2.end(), callee.token, "Unknown static member 'Vector2." + callee.token.text + "'");
+                Emit(Op::Constant, t, 0, {}, it->second); return "Vector2";
+            }
             if (callee.kind == Expr::Name && program.classes.contains(Canonical(callee.token.text))) {
                 Require(callee.token.text != "InputService" && callee.token.text != "InputAction" && callee.token.text != "Mouse" && callee.token.text != "PhysicsService" && callee.token.text != "Mathf" && callee.token.text != "SceneService" && callee.token.text != "Timer" && callee.token.text != "prefab" && !NativeBehavior(callee.token.text),t,"Native service and behavior objects are supplied by the host");
                 Require(e.children.size() == 1, t, "Class construction takes no arguments");

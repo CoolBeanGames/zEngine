@@ -48,6 +48,8 @@ void Movement() {
         func arithmetic() : Vector3 { return -(Vector3(1, 2, 3) * 2 - Vector3(1, 1, 1)) / 2; }
         func scaleVector() : Vector3 { return 2 * Vector3(1, 2, 3); }
         func forwardMask() : Vector3 { return Vector3(2, 3, 4) * transform.forward; }
+        func statics() : Vector3 { return Vector3.up() + Vector3.right() * 2 + Vector3.zero(); }   // ZE-79
+        func statics2() : Vector2 { return Vector2.one() - Vector2.left(); }
     })");
     Runtime r(p); auto mover = r.Create("Mover"), object = r.Create("GameObject"); auto transform = TransformOf(r, object);
     Check(std::get<Vector3>(r.Get(transform, "scale")) == Vector3{1, 1, 1}, "Default scale");
@@ -60,6 +62,10 @@ void Movement() {
     Check(std::get<Vector3>(r.Call(mover, "scaleVector")) == Vector3{2, 4, 6}, "Scalar vector multiply");
     Check(std::get<Vector3>(r.Call(mover,"forwardMask"))==Vector3{0,0,4},"Vector3 multiply by transform.forward");
     Check(p->HasClass("GameObject") && p->HasClass("gameObject"), "GameObject aliases");
+    Check(std::get<Vector3>(r.Call(mover, "statics")) == Vector3{2, 1, 0}, "ZE-79: Vector3 static factories");
+    Check(std::get<Vector2>(r.Call(mover, "statics2")) == Vector2{2, 1}, "ZE-79: Vector2 static factories");
+    Error([&] { Compile("class A { func f() { Vector3 v; v.up(); } }"); }, "Unknown method 'up' on 'Vector3'");
+    Error([&] { Compile("class A { func f() { Vector3.sideways(); } }"); }, "Unknown static member");
     Error([&] { Compile("class A { func f(GameObject obj) { Obj.transform.position = Vector3(); } }"); }, "Unknown field");
 }
 void LifecycleAndInheritance() {
