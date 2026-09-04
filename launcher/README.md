@@ -6,6 +6,11 @@ CMake solution.
 
 ## What it does
 
+- **Tabs** — the nav strip has **Projects** and **Engine**. The Engine tab lists
+  every GitHub release that ships an `engine_<n>.zip` (launcher releases are not
+  shown) with its tag and build number; each row offers **Download**, or
+  **Launch** + **Delete** once that build is downloaded. Deleting only removes a
+  build from the per-user `%LOCALAPPDATA%\zEngine\Engine\Downloads\` folder.
 - **Project list** — every registered project is shown with **Play**, **Edit**,
   **Build** and **Delete** buttons, plus a metadata line (version, created,
   launched, built — each shown only when known). The list lives in

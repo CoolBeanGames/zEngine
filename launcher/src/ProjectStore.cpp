@@ -1517,44 +1517,8 @@ bool ProjectStore::EnsureEditorInstalled(std::wstring& message, bool& changed, b
     if (online)
         HighestNumberedAsset(json, "engine", remote, url);
 
-    // Download the release and install it: try the flat Program Files location
-    // first, and fall back to a per-user "Downloads\<n>" folder when that copy is
-    // refused (no elevation). Returns false + `message` on real failure.
     auto install = [&](int number) -> bool {
-        fs::path source;
-        if (!DownloadAndUnzip(Wide(url), source, message)) return false;
-
-        const fs::path pf = ProgramFilesEditorDirImpl();
-        std::wstring pfError;
-        fs::path dest;
-        if (CopyTreeInto(source, pf, pfError))
-        {
-            dest = pf;
-        }
-        else
-        {
-            const fs::path perUser = EditorDownloadsRootImpl() / std::to_wstring(number);
-            std::error_code ec;
-            fs::remove_all(perUser, ec);
-            if (!CopyTreeInto(source, perUser, message))
-            {
-                std::error_code cec;
-                fs::remove_all(EditorDownloadWorkDir(), cec);
-                return false;
-            }
-            dest = perUser;
-        }
-
-        std::error_code cec;
-        fs::remove_all(EditorDownloadWorkDir(), cec);
-
-        try { WriteTextFileAtomic(dest / L"version.txt", "engine_" + std::to_string(number)); }
-        catch (const std::exception&) {}
-        RefreshEditorShortcuts(dest / L"zEngine.exe");
-        changed = true;
-        message = L"Installed the zEngine editor (build " + std::to_wstring(number) + L") to " +
-                  dest.wstring() + L".";
-        return true;
+        return InstallEditorRelease(number, Wide(url), message, changed);
     };
 
     // Already have an editor: keep it current.
@@ -1603,6 +1567,167 @@ bool ProjectStore::EnsureEditorInstalled(std::wstring& message, bool& changed, b
     }
 
     return install(remote > 0 ? remote : 1);
+}
+
+// Download `url` and install it as editor build `number`: into the flat
+// "<Program Files>\zEngine" when writable, otherwise the per-user
+// "Downloads\<number>\". Writes version.txt and refreshes the shortcuts.
+bool ProjectStore::InstallEditorRelease(int number, const std::wstring& url, std::wstring& message,
+                                        bool& changed) const
+{
+    if (url.empty())
+    {
+        message = L"That release has no \"engine_<n>.zip\" download.";
+        return false;
+    }
+
+    fs::path source;
+    if (!DownloadAndUnzip(url, source, message)) return false;
+
+    std::error_code ec;
+    const fs::path pf = ProgramFilesEditorDirImpl();
+    std::wstring pfError;
+    fs::path dest;
+    if (CopyTreeInto(source, pf, pfError))
+    {
+        dest = pf;
+    }
+    else
+    {
+        const fs::path perUser = EditorDownloadsRootImpl() / std::to_wstring(number);
+        fs::remove_all(perUser, ec);
+        if (!CopyTreeInto(source, perUser, message))
+        {
+            fs::remove_all(EditorDownloadWorkDir(), ec);
+            return false;
+        }
+        dest = perUser;
+    }
+    fs::remove_all(EditorDownloadWorkDir(), ec);
+
+    try { WriteTextFileAtomic(dest / L"version.txt", "engine_" + std::to_string(number)); }
+    catch (const std::exception&) {}
+    RefreshEditorShortcuts(dest / L"zEngine.exe");
+    changed = true;
+    message = L"Installed the zEngine editor (build " + std::to_wstring(number) + L") to " +
+              dest.wstring() + L".";
+    return true;
+}
+
+// Where a given editor build number lives locally, if it is downloaded.
+std::optional<fs::path> ProjectStore::EngineVersionDir(int number)
+{
+    std::error_code ec;
+    const fs::path perUser = EditorDownloadsRootImpl() / std::to_wstring(number);
+    if (fs::is_regular_file(perUser / L"zEngine.exe", ec)) return perUser;
+    const fs::path pf = ProgramFilesEditorDirImpl();
+    if (fs::is_regular_file(pf / L"zEngine.exe", ec) && NumberFromVersionFile(pf) == number) return pf;
+    return std::nullopt;
+}
+
+bool ProjectStore::ListEngineReleases(std::vector<EngineReleaseInfo>& out, std::wstring& error) const
+{
+    out.clear();
+    std::string owner;
+    std::string repo;
+    ResolveRepo(owner, repo);
+
+    std::string json;
+    if (!HttpGet(L"https://api.github.com/repos/" + Wide(owner) + L"/" + Wide(repo) + L"/releases",
+                 json, error))
+        return false;
+
+    // Walk each release object: pull tag_name / name and the "engine_<n>.zip"
+    // asset inside it (number + browser_download_url).
+    const std::string key = "\"tag_name\"";
+    for (std::size_t pos = 0; (pos = json.find(key, pos)) != std::string::npos;)
+    {
+        const std::size_t objEnd = json.find(key, pos + key.size());
+        const std::string chunk = json.substr(pos, (objEnd == std::string::npos ? json.size() : objEnd) - pos);
+        pos += key.size();
+
+        EngineReleaseInfo info;
+        info.tag = Wide(JsonString(chunk, "tag_name"));
+        info.title = Wide(JsonString(chunk, "name"));
+        info.number = -1;
+
+        int number = -1;
+        std::string url;
+        if (HighestNumberedAsset(chunk, "engine", number, url))
+        {
+            info.number = number;
+            info.url = url;
+        }
+        // Only releases that actually ship an "engine_<n>.zip" belong here.
+        if (info.number < 0) continue;
+        if (info.title.empty()) info.title = info.tag;
+
+        if (info.number >= 0)
+            if (auto dir = EngineVersionDir(info.number))
+            {
+                info.downloaded = true;
+                info.localDir = *dir;
+            }
+        out.push_back(std::move(info));
+    }
+
+    std::sort(out.begin(), out.end(),
+              [](const EngineReleaseInfo& a, const EngineReleaseInfo& b) { return a.number > b.number; });
+    return true;
+}
+
+bool ProjectStore::DownloadEngineRelease(const EngineReleaseInfo& release, std::wstring& message) const
+{
+    if (release.number < 0)
+    {
+        message = L"That release has no numbered editor build.";
+        return false;
+    }
+    bool changed = false;
+    return InstallEditorRelease(release.number, Wide(release.url), message, changed);
+}
+
+bool ProjectStore::DeleteEngineVersion(int number, std::wstring& message)
+{
+    const fs::path perUser = EditorDownloadsRootImpl() / std::to_wstring(number);
+    std::error_code ec;
+    if (!fs::is_directory(perUser, ec))
+    {
+        message = L"Build " + std::to_wstring(number) +
+                  L" is not in your per-user downloads folder, so it was not removed.";
+        return false;
+    }
+    fs::remove_all(perUser, ec);
+    if (ec)
+    {
+        message = L"Could not delete " + perUser.wstring() + L" (is the editor running?).";
+        return false;
+    }
+
+    // Keep the shortcuts pointing at whatever is still the newest editor.
+    if (auto dir = InstalledEditorDir(nullptr))
+        RefreshEditorShortcuts(*dir / L"zEngine.exe");
+    message = L"Deleted editor build " + std::to_wstring(number) + L".";
+    return true;
+}
+
+bool ProjectStore::LaunchEngineVersion(const fs::path& versionDir, std::wstring& error)
+{
+    const fs::path exe = versionDir / L"zEngine.exe";
+    std::error_code ec;
+    if (!fs::is_regular_file(exe, ec))
+    {
+        error = L"zEngine.exe was not found in " + versionDir.wstring() + L".";
+        return false;
+    }
+    const auto result = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, exe.parent_path().c_str(), SW_SHOWNORMAL));
+    if (result <= 32)
+    {
+        error = L"Could not start " + exe.wstring() + L".";
+        return false;
+    }
+    return true;
 }
 
 bool ProjectStore::BuildProject(const ProjectEntry&, std::wstring& error) const

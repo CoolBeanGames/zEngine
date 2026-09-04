@@ -14,7 +14,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 # "launcher_<number>.zip"; the running launcher offers to self-update when it
 # sees a release asset whose number is higher than its own. Bump this when
 # cutting a release. The build date is kept for display only.
-set(ZLAUNCHER_BUILD_NUMBER "4" CACHE STRING "Monotonic launcher release number")
+set(ZLAUNCHER_BUILD_NUMBER "5" CACHE STRING "Monotonic launcher release number")
 string(TIMESTAMP ZLAUNCHER_BUILD_DATE "%Y-%m-%d" UTC)
 
 add_executable(zLauncher WIN32

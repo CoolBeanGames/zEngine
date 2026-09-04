@@ -2,6 +2,8 @@
 #include "NewProjectDialog.h"
 #include "Style.h"
 
+#include <windowsx.h>
+
 #include <algorithm>
 #include <stdexcept>
 
@@ -26,6 +28,8 @@ constexpr int ID_UPDATE = 100;
 constexpr int ID_NEW = 101;
 constexpr int kRowButtons = 5;    // Play, Edit, Build, Template, Delete
 constexpr int ID_ROW_BASE = 1000; // row i: play = base+i*5, +1 edit, +2 build, +3 template, +4 delete
+constexpr int ID_ENGINE_BASE = 5000; // engine row i: primary = base+i*2, +1 secondary
+constexpr int kTabWidth = 104;    // width of one [Projects]/[Engine] tab slot
 
 std::wstring Widen(const char* text)
 {
@@ -206,6 +210,20 @@ LRESULT LauncherWindow::OnMain(UINT m, WPARAM wp, LPARAM lp)
         return 0;
     }
 
+    case WM_LBUTTONDOWN:
+    {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (pt.y >= kTopBar && pt.y < kListTop)
+        {
+            RECT projects{};
+            RECT engine{};
+            TabRects(projects, engine);
+            if (PtInRect(&projects, pt)) SwitchTab(0);
+            else if (PtInRect(&engine, pt)) SwitchTab(1);
+        }
+        return 0;
+    }
+
     case WM_COMMAND:
     {
         const int id = LOWORD(wp);
@@ -248,7 +266,7 @@ LRESULT LauncherWindow::OnList(UINT m, WPARAM wp, LPARAM lp)
     case WM_MOUSEMOVE:
     {
         const int y = static_cast<short>(HIWORD(lp));
-        const int count = static_cast<int>(store_.Projects().size());
+        const int count = static_cast<int>(RowCount());
         int row = (y + scroll_) / kRowHeight;
         if (row < 0 || row >= count) row = -1;
         if (row != hoverRow_)
@@ -315,7 +333,8 @@ LRESULT LauncherWindow::OnList(UINT m, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
     {
         const int id = LOWORD(wp);
-        if (id >= ID_ROW_BASE) OnRowCommand(id);
+        if (id >= ID_ENGINE_BASE) OnEngineRowCommand(id);
+        else if (id >= ID_ROW_BASE) OnRowCommand(id);
         return 0;
     }
     }
@@ -338,6 +357,35 @@ void LauncherWindow::LayoutChildren()
     MoveWindow(list_, 0, kListTop, width, std::max(0, height - kListTop - kStatusBar), TRUE);
 }
 
+std::size_t LauncherWindow::RowCount() const
+{
+    return activeTab_ == 1 ? engineReleases_.size() : store_.Projects().size();
+}
+
+void LauncherWindow::TabRects(RECT& projects, RECT& engine) const
+{
+    projects = { kEdgePad, kTopBar, kEdgePad + kTabWidth, kListTop };
+    engine = { kEdgePad + kTabWidth, kTopBar, kEdgePad + kTabWidth * 2, kListTop };
+}
+
+void LauncherWindow::ReloadEngineReleases()
+{
+    HCURSOR previous = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    engineError_.clear();
+    engineLoaded_ = store_.ListEngineReleases(engineReleases_, engineError_);
+    SetCursor(previous);
+}
+
+void LauncherWindow::SwitchTab(int tab)
+{
+    if (tab == activeTab_) return;
+    activeTab_ = tab;
+    hoverRow_ = -1;
+    if (activeTab_ == 1) ReloadEngineReleases();
+    RebuildRows();
+    InvalidateRect(main_, nullptr, FALSE);
+}
+
 void LauncherWindow::RebuildRows()
 {
     for (auto& row : rows_)
@@ -350,36 +398,62 @@ void LauncherWindow::RebuildRows()
     }
     rows_.clear();
 
-    const auto& projects = store_.Projects();
-    rows_.reserve(projects.size());
-    for (std::size_t i = 0; i < projects.size(); ++i)
-    {
-        const int base = ID_ROW_BASE + static_cast<int>(i) * kRowButtons;
-        auto make = [&](const wchar_t* label, int id) {
-            HWND button = CreateWindowExW(0, L"BUTTON", label,
-                                          WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                          0, 0, kRowButtonW, kRowButtonH, list_,
-                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                          instance_, nullptr);
-            lstyle::Attach(button);
-            return button;
-        };
-        Row row;
-        row.play = make(L"Play", base + 0);
-        row.edit = make(L"Edit", base + 1);
-        row.build = make(L"Build", base + 2);
-        row.tmpl = make(L"Template", base + 3);
-        row.del = make(L"Delete", base + 4);
+    auto make = [&](const wchar_t* label, int id) {
+        HWND button = CreateWindowExW(0, L"BUTTON", label,
+                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 0, 0,
+                                      kRowButtonW, kRowButtonH, list_,
+                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_,
+                                      nullptr);
+        lstyle::Attach(button);
+        return button;
+    };
 
-        // Play is available only when there is a build to run.
-        EnableWindow(row.play, ProjectStore::PlayableExe(projects[i]).has_value());
-        if (!projects[i].valid)
+    if (activeTab_ == 1)
+    {
+        rows_.reserve(engineReleases_.size());
+        for (std::size_t i = 0; i < engineReleases_.size(); ++i)
         {
-            EnableWindow(row.edit, FALSE);
-            EnableWindow(row.build, FALSE);
-            EnableWindow(row.tmpl, FALSE);
+            const auto& r = engineReleases_[i];
+            const int base = ID_ENGINE_BASE + static_cast<int>(i) * 2;
+            Row row;
+            if (r.downloaded)
+            {
+                row.play = make(L"Launch", base + 0);
+                row.edit = make(L"Delete", base + 1);
+                // Only builds sitting in the per-user folder can be deleted here.
+                EnableWindow(row.edit, ProjectStore::EngineVersionDir(r.number).has_value());
+            }
+            else
+            {
+                row.play = make(L"Download", base + 0);
+                EnableWindow(row.play, r.number >= 0 && !r.url.empty());
+            }
+            rows_.push_back(row);
         }
-        rows_.push_back(row);
+    }
+    else
+    {
+        const auto& projects = store_.Projects();
+        rows_.reserve(projects.size());
+        for (std::size_t i = 0; i < projects.size(); ++i)
+        {
+            const int base = ID_ROW_BASE + static_cast<int>(i) * kRowButtons;
+            Row row;
+            row.play = make(L"Play", base + 0);
+            row.edit = make(L"Edit", base + 1);
+            row.build = make(L"Build", base + 2);
+            row.tmpl = make(L"Template", base + 3);
+            row.del = make(L"Delete", base + 4);
+
+            EnableWindow(row.play, ProjectStore::PlayableExe(projects[i]).has_value());
+            if (!projects[i].valid)
+            {
+                EnableWindow(row.edit, FALSE);
+                EnableWindow(row.build, FALSE);
+                EnableWindow(row.tmpl, FALSE);
+            }
+            rows_.push_back(row);
+        }
     }
 
     scroll_ = 0;
@@ -400,15 +474,23 @@ void LauncherWindow::RepositionRows()
         const int top = static_cast<int>(i) * kRowHeight - scroll_;
         const int y = top + (kRowHeight - kRowButtonH) / 2;
         int x = width - kEdgePad - kRowButtonW;
-        MoveWindow(rows_[i].del, x, y, kRowButtonW, kRowButtonH, TRUE);
-        x -= kRowButtonW + kRowButtonGap;
-        MoveWindow(rows_[i].tmpl, x, y, kRowButtonW, kRowButtonH, TRUE);
-        x -= kRowButtonW + kRowButtonGap;
-        MoveWindow(rows_[i].build, x, y, kRowButtonW, kRowButtonH, TRUE);
-        x -= kRowButtonW + kRowButtonGap;
-        MoveWindow(rows_[i].edit, x, y, kRowButtonW, kRowButtonH, TRUE);
-        x -= kRowButtonW + kRowButtonGap;
-        MoveWindow(rows_[i].play, x, y, kRowButtonW, kRowButtonH, TRUE);
+        auto slot = [&](HWND button) {
+            if (button) MoveWindow(button, x, y, kRowButtonW, kRowButtonH, TRUE);
+            x -= kRowButtonW + kRowButtonGap;
+        };
+        if (activeTab_ == 1)
+        {
+            slot(rows_[i].edit);   // Delete (rightmost)
+            slot(rows_[i].play);   // Launch / Download
+        }
+        else
+        {
+            slot(rows_[i].del);
+            slot(rows_[i].tmpl);
+            slot(rows_[i].build);
+            slot(rows_[i].edit);
+            slot(rows_[i].play);
+        }
     }
 }
 
@@ -417,7 +499,7 @@ void LauncherWindow::UpdateScrollBar()
     RECT client;
     GetClientRect(list_, &client);
     const int page = std::max(1, static_cast<int>(client.bottom));
-    const int content = static_cast<int>(store_.Projects().size()) * kRowHeight;
+    const int content = static_cast<int>(RowCount()) * kRowHeight;
 
     SCROLLINFO si{ sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS };
     si.nMin = 0;
@@ -455,18 +537,36 @@ void LauncherWindow::PaintSection(HDC dc, const RECT& client)
 {
     RECT bar{ 0, kTopBar, client.right, kListTop };
     lstyle::Fill(dc, bar, lstyle::Window);
-    // The "underline rule" beneath the header, drawn in the accent colour.
+    // Thin divider along the bottom of the tab strip.
     RECT rule{ 0, kListTop - 1, client.right, kListTop };
-    lstyle::Fill(dc, rule, lstyle::Accent);
+    lstyle::Fill(dc, rule, lstyle::Border);
+
+    RECT projects{};
+    RECT engine{};
+    TabRects(projects, engine);
 
     SetBkMode(dc, TRANSPARENT);
     auto old = SelectObject(dc, headerFont_);
-    SetTextColor(dc, lstyle::Accent);
-    RECT label{ kEdgePad, kTopBar, client.right - kEdgePad, kListTop - 1 };
-    const int count = static_cast<int>(store_.Projects().size());
-    std::wstring header = L"PROJECTS";
-    if (count > 0) header += L"  (" + std::to_wstring(count) + L")";
-    DrawTextW(dc, header.c_str(), -1, &label, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
+
+    auto tab = [&](const RECT& r, std::wstring text, bool active) {
+        SetTextColor(dc, active ? lstyle::Accent : lstyle::Muted);
+        DrawTextW(dc, text.c_str(), -1, const_cast<RECT*>(&r),
+                  DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
+        if (active)
+        {
+            RECT underline{ r.left + 12, kListTop - 2, r.right - 12, kListTop };
+            lstyle::Fill(dc, underline, lstyle::Accent);
+        }
+    };
+
+    const int projectCount = static_cast<int>(store_.Projects().size());
+    std::wstring pl = L"PROJECTS";
+    if (projectCount > 0) pl += L" (" + std::to_wstring(projectCount) + L")";
+    std::wstring el = L"ENGINE";
+    if (!engineReleases_.empty()) el += L" (" + std::to_wstring(engineReleases_.size()) + L")";
+
+    tab(projects, pl, activeTab_ == 0);
+    tab(engine, el, activeTab_ == 1);
     SelectObject(dc, old);
 }
 
@@ -520,6 +620,64 @@ void LauncherWindow::PaintList(HDC target)
     RECT all{ 0, 0, width, height };
     lstyle::Fill(dc, all, lstyle::Window);
     SetBkMode(dc, TRANSPARENT);
+
+    if (activeTab_ == 1)
+    {
+        if (engineReleases_.empty())
+        {
+            auto old = SelectObject(dc, bodyFont_);
+            SetTextColor(dc, lstyle::Muted);
+            RECT text = all;
+            const std::wstring msg =
+                !engineLoaded_ ? (L"Could not reach GitHub. " + engineError_)
+                               : std::wstring(L"No engine releases were found on GitHub.");
+            DrawTextW(dc, msg.c_str(), -1, &text,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(dc, old);
+        }
+
+        const int textRight = width - kEdgePad - 2 * (kRowButtonW + kRowButtonGap);
+        for (std::size_t i = 0; i < engineReleases_.size(); ++i)
+        {
+            const int top = static_cast<int>(i) * kRowHeight - scroll_;
+            if (top + kRowHeight < 0 || top > height) continue;
+            const auto& r = engineReleases_[i];
+
+            if (static_cast<int>(i) == hoverRow_)
+            {
+                RECT rowRect{ 0, top, width, top + kRowHeight - 1 };
+                lstyle::Fill(dc, rowRect, lstyle::Selection);
+                RECT accentBar{ 0, top, 3, top + kRowHeight - 1 };
+                lstyle::Fill(dc, accentBar, lstyle::Accent);
+            }
+
+            auto old = SelectObject(dc, nameFont_);
+            SetTextColor(dc, lstyle::Text);
+            RECT name{ kEdgePad, top + 14, textRight, top + 36 };
+            std::wstring title = r.title.empty() ? r.tag : r.title;
+            DrawTextW(dc, title.c_str(), -1, &name,
+                      DT_SINGLELINE | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+            SelectObject(dc, bodyFont_);
+            SetTextColor(dc, r.downloaded ? lstyle::Accent : lstyle::Muted);
+            std::wstring meta = L"tag " + r.tag;
+            if (r.number >= 0) meta += L"   \x2022   build " + std::to_wstring(r.number);
+            meta += r.downloaded ? L"   \x2022   downloaded" : L"   \x2022   not downloaded";
+            RECT metaRect{ name.left, top + 40, textRight, top + 60 };
+            DrawTextW(dc, meta.c_str(), -1, &metaRect,
+                      DT_SINGLELINE | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+            SelectObject(dc, old);
+
+            RECT line{ 0, top + kRowHeight - 1, width, top + kRowHeight };
+            lstyle::Fill(dc, line, lstyle::RowLine);
+        }
+
+        BitBlt(target, 0, 0, width, height, dc, 0, 0, SRCCOPY);
+        SelectObject(dc, oldBmp);
+        DeleteObject(bmp);
+        DeleteDC(dc);
+        return;
+    }
 
     const auto& projects = store_.Projects();
     if (projects.empty())
@@ -764,6 +922,59 @@ void LauncherWindow::OnRowCommand(int commandId)
             store_.Remove(index);
             RebuildRows();
             SetStatus(L"Removed “" + entry.name + L"” from the list.");
+        }
+    }
+}
+
+void LauncherWindow::OnEngineRowCommand(int commandId)
+{
+    const int offset = commandId - ID_ENGINE_BASE;
+    const std::size_t index = static_cast<std::size_t>(offset / 2);
+    const int action = offset % 2;
+    if (index >= engineReleases_.size()) return;
+
+    const EngineReleaseInfo release = engineReleases_[index];
+
+    if (action == 0 && release.downloaded) // Launch
+    {
+        std::wstring error;
+        if (ProjectStore::LaunchEngineVersion(release.localDir, error))
+            SetStatus(L"Launching editor build " + std::to_wstring(release.number) + L"…");
+        else
+            MessageBoxW(main_, error.c_str(), L"Launch Editor", MB_OK | MB_ICONWARNING);
+    }
+    else if (action == 0) // Download
+    {
+        SetStatus(L"Downloading editor " + release.tag + L"…");
+        UpdateWindow(main_);
+        HCURSOR previous = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+        std::wstring message;
+        const bool ok = store_.DownloadEngineRelease(release, message);
+        SetCursor(previous);
+
+        editorVersion_ = ProjectStore::EditorVersion();
+        ReloadEngineReleases();
+        RebuildRows();
+        InvalidateRect(main_, nullptr, FALSE);
+        SetStatus(message);
+        if (!ok) MessageBoxW(main_, message.c_str(), L"Download Editor", MB_OK | MB_ICONWARNING);
+    }
+    else if (action == 1 && release.downloaded) // Delete
+    {
+        std::wstring prompt = L"Delete downloaded editor build " + std::to_wstring(release.number) +
+                              L" (" + release.tag + L") from your computer?";
+        if (MessageBoxW(main_, prompt.c_str(), L"Delete Editor Build", MB_YESNO | MB_ICONQUESTION) ==
+            IDYES)
+        {
+            std::wstring message;
+            const bool ok = ProjectStore::DeleteEngineVersion(release.number, message);
+            editorVersion_ = ProjectStore::EditorVersion();
+            ReloadEngineReleases();
+            RebuildRows();
+            InvalidateRect(main_, nullptr, FALSE);
+            SetStatus(message);
+            if (!ok)
+                MessageBoxW(main_, message.c_str(), L"Delete Editor Build", MB_OK | MB_ICONWARNING);
         }
     }
 }

@@ -33,6 +33,17 @@ struct ProjectTemplate
     std::filesystem::path folder;
 };
 
+// One zEngine editor release on GitHub, as shown on the launcher's "Engine" tab.
+struct EngineReleaseInfo
+{
+    std::wstring tag;              // e.g. "eng_4"
+    std::wstring title;            // release name, falls back to the tag
+    int number = -1;              // build number from the "engine_<n>.zip" asset
+    std::string url;              // that asset's download URL
+    bool downloaded = false;
+    std::filesystem::path localDir; // where it is on disk when downloaded
+};
+
 class ProjectStore
 {
 public:
@@ -105,6 +116,19 @@ public:
     // The editor-versions root: "<Program Files>\z engine\versions".
     static std::filesystem::path EngineVersionsRoot();
 
+    // --- the "Engine" tab: every editor release on GitHub -------------------
+    // Fetch the release list (newest build first). Returns false + `error` when
+    // GitHub cannot be reached.
+    bool ListEngineReleases(std::vector<EngineReleaseInfo>& out, std::wstring& error) const;
+    // Download + install one release (same placement rules as EnsureEditorInstalled).
+    bool DownloadEngineRelease(const EngineReleaseInfo& release, std::wstring& message) const;
+    // Delete a downloaded build from the per-user downloads folder.
+    static bool DeleteEngineVersion(int number, std::wstring& message);
+    // Launch a downloaded build's zEngine.exe.
+    static bool LaunchEngineVersion(const std::filesystem::path& versionDir, std::wstring& error);
+    // Local folder for a downloaded editor build, if present.
+    static std::optional<std::filesystem::path> EngineVersionDir(int number);
+
     // Reserved: headless standalone build. Not wired up yet.
     bool BuildProject(const ProjectEntry& entry, std::wstring& error) const;
     // Download the most recent GitHub release of the editor, unzip it and replace
@@ -124,6 +148,8 @@ public:
     static std::wstring EditorVersion();
 
 private:
+    bool InstallEditorRelease(int number, const std::wstring& url, std::wstring& message,
+                              bool& changed) const;
     void Save() const;
     static ProjectEntry Resolve(const std::filesystem::path& folder);
     static bool LaunchEntry(const ProjectEntry& entry, std::wstring& error);

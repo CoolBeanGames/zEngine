@@ -37,6 +37,14 @@ private:
     void OnNewProject();
     void OnUpdate();
     void OnRowCommand(int commandId);
+    void OnEngineRowCommand(int commandId);
+
+    // [Projects] [Engine] tab strip in the nav bar.
+    void SwitchTab(int tab);
+    void ReloadEngineReleases();
+    // Hit rectangles for the two tab labels (client coordinates).
+    void TabRects(RECT& projects, RECT& engine) const;
+    std::size_t RowCount() const;
 
     HINSTANCE instance_ = nullptr;
     HWND main_ = nullptr;
@@ -49,9 +57,14 @@ private:
     HFONT bodyFont_ = nullptr;
     HFONT headerFont_ = nullptr;
 
-    int hoverRow_ = -1;   // project row under the cursor, or -1
+    int hoverRow_ = -1;   // list row under the cursor, or -1
+    int activeTab_ = 0;   // 0 = Projects, 1 = Engine
 
     ProjectStore store_;
+
+    std::vector<EngineReleaseInfo> engineReleases_;
+    bool engineLoaded_ = false;
+    std::wstring engineError_;
 
     struct Row
     {
