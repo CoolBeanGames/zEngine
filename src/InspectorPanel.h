@@ -158,4 +158,9 @@ private:
     POINT startPoint_{};
     float startValue_ = 0;
     float scrubStep_ = 0.01f;
+    // ZE-88: drag-to-scrub on any numeric behavior field (dynamicIndex, -1 = idle).
+    int behaviorScrub_ = -1;
+    bool behaviorScrubInt_ = false;
+    bool BehaviorFieldNumeric(const BehaviorField& entry, float& step, bool& isInt) const;
+    void EndBehaviorScrub(bool cancel);
 };

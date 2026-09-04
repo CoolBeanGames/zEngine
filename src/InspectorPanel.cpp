@@ -338,7 +338,7 @@ void InspectorPanel::RefreshBehaviors()
                     const int count = field.type=="Vector2" ? 2 : 3;
                     for(int axis=0;axis<count;++axis) {
                         add(&behavior,field.name,Wide(field.name),false,true,field.editable);
-                        behaviorFields_.back().axis=axis; behaviorFields_.back().axisCount=count;
+                        behaviorFields_.back().axis=axis; behaviorFields_.back().axisCount=count; behaviorFields_.back().type=field.type;
                     }
                     continue;
                 }
@@ -911,6 +911,47 @@ void InspectorPanel::FinishField(int index, bool cancel)
     SetText(index, FieldValue(index)); // Invalid/incomplete text reverts to the last valid value.
     fields_[index].focusText = FieldValue(index);
 }
+bool InspectorPanel::BehaviorFieldNumeric(const BehaviorField& entry, float& step, bool& isInt) const
+{
+    step = 0.1f; isInt = false;
+    if (!entry.field.window || entry.combo || entry.multiline || entry.objectReference
+        || entry.prefab || entry.bitmask || entry.arrayHeader) return false;
+    if (entry.uiControl)
+    {
+        using K = zengine::ui::UiPropertyKind;
+        if (entry.uiKind == K::Int) { step = 1.0f; isInt = true; return true; }
+        if (entry.uiKind == K::Float || entry.uiKind == K::Vec2) return true;
+        return false;
+    }
+    if (entry.materialParam) return entry.materialType != zengine::shaders::ParamType::Texture2D;
+    if (entry.priority) return true;
+    if (entry.type == "int") { step = 1.0f; isInt = true; return true; }
+    if (entry.type == "float" || entry.type == "Vector3" || entry.type == "Vector2") return true;
+    // Camera / Collider vector / audio / light / environment numeric edits carry no script type;
+    // accept them when the current text is a plain number.
+    if (entry.type.empty())
+    {
+        float current = 0;
+        return ParseNumber(ReadText(entry.field.window), current);
+    }
+    return false;
+}
+void InspectorPanel::EndBehaviorScrub(bool cancel)
+{
+    if (behaviorScrub_ < 0) return;
+    const int index = behaviorScrub_;
+    behaviorScrub_ = -1;
+    auto& entry = behaviorFields_.at(static_cast<std::size_t>(index));
+    if (cancel && scrubbing_)
+    {
+        updating_ = true; SetWindowTextW(entry.field.window, entry.field.focusText.c_str()); updating_ = false;
+        ChangeBehaviorField(static_cast<std::size_t>(index));
+    }
+    scrubbing_ = false;
+    if (GetCapture() == entry.field.window) ReleaseCapture();
+    SetCursor(LoadCursorW(nullptr, IDC_IBEAM));
+    FinishBehaviorField(static_cast<std::size_t>(index), false);
+}
 void InspectorPanel::EndScrub(bool cancel)
 {
     if (pressed_ < 0) return;
@@ -1423,6 +1464,7 @@ LRESULT InspectorPanel::HandleEdit(HWND window, UINT message, WPARAM w, LPARAM l
         if (message==WM_GETDLGCODE) return DLGC_WANTALLKEYS;
         if (message==WM_KEYDOWN && (w==VK_RETURN || w==VK_ESCAPE || w==VK_TAB))
         {
+            if (behaviorScrub_>=0) EndBehaviorScrub(w==VK_ESCAPE);
             FinishBehaviorField(dynamicIndex,w==VK_ESCAPE);
             HWND next=window_;
             if (w==VK_TAB)
@@ -1434,6 +1476,48 @@ LRESULT InspectorPanel::HandleEdit(HWND window, UINT message, WPARAM w, LPARAM l
             SetFocus(next); return 0;
         }
         if (message==WM_CHAR && (w==VK_RETURN || w==VK_ESCAPE || w==VK_TAB)) return 0;
+        // ZE-88: drag left/right on any numeric behavior field to scrub its value.
+        if (editData_ && (message==WM_LBUTTONDOWN || (message==WM_MOUSEMOVE && behaviorScrub_==dynamicIndex)
+                          || (message==WM_LBUTTONUP && behaviorScrub_==dynamicIndex) || message==WM_CAPTURECHANGED))
+        {
+            auto& entry=behaviorFields_[dynamicIndex];
+            float step=0.1f; bool isInt=false;
+            if (message==WM_LBUTTONDOWN && entry.field.window && BehaviorFieldNumeric(entry,step,isInt))
+            {
+                entry.field.focusText=BehaviorValue(dynamicIndex);
+                SetFocus(window); behaviorScrub_=dynamicIndex; scrubbing_=false;
+                startPoint_={GET_X_LPARAM(l),GET_Y_LPARAM(l)}; ClientToScreen(window,&startPoint_);
+                ParseNumber(ReadText(window),startValue_);
+                scrubStep_=step; if (!isInt && (GetKeyState(VK_SHIFT)&0x8000)) scrubStep_*=0.1f;
+                behaviorScrubInt_=isInt;
+                SetCapture(window); return 0;
+            }
+            if (message==WM_MOUSEMOVE && behaviorScrub_==dynamicIndex)
+            {
+                POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)}; ClientToScreen(window,&point);
+                const LONG delta=point.x-startPoint_.x;
+                scrubbing_=scrubbing_ || std::abs(delta)>=GetSystemMetrics(SM_CXDRAG);
+                if (scrubbing_)
+                {
+                    SetCursor(LoadCursorW(nullptr,IDC_SIZEWE));
+                    float value=std::clamp(startValue_+static_cast<float>(delta)*scrubStep_,-1'000'000.0f,1'000'000.0f);
+                    std::wostringstream text;
+                    if (behaviorScrubInt_) text<<static_cast<long long>(std::llround(value));
+                    else text<<std::setprecision(7)<<value;
+                    updating_=true; SetWindowTextW(window,text.str().c_str()); updating_=false;
+                    ChangeBehaviorField(static_cast<std::size_t>(dynamicIndex));
+                }
+                return 0;
+            }
+            if (message==WM_LBUTTONUP && behaviorScrub_==dynamicIndex)
+            {
+                const bool dragged=scrubbing_;
+                EndBehaviorScrub(false);
+                if (!dragged) SendMessageW(window,EM_SETSEL,0,-1);
+                return 0;
+            }
+            if (message==WM_CAPTURECHANGED && behaviorScrub_==dynamicIndex) { EndBehaviorScrub(true); return 0; }
+        }
         return DefSubclassProc(window,message,w,l);
     }
     const int index = GetDlgCtrlID(window) - NameField;
