@@ -35,6 +35,38 @@ int EditorShell::ViewTabHit(POINT point) const
     return -1;
 }
 
+// ZE-80: the bottom dock's Assets / Editor Console / Play Console tab strip.
+RECT EditorShell::DockTabRect(int index) const
+{
+    static const int width[3]{54, 108, 100};
+    int left = mediaLibrary_.left + 10;
+    for (int i = 0; i < index; ++i) left += width[i] + 2;
+    const int top = mediaLibrary_.top + 4;
+    return RECT{left, top, left + width[index], top + 22};
+}
+int EditorShell::DockTabHit(POINT point) const
+{
+    for (int i = 0; i < 3; ++i)
+        if (const auto rect = DockTabRect(i); PtInRect(&rect, point)) return i;
+    return -1;
+}
+void EditorShell::SetDockTab(DockTab tab)
+{
+    dockTab_ = tab;
+    RECT client{}; if (window_ && GetClientRect(window_, &client))
+        Layout(static_cast<std::uint32_t>(client.right), static_cast<std::uint32_t>(client.bottom));
+    InvalidateRect(window_, nullptr, FALSE);
+}
+void EditorShell::AppendConsole(HWND console, const std::wstring& line) const
+{
+    if (!console) return;
+    const auto end = GetWindowTextLengthW(console);
+    if (end > 60000) SetWindowTextW(console, L""); // keep the buffer bounded
+    const auto e = GetWindowTextLengthW(console);
+    SendMessageW(console, EM_SETSEL, e, e);
+    SendMessageW(console, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>((line + L"\r\n").c_str()));
+}
+
 void EditorShell::EnsureScriptTab()
 {
     if (scriptListBox_) return;

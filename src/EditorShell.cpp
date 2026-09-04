@@ -218,6 +218,7 @@ EditorShell::~EditorShell()
     {
         DeleteObject(headerFont_);
     }
+    if (consoleBrush_) DeleteObject(consoleBrush_); // ZE-80
     UnregisterClassW(ViewportWindowClass, instance_);
     UnregisterClassW(EditorWindowClass, instance_);
 }
@@ -237,6 +238,15 @@ HWND EditorShell::Create(const int showCommand, const std::filesystem::path& pro
     }
 
     CreateViewport();
+    // ZE-80: bottom-dock consoles (hidden until their tab is active).
+    consoleBrush_ = CreateSolidBrush(RGB(0,0,0));
+    for (HWND* c : {&editorConsole_, &playConsole_})
+    {
+        *c = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | ES_MULTILINE | ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL,
+            0, 0, 1, 1, window_, nullptr, instance_, nullptr);
+        if (*c) SendMessageW(*c, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+    }
     inspectorPanel_ = std::make_unique<InspectorPanel>();
     inspectorPanel_->Create(window_, instance_, uiFont_, [this]() { OnObjectChanged(); });
     inspectorPanel_->SetScriptHost(&scriptHost_);
@@ -475,15 +485,14 @@ bool EditorShell::Play()
         status_=L"Scene.load(\""+WideText(std::string(name))+L"\") switches scenes only in a built game";
         InvalidateRect(window_,&statusBar_,FALSE);
     });
-    // The console docks into the bottom of the Game tab, not a separate window.
-    consoleWindow_=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_CHILD|ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL,0,0,1,1,window_,nullptr,instance_,nullptr);
-    if(consoleWindow_)SendMessageW(consoleWindow_,WM_SETFONT,reinterpret_cast<WPARAM>(uiFont_),TRUE);
-    if (!scriptHost_.Play(objects_,physicsWorld_.get())) { if(consoleWindow_){DestroyWindow(consoleWindow_);consoleWindow_=nullptr;} physicsWorld_.reset();ReportScriptErrors(); return false; }
+    if(playConsole_)SetWindowTextW(playConsole_,L""); // ZE-80: fresh play-mode console
+    if (!scriptHost_.Play(objects_,physicsWorld_.get())) { physicsWorld_.reset();ReportScriptErrors(); return false; }
     playScene_=std::move(authored);
     paused_=false; stepDraw_=false; tickAccumulator_=0; lastTick_=std::chrono::steady_clock::now();
     status_=L"Playing - Stop restores transforms and discards runtime variable changes";
     inspectorPanel_->RefreshBehaviors(); inspectorPanel_->RefreshLiveValues(); ReportScriptErrors();
     SetViewTab(ViewTab::Game); // play inside the view panel, not a new window
+    SetDockTab(DockTab::PlayConsole); // ZE-80: the bottom dock follows Play
     InvalidateRect(window_,nullptr,FALSE);
     return true;
 }
@@ -504,7 +513,7 @@ void EditorShell::Stop()
 {
     SetFocus(window_);
     mouseCapture_.Release(); // ZE-84: restore the OS cursor
-    if(consoleWindow_){DestroyWindow(consoleWindow_);consoleWindow_=nullptr;}
+    if(dockTab_==DockTab::PlayConsole)SetDockTab(DockTab::Assets); // ZE-80
     scriptHost_.Stop(objects_);physicsWorld_.reset();if(audioPreview_){audioPreview_->StopAll();audioPreview_.reset();} paused_=false; stepDraw_=false; tickAccumulator_=0;
     std::set<zengine::GameObjectId> spawned;for(std::size_t i=0;i<objects_.Size();++i)if(!playObjects_.contains(objects_.At(i).Id()))spawned.insert(objects_.At(i).Id());
     for(const auto id:spawned)if(auto* object=objects_.Find(id))for(std::size_t i=0;i<object->BehaviorCount();++i)if(auto* script=dynamic_cast<zengine::ScriptBehavior*>(&object->BehaviorAt(i)))scriptHost_.Forget(*script);
@@ -543,7 +552,8 @@ void EditorShell::ReportScriptErrors()
                 if (!error.empty())
                 {
                     const auto text=WideText(objects_.At(i).Name()+": "+error);
-                    if (status_!=text) { status_=text; InvalidateRect(window_,&statusBar_,FALSE); }
+                    if (status_!=text) { status_=text; InvalidateRect(window_,&statusBar_,FALSE);
+                        AppendConsole(Playing()?playConsole_:editorConsole_, L"[error] "+text); } // ZE-80
                     return;
                 }
             }
@@ -666,21 +676,20 @@ void EditorShell::Layout(const std::uint32_t width, const std::uint32_t height)
     viewportContent_ = viewportPanel_;
     viewportContent_.top = std::min(viewportContent_.bottom, viewportContent_.top + PanelHeaderHeight);
 
-    // A running game docks its console into the bottom of the Game tab.
-    const bool showConsole = consoleWindow_ && viewTab_ == ViewTab::Game && Playing();
-    RECT consoleRect{};
-    if (showConsole)
+    // ZE-80: the bottom dock's two console panes fill the media-library content area
+    // when their tab is selected (the asset grid is hidden then).
+    const RECT dockContent{mediaLibrary_.left + 8, mediaLibrary_.top + 30,
+                           mediaLibrary_.right - 8, mediaLibrary_.bottom - 8};
+    for (HWND console : {editorConsole_, playConsole_})
     {
-        const int consoleHeight = std::clamp<int>((viewportContent_.bottom - viewportContent_.top) / 3, 60, 220);
-        consoleRect = RECT{viewportContent_.left, viewportContent_.bottom - consoleHeight, viewportContent_.right, viewportContent_.bottom};
-        viewportContent_.bottom = std::max(viewportContent_.top, consoleRect.top - 2);
-    }
-    if (consoleWindow_)
-    {
-        ShowWindow(consoleWindow_, showConsole ? SW_SHOW : SW_HIDE);
-        if (showConsole)
-            SetWindowPos(consoleWindow_, HWND_TOP, consoleRect.left, consoleRect.top,
-                         consoleRect.right - consoleRect.left, consoleRect.bottom - consoleRect.top, SWP_NOACTIVATE);
+        if (!console) continue;
+        const bool visible = (console == editorConsole_ && dockTab_ == DockTab::EditorConsole)
+                          || (console == playConsole_ && dockTab_ == DockTab::PlayConsole);
+        ShowWindow(console, visible ? SW_SHOW : SW_HIDE);
+        if (visible)
+            SetWindowPos(console, HWND_TOP, dockContent.left, dockContent.top,
+                         std::max<LONG>(0, dockContent.right - dockContent.left),
+                         std::max<LONG>(0, dockContent.bottom - dockContent.top), SWP_NOACTIVATE);
     }
 
     const int viewportWidth = std::max<LONG>(0, viewportContent_.right - viewportContent_.left);
@@ -751,8 +760,31 @@ void EditorShell::Paint()
     SelectObject(bufferContext, headerFont_);
     DrawPanel(bufferContext, sceneBrowser_, L"Scene Browser");
     DrawPanel(bufferContext, inspector_, L"Inspector");
-    DrawPanel(bufferContext, mediaLibrary_, L"Media Library");
-    SelectObject(bufferContext, uiFont_);
+    // ZE-80: the bottom dock is tabbed - Assets / Editor Console / Play Console.
+    {
+        FillRectangle(bufferContext, mediaLibrary_, PanelBackground);
+        RECT dockHeader = mediaLibrary_; dockHeader.bottom = std::min<LONG>(dockHeader.bottom, dockHeader.top + PanelHeaderHeight);
+        FillRectangle(bufferContext, dockHeader, HeaderBackground);
+        DrawBorder(bufferContext, mediaLibrary_, BorderColor);
+        SelectObject(bufferContext, uiFont_);
+        const wchar_t* dockNames[3]{L"Assets", L"Editor Console", L"Play Console"};
+        for (int i = 0; i < 3; ++i)
+        {
+            const RECT tab = DockTabRect(i);
+            const bool on = static_cast<int>(dockTab_) == i;
+            FillRectangle(bufferContext, tab, on ? PanelBackground : HeaderBackground);
+            if (on) { RECT underline{tab.left, tab.bottom - 2, tab.right, tab.bottom}; FillRectangle(bufferContext, underline, RGB(108,166,232)); }
+            DrawTextLabel(bufferContext, dockNames[i], tab, on ? TextColor : MutedTextColor, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        }
+        if (dockTab_ != DockTab::Assets)
+        {
+            RECT hint{mediaLibrary_.left + 12, mediaLibrary_.bottom - 24, mediaLibrary_.right - 12, mediaLibrary_.bottom - 6};
+            DrawTextLabel(bufferContext, dockTab_ == DockTab::PlayConsole
+                          ? L"Script print() and errors from the running game."
+                          : L"Script print() and compile errors while editing.",
+                          hint, MutedTextColor, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        }
+    }
 
     // View panel: a Scene / Game / Script tab strip instead of a plain header label.
     {
@@ -811,7 +843,9 @@ void EditorShell::Paint()
 
     // Inspector content and edit controls are hosted by the reusable InspectorPanel child.
 
-    // Project asset library
+    // Project asset library (only when the Assets dock tab is active - ZE-80)
+    if (dockTab_ == DockTab::Assets)
+    {
     const int mediaTop = mediaLibrary_.top + PanelHeaderHeight;
     RECT breadcrumb{mediaLibrary_.left+12,mediaTop+8,mediaLibrary_.right-12,mediaTop+36};
     if(project_ && AssetFolder()!=assetsDirectory_){button(10,L"\u2191");breadcrumb.left+=40;}
@@ -830,6 +864,7 @@ void EditorShell::Paint()
         RECT name{cell.left+4,cell.top+39,cell.right-4,cell.bottom-3};DrawTextLabel(bufferContext,AssetDisplayName(assets_[index]),name,TextColor,DT_CENTER|DT_WORDBREAK|DT_END_ELLIPSIS);
     }
     RestoreDC(bufferContext, saved);
+    }
 
     // Status bar and dormant progress indicator
     FillRectangle(bufferContext, statusBar_, RGB(30, 32, 36));
@@ -1221,7 +1256,7 @@ void EditorShell::ConfigureScriptOutput()
     scriptHost_.SetPrintHandler([this](std::string_view text) {
         const auto message=std::string(text)+"\n"; OutputDebugStringA("[zEngine] "); OutputDebugStringA(message.c_str());
         status_=L"Console: "+WideText(std::string(text));
-        if(consoleWindow_){const auto line=WideText(std::string(text)+"\r\n");const auto end=GetWindowTextLengthW(consoleWindow_);SendMessageW(consoleWindow_,EM_SETSEL,end,end);SendMessageW(consoleWindow_,EM_REPLACESEL,FALSE,reinterpret_cast<LPARAM>(line.c_str()));}
+        AppendConsole(Playing()?playConsole_:editorConsole_, WideText(std::string(text))); // ZE-80
         InvalidateRect(window_,&statusBar_,FALSE);
     });
 }
@@ -2129,8 +2164,14 @@ LRESULT EditorShell::HandleMessage(
         return 0;
     case WM_CTLCOLORLISTBOX:
         return editorStyle::ControlColor(message, wParam);
+    case WM_CTLCOLOREDIT:
     case WM_CTLCOLORSTATIC:
-        if (consoleWindow_ && reinterpret_cast<HWND>(lParam) == consoleWindow_) return editorStyle::ControlColor(WM_CTLCOLORLISTBOX, wParam);
+        if ((reinterpret_cast<HWND>(lParam) == editorConsole_ || reinterpret_cast<HWND>(lParam) == playConsole_) && consoleBrush_)
+        { // ZE-80: black console background, white text
+            SetBkColor(reinterpret_cast<HDC>(wParam), RGB(0,0,0));
+            SetTextColor(reinterpret_cast<HDC>(wParam), RGB(235,235,235));
+            return reinterpret_cast<LRESULT>(consoleBrush_);
+        }
         break;
     case WM_COMMAND:
         if(LOWORD(wParam)>=AddEmptyCommand&&LOWORD(wParam)<=AddAreaObjectCommand){CreateGameObject(static_cast<ObjectPreset>(LOWORD(wParam)-AddEmptyCommand),selectedObject_);return 0;}
@@ -2210,7 +2251,7 @@ LRESULT EditorShell::HandleMessage(
             }
             const auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,screen.x,screen.y,0,window_,nullptr);DestroyMenu(menu);if(command)SendMessageW(window_,WM_COMMAND,command,0);return 0;
         }
-        if (!PtInRect(&mediaLibrary_, point)) break;
+        if (!PtInRect(&mediaLibrary_, point) || dockTab_ != DockTab::Assets) break; // ZE-80
         const int assetIndex=AssetAt(point);selectedAsset_=assetIndex;InvalidateRect(window_,&mediaLibrary_,FALSE);
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, 1, L"Create Behavior Script (.zsh)");
@@ -2313,6 +2354,7 @@ LRESULT EditorShell::HandleMessage(
             SetViewTab(static_cast<ViewTab>(tab));
             return 0;
         }
+        if (const int tab=DockTabHit(point); tab>=0) { SetDockTab(static_cast<DockTab>(tab)); return 0; } // ZE-80
         hoveredChrome_=ChromeHit(point);pressedChrome_=hoveredChrome_;
         if(pressedChrome_>=0){InvalidateRect(window_,nullptr,FALSE);if(!ChromeEnabled(pressedChrome_)){pressedChrome_=-1;return 0;}}
         if(pressedChrome_==10){SendMessageW(window_,WM_COMMAND,UpFolderCommand,0);return 0;}

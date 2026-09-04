@@ -1359,12 +1359,15 @@ void ViewTabsTests(bool capture)
 
         // Play switches to the Game tab; Stop returns to Scene.
         const auto script=editor.CreateScriptAsset(); (void)script;
+        Require(editor.CurrentDockTab()==EditorShell::DockTab::Assets,"Bottom dock did not start on Assets");
         Require(editor.Play(),"Play failed"); editor.SetPaused(true);
         Require(editor.CurrentViewTab()==EditorShell::ViewTab::Game,"Play did not switch to the Game tab");
+        Require(editor.CurrentDockTab()==EditorShell::DockTab::PlayConsole,"Play did not switch the bottom dock to the Play Console"); // ZE-80
         editor.Render();
         if(capture) CaptureScreen(window,L"view-tabs-game-qa.bmp");
         editor.Stop();
         Require(editor.CurrentViewTab()==EditorShell::ViewTab::Scene,"Stop did not return to the Scene tab");
+        Require(editor.CurrentDockTab()==EditorShell::DockTab::Assets,"Stop did not return the bottom dock to Assets"); // ZE-80
 
         // Script tab: opening a script switches to it and embeds the editor.
         editor.OpenScript(script);

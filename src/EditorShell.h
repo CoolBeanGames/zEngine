@@ -157,6 +157,8 @@ public:
     // The view panel is tabbed: Scene (edit), Game (Play), Script (inline editor + browser).
     enum class ViewTab { Scene, Game, Script };
     ViewTab CurrentViewTab() const noexcept { return viewTab_; }
+    enum class DockTab { Assets, EditorConsole, PlayConsole }; // ZE-80: the tabbed bottom dock
+    DockTab CurrentDockTab() const noexcept { return dockTab_; }
     void SetViewTab(ViewTab tab);
     // Enforce a single "main"-tagged Camera (keepMain wins ties). Call after the tag changes.
     void SyncMainCamera(zengine::GameObjectId keepMain = 0);
@@ -395,6 +397,16 @@ private:
     HWND window_ = nullptr;
     HWND consoleWindow_ = nullptr;
     HWND viewportWindow_ = nullptr;
+    // ZE-80: the bottom dock is tabbed like the view section - the asset library,
+    // an editor console (print + script errors while editing) and a play-mode
+    // console (print + errors while Playing). Play switches to the play console.
+    DockTab dockTab_ = DockTab::Assets;
+    HWND editorConsole_ = nullptr, playConsole_ = nullptr;
+    HBRUSH consoleBrush_ = nullptr; // black background for the console EDIT controls
+    RECT DockTabRect(int index) const;
+    int DockTabHit(POINT point) const;
+    void SetDockTab(DockTab tab);
+    void AppendConsole(HWND console, const std::wstring& line) const;
     bool mouseButtonsPrev_[3] = {}; // L/R/M pressed last TickInput, for just_pressed/just_released
     zengine::game::MouseCaptureState mouseCapture_; // ZE-84: Input.set_mouse_mode during Play preview
     std::unique_ptr<Renderer> renderer_;
