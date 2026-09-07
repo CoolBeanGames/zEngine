@@ -155,6 +155,26 @@ void GizmoTests(bool capture)
             Check(std::abs(x-std::round(x/0.5f)*0.5f)<1e-4f && x!=0.f,"Shift-drag did not snap the moved axis to the grid");
             obj.GetTransform()=zengine::Transform{}; Check(editor.SaveScene(),"grid-snap fixture reset failed");
         }
+        // ZE-93: holding V during a single-axis Move drag snaps the nearest vertex pair on the dragged axis.
+        {
+            const auto selectedId=editor.SelectedGameObject()->Id();
+            const auto selfTransform=[&]()->zengine::Transform& { return const_cast<zengine::GameObject*>(editor.SelectedGameObject())->GetTransform(); };
+            selfTransform()=zengine::Transform{};
+            const auto bId=editor.CreateEmptyGameObject().Id();
+            const_cast<zengine::GameObject*>(zengine::As3D(editor.GameObjects().Find(bId)))->GetTransform().SetPosition({20,0,0});
+            editor.SelectGameObject(selectedId);
+            gizmo::Point s; auto sh=gizmo::Build(camera,selfTransform(),gizmo::Mode::Move);
+            auto h=Find(camera,sh,0,s); const auto e=Destination(camera,sh,h,s,gizmo::Mode::Move);
+            send(WM_LBUTTONDOWN,s); send(WM_KEYDOWN,{0,0},'V'); send(WM_MOUSEMOVE,e,MK_LBUTTON);
+            const auto p=selfTransform().Position();
+            send(WM_LBUTTONUP,e,MK_LBUTTON); send(WM_KEYUP,{0,0},'V');
+            // Both objects fall back to their +/-0.5 grab box: a's +0.5 face meets b's -0.5 face -> x = 19.0.
+            Check(std::abs(p.x-19.0f)<1e-3f,"V-drag did not snap the nearest vertex on the dragged axis");
+            Check(std::abs(p.y)<1e-4f && std::abs(p.z)<1e-4f,"Vertex snap disturbed an axis that was not being dragged");
+            editor.DeleteGameObject(bId);
+            editor.SelectGameObject(selectedId);
+            selfTransform()=zengine::Transform{}; Check(editor.SaveScene(),"vertex-snap fixture reset failed");
+        }
         gizmo::Point start; auto shape=gizmo::Build(camera,editor.SelectedGameObject()->GetTransform(),gizmo::Mode::Move);
         auto hit=Find(camera,shape,0,start); const auto end=Destination(camera,shape,hit,start,gizmo::Mode::Move);
         send(WM_LBUTTONDOWN,start); send(WM_MOUSEMOVE,end,MK_LBUTTON); SendMessageW(viewport,WM_KEYDOWN,VK_ESCAPE,0);

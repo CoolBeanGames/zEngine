@@ -158,6 +158,7 @@ public:
     const zengine::ObjectStore& GameObjects() const noexcept { return objects_; }
     const zengine::GameObject* SelectedGameObject() const noexcept { return zengine::As3D(objects_.Find(selectedObject_)); }
     zengine::GameObject* SelectedGameObject() noexcept { return zengine::As3D(objects_.Find(selectedObject_)); }
+    void SelectGameObject(zengine::GameObjectId id);
 
     // The view panel is tabbed: Scene (edit), Game (Play), Script (inline editor + browser).
     enum class ViewTab { Scene, Game, Script };
@@ -211,7 +212,6 @@ private:
     void BeginObjectRename(zengine::GameObjectId);
     void FinishRename(bool cancel);
     static LRESULT CALLBACK RenameProcedure(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR);
-    void SelectGameObject(zengine::GameObjectId id);
     void OnObjectChanged();
     RECT CreateObjectRectangle() const;
     RECT ObjectListRectangle() const;
@@ -263,7 +263,7 @@ private:
     bool objectDragMoved_=false;
     LRESULT HandleViewportMessage(HWND,UINT,WPARAM,LPARAM);
     void EndGizmoDrag(bool cancel);
-    void UpdateGizmoDrag(gizmo::Point, bool gridSnap=false); // ZE-108: Shift-drag = snap
+    void UpdateGizmoDrag(gizmo::Point, bool gridSnap=false, bool vertexSnap=false); // ZE-108 Shift-drag = grid snap; ZE-93 V = vertex snap
     // ZE-104: ray-pick the nearest 3D object under a viewport point (0 = empty space).
     zengine::GameObjectId PickObject(gizmo::Point viewportPoint) const;
     RECT ToolRectangle(int index) const;
@@ -348,6 +348,12 @@ private:
     zengine::GameObjectId selectedObject_ = 0;
     struct MeshBinding { std::string asset; MeshHandle mesh; Float3 boundsMin{-0.5f,-0.5f,-0.5f}, boundsMax{0.5f,0.5f,0.5f}; }; // ZE-104: local AABB for click-picking
     std::map<zengine::GameObjectId, MeshBinding> meshBindings_;
+    // ZE-93: deduplicated local-space vertex positions per mesh asset, sampled for vertex snapping.
+    std::map<std::string, std::vector<Float3>> meshVertexCache_;
+    // ZE-93: while V is held during a single-axis Move drag, snap the nearest vertex of the
+    // selection to the nearest vertex of another object, on the dragged axis only.
+    void SnapDraggedVertex(int axis);
+    bool vertexSnapHeld_=false; // ZE-93: V key held in the viewport
     // ZE-65: resolved Material Instances, keyed by project-relative ".material" path.
     mutable std::map<std::string, MaterialHandle> materialCache_;
     MaterialHandle ResolveMaterial(const std::string& materialAsset) const;

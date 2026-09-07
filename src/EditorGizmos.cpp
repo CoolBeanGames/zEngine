@@ -116,12 +116,18 @@ void EditorShell::EndGizmoDrag(bool cancel)
     status_=cancel?L"Transform drag canceled":L"Transform updated - save the scene to keep your changes";
     InvalidateRect(window_,nullptr,FALSE);
 }
-void EditorShell::UpdateGizmoDrag(gizmo::Point point, bool gridSnap)
+void EditorShell::UpdateGizmoDrag(gizmo::Point point, bool gridSnap, bool vertexSnap)
 {
     if (!gizmoDrag_) return;
     auto* object=zengine::As3D(objects_.Find(gizmoObject_));
     if (!object || Playing()) { EndGizmoDrag(true); return; }
     object->GetTransform()=gizmoDrag_->Update(point);
+    // ZE-93: holding V during a single-axis Move drag snaps the nearest vertex pair on that axis.
+    if (vertexSnap && transformTool_==gizmo::Mode::Move)
+    {
+        const int a=gizmoDrag_->Axis();
+        if (a>=0 && a<3) SnapDraggedVertex(a);
+    }
     // ZE-108: Shift-dragging the Move tool snaps the dragged axis (or plane) to the grid.
     if (gridSnap && transformTool_==gizmo::Mode::Move && gridSnap_>0)
     {
@@ -138,6 +144,57 @@ void EditorShell::UpdateGizmoDrag(gizmo::Point point, bool gridSnap)
     const auto equal=[](zengine::Vec3 a,zengine::Vec3 b) { return a.x==b.x && a.y==b.y && a.z==b.z; };
     const bool dirty=gizmoWasDirty_ || !equal(current.Position(),original.Position()) || !equal(current.Rotation(),original.Rotation()) || !equal(current.Scale(),original.Scale());
     if(dirty!=sceneDirty_){sceneDirty_=dirty;UpdateSceneTitle();}
+}
+void EditorShell::SnapDraggedVertex(int axis)
+{
+    using namespace DirectX;
+    auto* object=zengine::As3D(objects_.Find(gizmoObject_));
+    if (!object) return;
+
+    const auto worldVerts=[&](const zengine::GameObject& go)
+    {
+        std::vector<XMVECTOR> out;
+        const XMMATRIX world=TransformMatrix(go.GetTransform())*ParentMatrix(objects_,go);
+        const std::vector<Float3>* local=nullptr;
+        const auto b=meshBindings_.find(go.Id());
+        if (b!=meshBindings_.end())
+            if (const auto v=meshVertexCache_.find(b->second.asset); v!=meshVertexCache_.end() && !v->second.empty())
+                local=&v->second;
+        if (local)
+        {
+            out.reserve(local->size());
+            for (const auto& p : *local) out.push_back(XMVector3TransformCoord(XMVectorSet(p.x,p.y,p.z,1),world));
+        }
+        else // no cached mesh (e.g. a primitive cube): snap against the local AABB corners
+        {
+            Float3 lo{-0.5f,-0.5f,-0.5f}, hi{0.5f,0.5f,0.5f};
+            if (b!=meshBindings_.end()) { lo=b->second.boundsMin; hi=b->second.boundsMax; }
+            for (int i=0;i<8;++i)
+                out.push_back(XMVector3TransformCoord(XMVectorSet(i&1?hi.x:lo.x,i&2?hi.y:lo.y,i&4?hi.z:lo.z,1),world));
+        }
+        return out;
+    };
+
+    const auto mine=worldVerts(*object);
+    if (mine.empty()) return;
+
+    float best=FLT_MAX, snap=0; bool found=false;
+    for (std::size_t i=0;i<objects_.Size();++i)
+    {
+        const auto* other=zengine::As3D(&objects_.At(i));
+        if (!other || other->Id()==gizmoObject_) continue;
+        for (const auto& ov : worldVerts(*other))
+            for (const auto& mv : mine)
+            {
+                const float d=XMVectorGetX(XMVector3LengthSq(ov-mv));
+                if (d<best) { best=d; snap=XMVectorGetByIndex(ov,axis)-XMVectorGetByIndex(mv,axis); found=true; }
+            }
+    }
+    if (!found || snap==0) return;
+    auto p=object->GetTransform().Position();
+    (axis==0?p.x:axis==1?p.y:p.z)+=snap;
+    object->GetTransform().SetPosition(p);
+    status_=L"Vertex snap (V) - nearest vertex aligned on the dragged axis";
 }
 LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPARAM l)
 {
@@ -187,7 +244,7 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
     }
     case WM_MOUSEMOVE:
         if(cameraDrag_!=CameraDrag::None){CameraMotion({GET_X_LPARAM(l),GET_Y_LPARAM(l)});return 0;}
-        if (gizmoDrag_) UpdateGizmoDrag(point, (w & MK_SHIFT)!=0); // ZE-108
+        if (gizmoDrag_) UpdateGizmoDrag(point, (w & MK_SHIFT)!=0, vertexSnapHeld_); // ZE-108 / ZE-93
         else
         {
             hoveredAxis_=-1;
@@ -202,15 +259,19 @@ LRESULT EditorShell::HandleViewportMessage(HWND window,UINT message,WPARAM w,LPA
         }
         SetCursor(LoadCursorW(nullptr,hoveredAxis_>=0?IDC_HAND:IDC_ARROW)); return 0;
     case WM_LBUTTONUP:
-        if (gizmoDrag_) { UpdateGizmoDrag(point, (w & MK_SHIFT)!=0); EndGizmoDrag(false); } return 0; // ZE-108
+        if (gizmoDrag_) { UpdateGizmoDrag(point, (w & MK_SHIFT)!=0, (GetAsyncKeyState('V')&0x8000)!=0); EndGizmoDrag(false); } return 0; // ZE-108 / ZE-93
     case WM_CAPTURECHANGED:
     case WM_CANCELMODE:
     case WM_KILLFOCUS:
         EndGizmoDrag(true); EndCameraDrag(); return 0;
     case WM_MOUSELEAVE:
         if (!gizmoDrag_) hoveredAxis_=-1; return 0;
+    case WM_KEYUP:
+        if (w=='V') vertexSnapHeld_=false;
+        return 0;
     case WM_KEYDOWN:
         if (w==VK_ESCAPE) { EndGizmoDrag(true); EndCameraDrag(); return 0; }
+        if (w=='V') { vertexSnapHeld_=true; if (gizmoDrag_) return 0; } // ZE-93: snap while dragging Move
         if(cameraDrag_!=CameraDrag::None)return 0;
         if (w=='W' || w=='E' || w=='R') { SetTransformTool(w=='W'?gizmo::Mode::Move:w=='E'?gizmo::Mode::Rotate:gizmo::Mode::Scale); return 0; }
         break;

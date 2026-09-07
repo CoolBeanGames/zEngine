@@ -35,6 +35,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
+#include <unordered_set>
 #include <fstream>
 #include <cwctype>
 #include <stdexcept>
@@ -1117,6 +1120,21 @@ void EditorShell::PollAssetWork()
                 if (!mesh) mesh = &object->AddBehavior<zengine::MeshRenderer>();
                 const auto relative = std::filesystem::relative(result.path,assetsDirectory_).generic_u8string();
                 const std::string asset(reinterpret_cast<const char*>(relative.data()),relative.size());
+                if (!result.model.vertices.empty() && !meshVertexCache_.count(asset)) // ZE-93: dedup local vertices for vertex snapping
+                {
+                    std::unordered_set<std::uint64_t> seen;
+                    std::vector<Float3> points;
+                    const auto key=[](float f){ return static_cast<std::int64_t>(std::llround(f*2048.0f)); };
+                    for (const auto& v : result.model.vertices)
+                    {
+                        const std::uint64_t k=(static_cast<std::uint64_t>(key(v.position.x)&0x1FFFFF))
+                            | (static_cast<std::uint64_t>(key(v.position.y)&0x1FFFFF)<<21)
+                            | (static_cast<std::uint64_t>(key(v.position.z)&0x1FFFFF)<<42);
+                        if (seen.insert(k).second) points.push_back(v.position);
+                        if (points.size()>=2048) break; // a sample is plenty to snap against
+                    }
+                    meshVertexCache_[asset]=std::move(points);
+                }
                 meshBindings_[object->Id()] = {asset,handle};
                 if (const auto b=meshBoundsCache_.find(result.path); b!=meshBoundsCache_.end())
                 { meshBindings_[object->Id()].boundsMin=b->second.first; meshBindings_[object->Id()].boundsMax=b->second.second; }
