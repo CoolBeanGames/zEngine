@@ -1,4 +1,5 @@
 #include "ui/UiSystem.h"
+#include "ui/UiSerialize.h"
 #include "core/GameObject.h"
 
 #include <cmath>
@@ -255,6 +256,9 @@ void EmitBatch()
     auto& t = label.AddBehavior<Text>();
     t.SetValue("Loading");
     t.SetAnchor(Anchor::Center);
+    // ZE-123: a font set on the control (directly or via LoadUiProperty) reaches the TextDraw.
+    LoadUiProperty(t, "font", "Fonts/Display.ttf");
+    Check(t.Font() == "Fonts/Display.ttf", "LoadUiProperty applies the font asset");
 
     UiSystem ui;
     ui.Build(store, {320, 240}, ctx);
@@ -266,6 +270,9 @@ void EmitBatch()
     // panel bg + progress background + progress fill = 3 sprites; 1 text run.
     Check(sprites.size() == 3, "UI emits one batch of sprites for the whole tree");
     Check(texts.size() == 1 && texts[0].text == "Loading", "text run emitted");
+    Check(texts[0].font == "Fonts/Display.ttf", "the control's font asset is carried on the emitted TextDraw");
+    { bool wrote = false; for (const auto& [k, v] : SaveUiControl(t)) if (k == "font" && v == "Fonts/Display.ttf") wrote = true;
+      Check(wrote, "SaveUiControl serializes the font asset"); }
     Check(Near(sprites[0].tint.w, 0.9f), "panel tint carried through");
     // Progress fill is 25% of the bar width.
     Check(Near(sprites[2].dest.width, 50), "progress fill reflects value");
