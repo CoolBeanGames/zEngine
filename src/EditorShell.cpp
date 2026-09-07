@@ -3,6 +3,7 @@
 #include "input/InputMapEditor.h"
 #include "MaterialEditor.h"
 #include "AudioPreview.h"
+#include "VideoImport.h"
 #include "audio/AudioClip.h"
 #include "DataSheetEditor.h"
 
@@ -1193,9 +1194,14 @@ void EditorShell::PollAssetWork()
             result.cachedMesh = cached;
             if (job.loadMesh) { if (!cached) result.model = FbxImporter::Load(job.path, true); }
             else if(assetLibrary::Type(job.path)==assetLibrary::Kind::Model)result.path = FbxImporter::Import(job.path, directory, result.warnings);
+            else if(videoimport::IsVideoFile(job.path)){ // ZE-121: decode mp4 -> uncompressed .zvid clip
+                result.path=directory/(job.path.stem().wstring()+L".zvid");
+                if(std::filesystem::exists(result.path))throw std::runtime_error("Asset already exists; original preserved.");
+                videoimport::ImportToZvid(job.path,result.path);
+            }
             else {
                 const auto kind=assetLibrary::Type(job.path);
-                if(kind!=assetLibrary::Kind::Image && kind!=assetLibrary::Kind::Script && kind!=assetLibrary::Kind::Audio)throw std::runtime_error("Import FBX models, images, audio (.wav/.mp3/.ogg/.flac), or .zsh scripts. Create folders in the library.");
+                if(kind!=assetLibrary::Kind::Image && kind!=assetLibrary::Kind::Script && kind!=assetLibrary::Kind::Audio)throw std::runtime_error("Import FBX models, images, audio (.wav/.mp3/.ogg/.flac), video (.mp4/.mov/.m4v), or .zsh scripts. Create folders in the library.");
                 if(kind==assetLibrary::Kind::Script)zengine::scripts::Load(job.path);
                 result.path=directory/job.path.filename();
                 if(!std::filesystem::copy_file(job.path,result.path,std::filesystem::copy_options::none))throw std::runtime_error("Asset already exists; original preserved.");

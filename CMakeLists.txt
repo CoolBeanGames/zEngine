@@ -148,6 +148,8 @@ add_executable(zEngine WIN32
     src/MaterialEditor.h
     src/AudioPreview.cpp
     src/AudioPreview.h
+    src/VideoImport.cpp
+    src/VideoImport.h
     src/DataSheetEditor.cpp
     src/DataSheetEditor.h
     src/ObjectPicker.cpp
@@ -266,7 +268,7 @@ if(BUILD_TESTING)
     add_executable(zEngineAudioTests tests/AudioTests.cpp)
     target_link_libraries(zEngineAudioTests PRIVATE zEngineAudio)
     add_test(NAME AudioToolkit COMMAND zEngineAudioTests)
-    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/MaterialEditor.cpp src/AudioPreview.cpp src/DataSheetEditor.cpp src/ObjectPicker.cpp src/ProjectDialog.cpp)
+    add_executable(zEngineAssetTests tests/AssetTests.cpp tests/ProjectTests.cpp tests/GizmoTests.cpp src/EditorShell.cpp src/EditorProjects.cpp src/EditorGizmos.cpp src/InspectorPanel.cpp src/MaterialEditor.cpp src/AudioPreview.cpp src/VideoImport.cpp src/DataSheetEditor.cpp src/ObjectPicker.cpp src/ProjectDialog.cpp)
     target_link_libraries(zEngineAssetTests PRIVATE zEngineRenderer zEngineGameRuntime)
     target_sources(zEngineAssetTests PRIVATE src/EditorPrefabs.cpp tests/PrefabTests.cpp)
     target_sources(zEngineAssetTests PRIVATE src/EditorInput.cpp)
