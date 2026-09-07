@@ -100,6 +100,8 @@ private:
         bool priority = false;
         bool multiline = false;
         bool combo = false;
+        bool boolToggle = false; // ZE-120: a 0/1 native field shown as a checkbox
+        bool nativeEnum = false; // ZE-120: a native field shown as a value drop-down (comboItems hold the value strings)
         bool prefab = false;
         bool objectReference = false;
         bool bitmask = false; // Collision layer/mask row: a grid of toggle buttons instead of an edit field.

@@ -231,6 +231,32 @@ void InspectorPanel::RefreshBehaviors()
         }
         behaviorFields_.push_back(std::move(entry));
     };
+    // ZE-120: a 0/1 native field as a checkbox.
+    const auto addBool = [&](zengine::Behavior* behavior, const char* key, std::wstring label) {
+        BehaviorField entry; entry.behavior=behavior; entry.name=key; entry.label=std::move(label); entry.boolToggle=true;
+        const auto id=FirstBehaviorField+behaviorFields_.size();
+        entry.field.window=CreateWindowExW(0,L"BUTTON",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,
+            0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
+        if(!entry.field.window)throw std::runtime_error("Cannot create inspector checkbox.");
+        SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+        editorStyle::Attach(entry.field.window);
+        EnableWindow(entry.field.window,editData_);
+        behaviorFields_.push_back(std::move(entry));
+    };
+    // ZE-120: a native enum field as a value drop-down. `values` are the strings the
+    // field's existing text setter already accepts.
+    const auto addNativeEnum = [&](zengine::Behavior* behavior, const char* key, std::wstring label, std::vector<std::wstring> values) {
+        BehaviorField entry; entry.behavior=behavior; entry.name=key; entry.label=std::move(label);
+        entry.nativeEnum=true; entry.comboItems=std::move(values);
+        const auto id=FirstBehaviorField+behaviorFields_.size();
+        entry.field.window=CreateWindowExW(0,L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST,
+            0,0,1,1,window_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance_,nullptr);
+        if(!entry.field.window)throw std::runtime_error("Cannot create inspector drop-down.");
+        SendMessageW(entry.field.window,WM_SETFONT,reinterpret_cast<WPARAM>(font_),FALSE);
+        for(const auto& v:entry.comboItems)SendMessageW(entry.field.window,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(v.c_str()));
+        EnableWindow(entry.field.window,editData_);
+        behaviorFields_.push_back(std::move(entry));
+    };
     if (object_) for (std::size_t i=0;i<object_->BehaviorCount();++i)
     {
         auto& behavior=object_->BehaviorAt(i);
@@ -268,31 +294,41 @@ void InspectorPanel::RefreshBehaviors()
         if(dynamic_cast<zengine::Camera*>(&behavior))
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{{"fov",L"Field of view (degrees)"},{"near",L"Near plane"},{"far",L"Far plane"}})add(&behavior,key,label,false,true,true);
         if(dynamic_cast<zengine::audio::AudioSource*>(&behavior))
-            for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{
-                {"clip",L"Clip (.wav/.mp3/.ogg/.flac)"},{"spatial",L"3D positional (0 or 1)"},{"autoplay",L"Autoplay (0 or 1)"},
-                {"loop",L"Loop (0 or 1)"},{"volume",L"Volume (0 - 1)"},{"pitch",L"Pitch (0.05 - 4)"},
-                {"attenuation",L"Attenuation (none / linear / inverse)"},{"min_distance",L"Min distance (full volume)"},
-                {"max_distance",L"Max distance (silent)"}})
-                add(&behavior,key,label,false,true,true);
+        {
+            add(&behavior,"clip",L"Clip (.wav/.mp3/.ogg/.flac)",false,true,true);
+            addBool(&behavior,"spatial",L"3D positional");
+            addBool(&behavior,"autoplay",L"Autoplay");
+            addBool(&behavior,"loop",L"Loop");
+            add(&behavior,"volume",L"Volume (0 - 1)",false,true,true);
+            add(&behavior,"pitch",L"Pitch (0.05 - 4)",false,true,true);
+            addNativeEnum(&behavior,"attenuation",L"Attenuation",{L"none",L"linear",L"inverse"});
+            add(&behavior,"min_distance",L"Min distance (full volume)",false,true,true);
+            add(&behavior,"max_distance",L"Max distance (silent)",false,true,true);
+        }
         if(dynamic_cast<zengine::audio::AudioEffect*>(&behavior))
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{
                 {"effect",L"Effect (reverb)"},{"decay",L"Reverb decay (seconds)"},{"wet_mix",L"Wet mix (0 - 1)"},
                 {"blend_distance",L"Boundary blend (world units)"}})
                 add(&behavior,key,label,false,true,true);
         if(dynamic_cast<zengine::Light*>(&behavior)) {
+            addNativeEnum(&behavior,"light_type",L"Type",{L"directional",L"point",L"spot"});
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{
-                {"light_type",L"Type (point / directional / spot)"},{"intensity",L"Intensity"},{"range",L"Range (point / spot)"},
-                {"falloff",L"Falloff exponent"},{"spot_inner",L"Spot inner angle (deg)"},{"spot_outer",L"Spot outer angle (deg)"},
-                {"static",L"Static - bakes into lightmaps (0 or 1)"},{"fog_scatter",L"Volumetric fog scatter (0 - 1)"}})
+                {"intensity",L"Intensity"},{"range",L"Range (point / spot)"},
+                {"falloff",L"Falloff exponent"},{"spot_inner",L"Spot inner angle (deg)"},{"spot_outer",L"Spot outer angle (deg)"}})
                 add(&behavior,key,label,false,true,true);
+            addBool(&behavior,"static",L"Static (bakes into lightmaps)");
+            add(&behavior,"fog_scatter",L"Volumetric fog scatter (0 - 1)",false,true,true);
             for(int axis=0;axis<3;++axis){add(&behavior,"light_color",L"Colour (RGB)",false,true,true);behaviorFields_.back().axis=axis;behaviorFields_.back().axisCount=3;}
         }
         if(dynamic_cast<zengine::Environment*>(&behavior)) {
+            addNativeEnum(&behavior,"fog_mode",L"Fog",{L"off",L"linear",L"exp2"});
             for(const auto& [key,label]:std::initializer_list<std::pair<const char*,const wchar_t*>>{
-                {"fog_mode",L"Fog (off / linear / exp2)"},{"fog_near",L"Fog near (linear)"},{"fog_far",L"Fog far (linear)"},
+                {"fog_near",L"Fog near (linear)"},{"fog_far",L"Fog far (linear)"},
                 {"fog_density",L"Fog density (exp2)"},{"height_base",L"Height fog base Y"},{"height_falloff",L"Height fog falloff"},
-                {"height_strength",L"Height fog strength (0 - 4)"},{"volumetric",L"Volumetric (0 or 1)"},{"volumetric_steps",L"Volumetric steps (2 - 16)"}})
+                {"height_strength",L"Height fog strength (0 - 4)"}})
                 add(&behavior,key,label,false,true,true);
+            addBool(&behavior,"volumetric",L"Volumetric");
+            add(&behavior,"volumetric_steps",L"Volumetric steps (2 - 16)",false,true,true);
             for(int axis=0;axis<3;++axis){add(&behavior,"fog_color",L"Fog colour (RGB)",false,true,true);behaviorFields_.back().axis=axis;behaviorFields_.back().axisCount=3;}
         }
         if(dynamic_cast<zengine::Decal*>(&behavior)) {
@@ -403,6 +439,14 @@ void InspectorPanel::RefreshBehaviors()
             SendMessageW(control,CB_SETCURSEL,sel,0);
         }
         else if(behaviorFields_[i].combo)SendMessageW(control,CB_SETCURSEL,dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)?static_cast<int>(dynamic_cast<zengine::physics::Collider*>(behaviorFields_[i].behavior)->Shape()):0,0);
+        else if(behaviorFields_[i].boolToggle)SendMessageW(control,BM_SETCHECK,value==L"1"?BST_CHECKED:BST_UNCHECKED,0);
+        else if(behaviorFields_[i].nativeEnum)
+        {
+            int sel=0;
+            for(int n=0;n<static_cast<int>(behaviorFields_[i].comboItems.size());++n)
+                if(behaviorFields_[i].comboItems[n]==value){sel=n;break;}
+            SendMessageW(control,CB_SETCURSEL,sel,0);
+        }
         else if(behaviorFields_[i].objectReference) SetWindowTextW(control,(value.empty()||value==L"None")?L"None — click to pick":value.c_str());
         else SetWindowTextW(control,(behaviorFields_[i].prefab&&value.empty())?L"Choose prefab...":value.c_str());
         behaviorFields_[i].field.focusText=value;
@@ -673,7 +717,11 @@ void InspectorPanel::ChangeBehaviorField(std::size_t index)
     try
     {
         if(entry.combo){auto* collider=dynamic_cast<zengine::physics::Collider*>(entry.behavior);const auto selected=SendMessageW(entry.field.window,CB_GETCURSEL,0,0);if(!collider||selected<0||selected>2)throw std::invalid_argument("Invalid collider shape");collider->SetShape(static_cast<zengine::physics::ColliderShape>(selected));entry.field.valid=true;if(changed_)changed_();return;}
-        const auto text=ReadText(entry.field.window);
+        // ZE-120: checkbox / drop-down rows feed the same text setters below as "1"/"0" or the chosen value string.
+        std::wstring text;
+        if(entry.boolToggle) text = SendMessageW(entry.field.window,BM_GETCHECK,0,0)==BST_CHECKED ? L"1" : L"0";
+        else if(entry.nativeEnum) { const auto s=SendMessageW(entry.field.window,CB_GETCURSEL,0,0); if(s<0||s>=static_cast<int>(entry.comboItems.size())) throw std::invalid_argument("bad choice"); text=entry.comboItems[static_cast<std::size_t>(s)]; }
+        else text=ReadText(entry.field.window);
         if (entry.priority)
         {
             wchar_t* end=nullptr; errno=0;
@@ -835,7 +883,7 @@ void InspectorPanel::RemoveArrayElementAt(std::size_t fieldIndex)
 void InspectorPanel::FinishBehaviorField(std::size_t index, bool cancel)
 {
     auto& entry=behaviorFields_.at(index);
-    if(entry.combo||entry.prefab||entry.objectReference||entry.bitmask)return;
+    if(entry.combo||entry.nativeEnum||entry.boolToggle||entry.prefab||entry.objectReference||entry.bitmask)return;
     if (cancel) { updating_=true; SetWindowTextW(entry.field.window,entry.field.focusText.c_str()); updating_=false; ChangeBehaviorField(index); }
     const auto value=BehaviorValue(index);
     updating_=true; SetWindowTextW(entry.field.window,value.c_str()); updating_=false;
@@ -849,7 +897,16 @@ void InspectorPanel::RefreshLiveValues()
     for (std::size_t i=0;i<behaviorFields_.size();++i)
     {
         if (behaviorFields_[i].bitmask) { RefreshCollisionBits(behaviorFields_[i]); continue; }
-        if (const auto control=behaviorFields_[i].field.window; control && GetFocus()!=control && !behaviorFields_[i].combo)
+        const auto control=behaviorFields_[i].field.window;
+        if (!control || GetFocus()==control) continue;
+        if (behaviorFields_[i].boolToggle) { SendMessageW(control,BM_SETCHECK,BehaviorValue(i)==L"1"?BST_CHECKED:BST_UNCHECKED,0); continue; }
+        if (behaviorFields_[i].nativeEnum)
+        {
+            const auto value=BehaviorValue(i); int sel=0;
+            for(int n=0;n<static_cast<int>(behaviorFields_[i].comboItems.size());++n) if(behaviorFields_[i].comboItems[n]==value){sel=n;break;}
+            SendMessageW(control,CB_SETCURSEL,sel,0); continue;
+        }
+        if (!behaviorFields_[i].combo)
         { const auto value=BehaviorValue(i);SetWindowTextW(control,(behaviorFields_[i].prefab&&value.empty())?L"Choose prefab...":value.c_str()); behaviorFields_[i].field.valid=true; }
     }
     updating_=false;
@@ -975,7 +1032,7 @@ void InspectorPanel::FinishField(int index, bool cancel)
 bool InspectorPanel::BehaviorFieldNumeric(const BehaviorField& entry, float& step, bool& isInt) const
 {
     step = 0.1f; isInt = false;
-    if (!entry.field.window || entry.combo || entry.multiline || entry.objectReference
+    if (!entry.field.window || entry.combo || entry.nativeEnum || entry.boolToggle || entry.multiline || entry.objectReference
         || entry.prefab || entry.bitmask || entry.arrayHeader) return false;
     if (entry.uiControl)
     {
@@ -1100,7 +1157,7 @@ void InspectorPanel::Layout()
             // A COMBOBOX's height argument is the height of the DROPPED-DOWN control,
             // so it must be tall enough to show the list; the closed combo still
             // paints at one row and does not eat clicks below it.
-            else if(entry.combo) place(entry.field.window,12,y+21,std::max(30,width-24),220);
+            else if(entry.combo||entry.nativeEnum) place(entry.field.window,12,y+21,std::max(30,width-24),220);
             else place(entry.field.window,12,y+21,std::max(30,width-24),entry.multiline?84:24);
         }
         y+=rowHeight;
@@ -1282,6 +1339,7 @@ LRESULT InspectorPanel::HandleMessage(UINT message, WPARAM w, LPARAM l)
                 }
                 return 0;
             }
+            if (!updating_ && HIWORD(w)==BN_CLICKED && entry.boolToggle) { ChangeBehaviorField(dynamicIndex); return 0; } // ZE-120
             if (!updating_ && HIWORD(w)==EN_CHANGE) ChangeBehaviorField(dynamicIndex);
             if (!updating_ && HIWORD(w)==CBN_SELCHANGE) ChangeBehaviorField(dynamicIndex);
             if (!updating_ && HIWORD(w)==EN_SETFOCUS) behaviorFields_[dynamicIndex].field.focusText=BehaviorValue(dynamicIndex);
