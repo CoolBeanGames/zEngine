@@ -1089,6 +1089,7 @@ void HierarchyTests(bool capture) {
     CoUninitialize();std::cout<<"PASS: tree parenting, context presets/copy/paste/delete, unparenting, collapse/expand, local transforms, save/reload, nested prefabs and Play edit guards\n";
 }
 void GizmoTests(bool capture);
+void VolumetricQA(bool capture);
 void PrefabTests();
 void ProjectStartupTests(const std::string& mode,bool capture);
 
@@ -1679,6 +1680,7 @@ int main(int argc, char** argv)
         else if (argc > 1 && std::string(argv[1]) == "--scenes") SceneEditorTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--projects") ProjectTests(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--gizmos") GizmoTests(argc > 2 && std::string(argv[2]) == "--capture");
+        else if (argc > 1 && std::string(argv[1]) == "--volumetric") VolumetricQA(argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--prefabs") PrefabTests();
         else if (argc > 1 && (std::string(argv[1]) == "--project-recovery" || std::string(argv[1]) == "--project-dialog" || std::string(argv[1]) == "--project-missing")) ProjectStartupTests(argv[1],argc > 2 && std::string(argv[2]) == "--capture");
         else if (argc > 1 && std::string(argv[1]) == "--data") DataObjectEditorTests();

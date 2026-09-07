@@ -2,6 +2,8 @@
 #include "EditorShell.h"
 #include "InspectorPanel.h"
 #include "WindowCapture.h"
+#include "core/Light.h"
+#include "core/Environment.h"
 #include <objbase.h>
 #include <windowsx.h>
 #include <cmath>
@@ -233,4 +235,60 @@ void GizmoTests(bool capture)
         Check(!editor.SceneDirty(),"Click-select marked the scene dirty");
     }
     CoUninitialize(); std::cout<<"PASS: all transform axes, rotation angles, aspect ratios, zero/negative scales, native dragging, cancellation, shortcuts, save and Play guards, click-select, stats overlay\n";
+}
+
+// ZE-124: build a shaft scene (two walls with a gap, a directional light behind them,
+// volumetric fog on) and render it. --capture writes volumetric-{on,off}-qa.bmp for eyeballing.
+void VolumetricQA(bool capture)
+{
+    Check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM failed");
+    const auto directory=std::filesystem::temp_directory_path()/(L"zEngine-volfog-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
+    Check(std::filesystem::create_directory(directory),"Cannot reserve test directory");
+    struct Cleanup { std::filesystem::path path; ~Cleanup(){ std::error_code e; std::filesystem::remove_all(path,e); } } cleanup{directory};
+    {
+        EditorShell editor(GetModuleHandleW(nullptr));
+        const auto window=editor.Create(SW_HIDE,directory); editor.InitializeRenderer();
+        const auto viewport=FindWindowExW(window,nullptr,L"zEngineViewportWindow",nullptr);
+
+        auto cube=[&](zengine::Vec3 pos,zengine::Vec3 scale){
+            auto& o=editor.CreateEmptyGameObject();
+            Check(editor.AddMeshRenderer(o.Id()),"mesh add"); editor.AssignCube(o.Id());
+            o.GetTransform().SetPosition(pos); o.GetTransform().SetScale(scale); return &o; };
+
+        // Default editor camera sits at ~(1.8, 1.3, -3.3) looking at the origin.
+        cube({0,-1.5f,0},{30,0.4f,30});        // floor
+        cube({-2.0f,1.2f,1.5f},{3.0f,5,0.6f}); // wall L, just past the origin
+        cube({ 2.0f,1.2f,1.5f},{3.0f,5,0.6f}); // wall R -> a ~1-unit gap the light streams through toward the camera
+
+        auto& sun=editor.CreateEmptyGameObject();
+        auto& light=sun.AddBehavior<zengine::Light>();
+        light.SetLightType(zengine::Light::Type::Directional);
+        light.SetColor({1.0f,0.95f,0.85f}); light.SetIntensity(3.0f); light.SetFogScatter(1.0f);
+        sun.GetTransform().SetRotation({15,180,0}); // beam travels toward -Z (out through the gap, toward the camera) and down
+
+        auto& env=sun.AddBehavior<zengine::Environment>();
+        env.SetFog(zengine::Environment::FogMode::Exp2);
+        env.SetFogColor({0.42f,0.55f,0.46f});     // greenish, like the reference
+        env.SetFogDensity(0.06f);
+        env.SetVolumetricSteps(24);
+        env.SetVolumetric(true);
+
+        const auto frame=editor.BuildSceneFrame();
+        Check(frame.environment.has_value() && frame.environment->volumetric==1,"Environment volumetric did not reach the frame");
+        Check(frame.lights.size()==1 && std::abs(frame.lights[0].fogScatter-1.0f)<0.001f,"light fog scatter did not reach the frame");
+
+        (void)viewport;
+        for(int i=0;i<6;++i) editor.Render();
+        if(capture) { CaptureWindow(window,directory/L"volumetric-on-qa.bmp");
+            std::error_code e; std::filesystem::copy_file(directory/L"volumetric-on-qa.bmp","volumetric-on-qa.bmp",std::filesystem::copy_options::overwrite_existing,e); }
+
+        env.SetVolumetric(false);
+        for(int i=0;i<6;++i) editor.Render();
+        if(capture) { CaptureWindow(window,directory/L"volumetric-off-qa.bmp");
+            std::error_code e; std::filesystem::copy_file(directory/L"volumetric-off-qa.bmp","volumetric-off-qa.bmp",std::filesystem::copy_options::overwrite_existing,e); }
+
+        Check(IsWindow(window),"editor window died rendering the volumetric scene");
+    }
+    CoUninitialize();
+    std::cout<<"PASS: volumetric fog scene renders (light shafts / god rays)\n";
 }
