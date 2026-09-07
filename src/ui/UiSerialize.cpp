@@ -106,6 +106,7 @@ namespace zengine::ui
         add("visible", control.Visible() ? "1" : "0");
         add("clickable", control.Clickable() ? "1" : "0");
         add("enabled", control.Enabled() ? "1" : "0");
+        if (!control.Font().empty()) add("font", control.Font()); // ZE-123
 
         if (const auto* c = dynamic_cast<const Container*>(&control))
         {
@@ -225,10 +226,12 @@ namespace zengine::ui
                  {"pixel_height", "Pixel height", K::Float}, {"color", "Colour (RGBA)", K::Color},
                  {"align_h", "Align H (left/center/right)", K::Line},
                  {"align_v", "Align V (top/middle/bottom)", K::Line},
-                 {"wrap", "Word wrap", K::Bool}});
+                 {"wrap", "Word wrap", K::Bool},
+                 {"font", "Font (.ttf/.otf asset)", K::Line}});
         if (dynamic_cast<const TextEntry*>(&control))
             add({{"text", "Text", K::Line}, {"placeholder", "Placeholder", K::Line},
-                 {"pixel_height", "Pixel height", K::Float}});
+                 {"pixel_height", "Pixel height", K::Float},
+                 {"font", "Font (.ttf/.otf asset)", K::Line}});
         if (dynamic_cast<const TextureRect*>(&control))
             add({{"texture", "Texture", K::Texture}, {"region", "Region (u0 v0 u1 v1)", K::Color},
                  {"tint", "Tint (RGBA)", K::Color}});
@@ -243,7 +246,8 @@ namespace zengine::ui
                  {"pressed_color", "Pressed colour (RGBA)", K::Color}, {"disabled_color", "Disabled colour (RGBA)", K::Color},
                  {"text_color", "Text colour (RGBA)", K::Color},
                  {"normal_texture", "Normal texture", K::Texture}, {"hover_texture", "Hover texture", K::Texture},
-                 {"pressed_texture", "Pressed texture", K::Texture}, {"slice", "Nine-slice (L T R B)", K::Color}});
+                 {"pressed_texture", "Pressed texture", K::Texture}, {"slice", "Nine-slice (L T R B)", K::Color},
+                 {"font", "Font (.ttf/.otf asset)", K::Line}});
         if (dynamic_cast<const VideoTexture*>(&control))
             add({{"video", "Video asset (.zvid)", K::Texture}, {"playing", "Playing", K::Bool}, {"loop", "Loop", K::Bool},
                  {"speed", "Speed", K::Float}, {"tint", "Tint (RGBA)", K::Color}});
@@ -266,6 +270,7 @@ namespace zengine::ui
         else if (key == "visible") control.SetVisible(ParseBool(value));
         else if (key == "clickable") control.SetClickable(ParseBool(value));
         else if (key == "enabled") control.SetEnabled(ParseBool(value));
+        else if (key == "font") control.SetFont(std::string(value)); // ZE-123
         else if (key == "align_h") { if (auto* t = dynamic_cast<Text*>(&control)) { HAlign a; if (ParseHAlign(value, a)) t->SetAlignH(a); } }
         else if (key == "align_v") { if (auto* t = dynamic_cast<Text*>(&control)) { VAlign a; if (ParseVAlign(value, a)) t->SetAlignV(a); } }
         else if (key == "wrap") { if (auto* t = dynamic_cast<Text*>(&control)) t->SetWrap(ParseBool(value)); }

@@ -92,6 +92,10 @@ namespace zengine::ui
         // state. Distinct from Visible (which hides entirely).
         bool Enabled() const noexcept { return enabled_; }
         void SetEnabled(bool value) noexcept { enabled_ = value; }
+        // ZE-123: project-relative .ttf/.otf asset for this control's text; empty
+        // keeps the built-in sprite font. Inherited by text-drawing subclasses.
+        const std::string& Font() const noexcept { return font_; }
+        void SetFont(std::string value) { font_ = std::move(value); }
 
         const Rect& LayoutRect() const noexcept { return rect_; }
         void SetLayoutRect(const Rect& value) noexcept { rect_ = value; }   // UiSystem only
@@ -145,6 +149,7 @@ namespace zengine::ui
         const UiContext* context_ = nullptr;
         Rect clip_{};
         bool hasClip_ = false;
+        std::string font_;
     };
 
     // ----- Containers --------------------------------------------------------

@@ -287,7 +287,7 @@ namespace zengine::ui
                 if (alignH_ == HAlign::Center) x += std::max(0.0f, (rect_.width - w) * 0.5f);
                 else x += std::max(0.0f, rect_.width - w);
             }
-            if (!line.empty()) texts.push_back({line, x, y, pixelHeight_, color_});
+            if (!line.empty()) texts.push_back({line, x, y, pixelHeight_, color_, {}, font_});
             y += lineHeight;
         }
     }
@@ -343,7 +343,7 @@ namespace zengine::ui
         if (!shown.empty())
         {
             const Float4 colour = showPlaceholder ? Float4{0.55f, 0.57f, 0.62f, 1} : Float4{0.95f, 0.96f, 0.98f, 1};
-            texts.push_back({shown, rect_.x + 4, rect_.y + (rect_.height - pixelHeight_) * 0.5f, pixelHeight_, colour});
+            texts.push_back({shown, rect_.x + 4, rect_.y + (rect_.height - pixelHeight_) * 0.5f, pixelHeight_, colour, {}, font_});
         }
     }
 
@@ -481,7 +481,7 @@ namespace zengine::ui
             if (HasContext() && Context().measureText) measured = Context().measureText(text_, pixelHeight_);
             const Float4 tc = visual == Visual::Disabled ? Float4{textColor_.x, textColor_.y, textColor_.z, textColor_.w * 0.5f} : textColor_;
             texts.push_back({text_, rect_.x + (rect_.width - measured.x) * 0.5f,
-                             rect_.y + (rect_.height - pixelHeight_) * 0.5f, pixelHeight_, tc});
+                             rect_.y + (rect_.height - pixelHeight_) * 0.5f, pixelHeight_, tc, {}, font_});
         }
     }
 
@@ -816,7 +816,7 @@ namespace zengine::ui
                 {
                     const std::string& label = block.lines.empty() ? block.text : block.lines.front();
                     texts.push_back({label, block.rect.x + 8, block.rect.y + (block.rect.height - block.fontSize) * 0.5f,
-                                     block.fontSize, {0.97f, 0.98f, 1.0f, 1}});
+                                     block.fontSize, {0.97f, 0.98f, 1.0f, 1}, {}, font_});
                 }
                 break;
             }
@@ -826,11 +826,11 @@ namespace zengine::ui
                 float ty = block.rect.y;
                 if (block.lines.empty())
                 {
-                    if (!block.text.empty()) texts.push_back({block.text, block.rect.x, ty, block.fontSize, block.color});
+                    if (!block.text.empty()) texts.push_back({block.text, block.rect.x, ty, block.fontSize, block.color, {}, font_});
                 }
                 else for (const auto& line : block.lines)
                 {
-                    if (!line.empty()) texts.push_back({line, block.rect.x, ty, block.fontSize, block.color});
+                    if (!line.empty()) texts.push_back({line, block.rect.x, ty, block.fontSize, block.color, {}, font_});
                     ty += lh;
                 }
                 break;

@@ -3,6 +3,7 @@
 #include "Render2D.h"
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -24,6 +25,10 @@ public:
     FontAtlas() = default;
     // Builds from "Segoe UI" (falls back to the default GUI font) at `pixelHeight`.
     static FontAtlas Build(int pixelHeight);
+    // ZE-123: builds from an in-memory TrueType / OpenType font file (stb_truetype).
+    // Throws std::runtime_error if the bytes are not a usable font.
+    static FontAtlas BuildFromMemory(std::string_view fontBytes, int pixelHeight);
+    static FontAtlas BuildFromFile(const std::wstring& path, int pixelHeight);
 
     bool Valid() const noexcept { return width_ > 0 && height_ > 0; }
     int Width() const noexcept { return width_; }

@@ -5,10 +5,14 @@
 #include "ui/UiControl.h"
 #include "ui/VideoClip.h"
 
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace zengine::ui
 {
@@ -28,6 +32,16 @@ namespace zengine::ui
             context.textureSize = [this](std::string_view name) { return Size(name); };
             context.resolveVideoFrame = [this](std::string_view asset, double time, bool loop)
             { return Frame(asset, time, loop); };
+            // ZE-123: the renderer reads .ttf/.otf font assets through the project library.
+            const auto root = assetsRoot_;
+            renderer_->SetFontLoader([root](const std::string& asset) -> std::vector<std::uint8_t> {
+                std::ifstream stream(assetLibrary::Resolve(root, std::filesystem::u8path(asset)), std::ios::binary);
+                if (!stream) return {};
+                std::vector<std::uint8_t> bytes;
+                for (std::istreambuf_iterator<char> it(stream), end; it != end; ++it)
+                    bytes.push_back(static_cast<std::uint8_t>(*it));
+                return bytes;
+            });
         }
 
         void Invalidate()

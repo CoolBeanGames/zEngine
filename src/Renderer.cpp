@@ -741,16 +741,43 @@ MaterialHandle Renderer::UploadMaterial(TextureHandle albedo, Float4 tint, bool 
     return material;
 }
 
-zengine::Vec2 Renderer::MeasureText(std::string_view text, float pixelHeight)
+void Renderer::EnsureSpriteFont()
 {
-    if (!fontAtlas_.Valid())
+    if (fontAtlas_.Valid()) return;
+    fontAtlas_ = FontAtlas::Build(32);
+    fontTexture_ = UploadTexture(static_cast<std::uint32_t>(fontAtlas_.Width()),
+                                 static_cast<std::uint32_t>(fontAtlas_.Height()),
+                                 fontAtlas_.Pixels().data());
+}
+
+const Renderer::NamedFont& Renderer::ResolveFont(const std::string& asset)
+{
+    if (const auto it = namedFonts_.find(asset); it != namedFonts_.end()) return it->second;
+    EnsureSpriteFont();
+    NamedFont entry;
+    bool custom = false;
+    if (!asset.empty() && fontLoader_)
     {
-        fontAtlas_ = FontAtlas::Build(32);
-        fontTexture_ = UploadTexture(static_cast<std::uint32_t>(fontAtlas_.Width()),
-                                     static_cast<std::uint32_t>(fontAtlas_.Height()),
-                                     fontAtlas_.Pixels().data());
+        try
+        {
+            const auto bytes = fontLoader_(asset);
+            if (bytes.empty()) throw std::runtime_error("font asset is empty");
+            entry.atlas = FontAtlas::BuildFromMemory(
+                std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), 32);
+            entry.texture = UploadTexture(static_cast<std::uint32_t>(entry.atlas.Width()),
+                                          static_cast<std::uint32_t>(entry.atlas.Height()),
+                                          entry.atlas.Pixels().data());
+            custom = true;
+        }
+        catch (const std::exception&) { custom = false; } // fall back to the sprite font
     }
-    return {fontAtlas_.Measure(text, pixelHeight), pixelHeight};
+    if (!custom) { entry.atlas = fontAtlas_; entry.texture = fontTexture_; }
+    return namedFonts_.emplace(asset, std::move(entry)).first->second;
+}
+
+zengine::Vec2 Renderer::MeasureText(std::string_view text, float pixelHeight, const std::string& fontAsset)
+{
+    return {ResolveFont(fontAsset).atlas.Measure(text, pixelHeight), pixelHeight};
 }
 
 void Renderer::RenderSprites(const ViewportFrame& frame)
@@ -760,16 +787,11 @@ void Renderer::RenderSprites(const ViewportFrame& frame)
     std::vector<SpriteDraw> draws;
     draws.reserve(frame.sprites.size() + 64);
 
-    if ((!frame.texts.empty() || frame.fps) && !fontAtlas_.Valid())
-    {
-        fontAtlas_ = FontAtlas::Build(32);
-        fontTexture_ = UploadTexture(static_cast<std::uint32_t>(fontAtlas_.Width()),
-                                     static_cast<std::uint32_t>(fontAtlas_.Height()),
-                                     fontAtlas_.Pixels().data());
-    }
+    if (!frame.texts.empty() || frame.fps) EnsureSpriteFont();
     for (const auto& text : frame.texts)
     {
-        auto glyphs = fontAtlas_.Layout(text.text, text.x, text.y, text.pixelHeight, text.color, fontTexture_);
+        const auto& nf = ResolveFont(text.font);
+        auto glyphs = nf.atlas.Layout(text.text, text.x, text.y, text.pixelHeight, text.color, nf.texture);
         for (auto& glyph : glyphs) glyph.clip = text.clip;
         draws.insert(draws.end(), glyphs.begin(), glyphs.end());
     }

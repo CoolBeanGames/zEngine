@@ -67,6 +67,7 @@ struct TextDraw
     float pixelHeight = 16;          // requested cap-to-baseline-ish cell height
     Float4 color{1, 1, 1, 1};
     SpriteRect clip{0, 0, 0, 0};     // optional screen-space clip (see SpriteDraw::clip)
+    std::string font;                // ZE-123: project-relative .ttf/.otf asset; empty = built-in sprite font
 };
 
 struct SpriteVertex

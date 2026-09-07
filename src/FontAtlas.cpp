@@ -4,8 +4,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <stdexcept>
 #include <vector>
+
+#include "stb_truetype.h"
 
 namespace
 {
@@ -26,6 +29,15 @@ namespace
         0x2713, 0x2717, 0x2716,                 // check / cross (✓ ✗ ✖)
         0x00D7, 0x00F7,                         // × ÷  (also in Latin-1, harmless dup guard below)
     };
+
+    // The codepoints every atlas covers: ASCII + Latin-1 plus the curated symbol set.
+    std::vector<char32_t> CodepointList()
+    {
+        std::vector<char32_t> codepoints;
+        for (char32_t cp = kFirst; cp <= kLast; ++cp) codepoints.push_back(cp);
+        for (const char32_t cp : kExtraGlyphs) if (cp > kLast) codepoints.push_back(cp);
+        return codepoints;
+    }
 
     // Minimal UTF-8 decode; malformed bytes and non-BMP code points collapse to
     // U+FFFD, which the atlas maps to '?'.
@@ -82,9 +94,7 @@ FontAtlas FontAtlas::Build(int pixelHeight)
     struct Cell { char32_t cp; int x, y, w, h; float advance; };
     std::vector<Cell> cells;
     int penX = 0, penY = 0, rowHeight = cellHeight;
-    std::vector<char32_t> codepoints;
-    for (char32_t cp = kFirst; cp <= kLast; ++cp) codepoints.push_back(cp);
-    for (const char32_t cp : kExtraGlyphs) if (cp > kLast) codepoints.push_back(cp);
+    const std::vector<char32_t> codepoints = CodepointList();
     for (const char32_t cp : codepoints)
     {
         const wchar_t ch = static_cast<wchar_t>(cp);
@@ -166,6 +176,111 @@ FontAtlas FontAtlas::Build(int pixelHeight)
     if (ownsFont) DeleteObject(font);
     DeleteDC(dc);
     return atlas;
+}
+
+FontAtlas FontAtlas::BuildFromMemory(std::string_view fontBytes, int pixelHeight)
+{
+    FontAtlas atlas;
+    atlas.pixelHeight_ = pixelHeight = std::clamp(pixelHeight, 6, 256);
+
+    const auto* data = reinterpret_cast<const unsigned char*>(fontBytes.data());
+    stbtt_fontinfo info{};
+    const int offset = stbtt_GetFontOffsetForIndex(data, 0);
+    if (fontBytes.size() < 4 || offset < 0 || !stbtt_InitFont(&info, data, offset))
+        throw std::runtime_error("FontAtlas: not a valid TrueType/OpenType font.");
+
+    const float scale = stbtt_ScaleForPixelHeight(&info, static_cast<float>(pixelHeight));
+    int ascent = 0, descent = 0, lineGap = 0;
+    stbtt_GetFontVMetrics(&info, &ascent, &descent, &lineGap);
+    const int baseline = static_cast<int>(std::ceil(ascent * scale));
+    const int cellHeight = std::max(1, static_cast<int>(std::ceil((ascent - descent) * scale))) + kPadding * 2;
+    atlas.lineHeight_ = (ascent - descent + lineGap) * scale;
+
+    struct Cell { char32_t cp; int x, y, w, h; float advance; int gw, gh, ox, oy; std::vector<std::uint8_t> bitmap; };
+    std::vector<Cell> cells;
+    int penX = 0, penY = 0;
+    for (const char32_t cp : CodepointList())
+    {
+        if (stbtt_FindGlyphIndex(&info, static_cast<int>(cp)) == 0 && cp != U' ') continue;
+        int advance = 0, lsb = 0;
+        stbtt_GetCodepointHMetrics(&info, static_cast<int>(cp), &advance, &lsb);
+        const float advancePx = advance * scale;
+
+        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        stbtt_GetCodepointBitmapBox(&info, static_cast<int>(cp), scale, scale, &x0, &y0, &x1, &y1);
+        const int gw = std::max(0, x1 - x0), gh = std::max(0, y1 - y0);
+
+        Cell cell{};
+        cell.cp = cp;
+        cell.advance = advancePx;
+        cell.gw = gw; cell.gh = gh;
+        cell.ox = std::max(0, x0);
+        cell.oy = std::clamp(baseline + y0, 0, std::max(0, cellHeight - gh));
+        cell.w = std::max<int>(1, std::max<int>(cell.ox + gw, static_cast<int>(std::ceil(advancePx)))) + kPadding * 2;
+        cell.h = cellHeight;
+        if (gw > 0 && gh > 0)
+        {
+            cell.bitmap.assign(static_cast<std::size_t>(gw) * gh, 0);
+            stbtt_MakeCodepointBitmap(&info, cell.bitmap.data(), gw, gh, gw, scale, scale, static_cast<int>(cp));
+        }
+        if (penX + cell.w > kAtlasWidth) { penX = 0; penY += cellHeight; }
+        cell.x = penX; cell.y = penY;
+        penX += cell.w;
+        cells.push_back(std::move(cell));
+    }
+    const int atlasHeight = std::max(cellHeight, penY + cellHeight);
+
+    atlas.width_ = kAtlasWidth;
+    atlas.height_ = atlasHeight;
+    atlas.pixels_.assign(static_cast<std::size_t>(kAtlasWidth) * atlasHeight * 4, 0);
+    for (const auto& cell : cells)
+    {
+        for (int row = 0; row < cell.gh; ++row)
+        {
+            const int ay = cell.y + kPadding + cell.oy + row;
+            if (ay < 0 || ay >= atlasHeight) continue;
+            for (int col = 0; col < cell.gw; ++col)
+            {
+                const int ax = cell.x + kPadding + cell.ox + col;
+                if (ax < 0 || ax >= kAtlasWidth) continue;
+                const std::size_t di = (static_cast<std::size_t>(ay) * kAtlasWidth + ax) * 4;
+                const std::uint8_t coverage = cell.bitmap[static_cast<std::size_t>(row) * cell.gw + col];
+                atlas.pixels_[di + 0] = 255;
+                atlas.pixels_[di + 1] = 255;
+                atlas.pixels_[di + 2] = 255;
+                atlas.pixels_[di + 3] = coverage;
+            }
+        }
+    }
+
+    const float fw = static_cast<float>(kAtlasWidth), fh = static_cast<float>(atlasHeight);
+    for (const auto& cell : cells)
+    {
+        Glyph glyph;
+        glyph.u0 = cell.x / fw;
+        glyph.v0 = cell.y / fh;
+        glyph.u1 = (cell.x + cell.w) / fw;
+        glyph.v1 = (cell.y + cell.h) / fh;
+        glyph.width = static_cast<float>(cell.w);
+        glyph.height = static_cast<float>(cell.h);
+        glyph.advance = cell.advance;
+        atlas.glyphs_.emplace(cell.cp, glyph);
+    }
+    if (!atlas.glyphs_.count(U' '))
+    {
+        Glyph space{}; space.advance = pixelHeight * 0.3f; space.width = space.height = 0;
+        atlas.glyphs_.emplace(U' ', space);
+    }
+    return atlas;
+}
+
+FontAtlas FontAtlas::BuildFromFile(const std::wstring& path, int pixelHeight)
+{
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) throw std::runtime_error("FontAtlas: could not open the font file.");
+    std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    if (bytes.empty()) throw std::runtime_error("FontAtlas: the font file is empty.");
+    return BuildFromMemory(bytes, pixelHeight);
 }
 
 bool FontAtlas::Has(char32_t codepoint) const

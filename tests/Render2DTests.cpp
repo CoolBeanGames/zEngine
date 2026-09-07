@@ -2,6 +2,8 @@
 #include "FontAtlas.h"
 
 #include <algorithm>
+#include <fstream>
+#include <string>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -160,6 +162,21 @@ void FontAtlasBasics()
     const float narrow = atlas.Measure("iiii", 24);
     Check(wide > narrow && narrow > 0, "Measure() is not proportional");
     Check(Near(atlas.Measure("Hi", 48), atlas.Measure("Hi", 24) * 2, 0.5f), "Measure() must scale linearly with pixel height");
+
+    // ZE-123: a real TrueType file rasterizes into an equivalent atlas via stb_truetype.
+    const std::wstring systemFont = L"C:\\Windows\\Fonts\\segoeui.ttf";
+    if (std::ifstream(systemFont).good())
+    {
+        const FontAtlas ttf = FontAtlas::BuildFromFile(systemFont, 24);
+        Check(ttf.Valid() && ttf.PixelHeight() == 24 && ttf.LineHeight() > 0, "TTF atlas did not build");
+        Check(ttf.Has(U'M') && ttf.Has(U'g') && ttf.Has(U'?') && ttf.Has(U'é'), "TTF atlas is missing basic glyphs");
+        Check(ttf.GlyphFor(U'M').advance > ttf.GlyphFor(U'i').advance, "TTF advances are not proportional");
+        Check(std::any_of(ttf.Pixels().begin(), ttf.Pixels().end(), [](std::uint8_t b) { return b != 0; }), "TTF atlas rendered blank");
+        Check(ttf.Measure("WWWW", 24) > ttf.Measure("iiii", 24), "TTF Measure() is not proportional");
+        bool threw = false;
+        try { FontAtlas::BuildFromMemory("not a font at all", 16); } catch (const std::exception&) { threw = true; }
+        Check(threw, "BuildFromMemory must reject non-font bytes");
+    }
 }
 
 void TextLayout()

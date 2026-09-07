@@ -78,6 +78,7 @@ namespace
         case assetLibrary::Kind::Audio: return L"Audio";
         case assetLibrary::Kind::Data: return L"Data Object";
         case assetLibrary::Kind::DataSheet: return L"Data Sheet";
+        case assetLibrary::Kind::Font: return L"Font";
         case assetLibrary::Kind::Folder: return L"Folder";
         default: return L"File";
         }
@@ -1201,7 +1202,7 @@ void EditorShell::PollAssetWork()
             }
             else {
                 const auto kind=assetLibrary::Type(job.path);
-                if(kind!=assetLibrary::Kind::Image && kind!=assetLibrary::Kind::Script && kind!=assetLibrary::Kind::Audio)throw std::runtime_error("Import FBX models, images, audio (.wav/.mp3/.ogg/.flac), video (.mp4/.mov/.m4v), or .zsh scripts. Create folders in the library.");
+                if(kind!=assetLibrary::Kind::Image && kind!=assetLibrary::Kind::Script && kind!=assetLibrary::Kind::Audio && kind!=assetLibrary::Kind::Font)throw std::runtime_error("Import FBX models, images, audio (.wav/.mp3/.ogg/.flac), video (.mp4/.mov/.m4v), fonts (.ttf/.otf), or .zsh scripts. Create folders in the library.");
                 if(kind==assetLibrary::Kind::Script)zengine::scripts::Load(job.path);
                 result.path=directory/job.path.filename();
                 if(!std::filesystem::copy_file(job.path,result.path,std::filesystem::copy_options::none))throw std::runtime_error("Asset already exists; original preserved.");

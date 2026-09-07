@@ -6,9 +6,12 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 #include "ModelData.h"
 #include "core/GameObject.h"
@@ -43,8 +46,11 @@ public:
     TextureHandle UploadImage(const std::filesystem::path& file);
     MaterialHandle UploadMaterial(TextureHandle albedo, Float4 tint, bool lit = true, float roughness = 0.5f, float specular = 0.0f);
     std::size_t LastSpriteCount() const noexcept { return lastSpriteCount_; }
-    // Text extent in screen pixels, using the shared UI font atlas (built on first use).
-    zengine::Vec2 MeasureText(std::string_view text, float pixelHeight);
+    // Text extent in screen pixels. `fontAsset` empty = the built-in sprite font;
+    // otherwise a project-relative .ttf/.otf resolved through the font loader.
+    zengine::Vec2 MeasureText(std::string_view text, float pixelHeight, const std::string& fontAsset = {});
+    // ZE-123: how the renderer turns a project-relative font asset path into file bytes.
+    void SetFontLoader(std::function<std::vector<std::uint8_t>(const std::string&)> loader) { fontLoader_ = std::move(loader); }
     zengine::Vec2 ViewportSize() const noexcept { return {static_cast<float>(width_), static_cast<float>(height_)}; }
 
 private:
@@ -114,6 +120,12 @@ private:
     TextureHandle whiteHandle_;
     TextureHandle fontTexture_;
     FontAtlas fontAtlas_;
+    // ZE-123: TrueType/OpenType fonts, keyed by project-relative asset path.
+    struct NamedFont { FontAtlas atlas; TextureHandle texture; };
+    std::unordered_map<std::string, NamedFont> namedFonts_;
+    std::function<std::vector<std::uint8_t>(const std::string&)> fontLoader_;
+    void EnsureSpriteFont();
+    const NamedFont& ResolveFont(const std::string& asset);
     std::size_t lastSpriteCount_ = 0;
     static constexpr UINT kSpriteVertexCapacity = 24576;
 
