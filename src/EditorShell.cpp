@@ -2033,6 +2033,24 @@ std::vector<std::wstring> EditorShell::ProjectScriptPaths() const
     std::sort(result.begin(),result.end());
     return result;
 }
+std::vector<std::wstring> EditorShell::ScriptTabEntries() const
+{
+    // ZE-119: the Script tab's selection list shows .zsh scripts and .shader assets together;
+    // OpenInlineScript routes each to the right editor mode by extension.
+    std::vector<std::wstring> result;
+    if (!project_ || !std::filesystem::exists(assetsDirectory_)) return result;
+    std::error_code error;
+    for (std::filesystem::recursive_directory_iterator it(assetsDirectory_,std::filesystem::directory_options::skip_permission_denied,error),end; it!=end && !error; it.increment(error))
+    {
+        if (result.size()>=600) break;
+        if (!it->is_regular_file(error)) continue;
+        if (!zengine::scripts::IsScript(it->path()) && !zengine::shaders::IsShader(it->path())) continue;
+        auto relative=std::filesystem::relative(it->path(),assetsDirectory_,error);
+        if (!error) result.push_back(relative.generic_wstring());
+    }
+    std::sort(result.begin(),result.end());
+    return result;
+}
 std::optional<std::string> EditorShell::ChoosePrefabReference(const std::string& current)
 {
     RequireProject();

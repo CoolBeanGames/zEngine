@@ -134,7 +134,7 @@ void EditorShell::RefreshScriptTabList()
     if (!scriptListBox_) return;
     scriptTabPaths_.clear();
     SendMessageW(scriptListBox_, LB_RESETCONTENT, 0, 0);
-    for (const auto& relative : ProjectScriptPaths())
+    for (const auto& relative : ScriptTabEntries())
     {
         scriptTabPaths_.push_back(assetsDirectory_ / std::filesystem::path(relative));
         SendMessageW(scriptListBox_, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(relative.c_str()));

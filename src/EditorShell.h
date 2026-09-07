@@ -221,6 +221,7 @@ private:
     bool DragWouldAccept(POINT clientPoint); // ZE-98: shared valid-drop predicate
     void ChooseScript();
     std::vector<std::wstring> ProjectScriptPaths() const;
+    std::vector<std::wstring> ScriptTabEntries() const; // ZE-119: .zsh scripts + .shader assets, for the Script tab list
     std::vector<ObjectPicker::Item> AssetPickerItems(std::vector<assetLibrary::Kind> kinds) const;
     std::optional<zengine::GameObjectId> PickSceneObject(const std::string& referenceType, zengine::GameObjectId current, RECT anchorScreen) const;
     std::optional<std::string> ChoosePrefabReference(const std::string& current);
