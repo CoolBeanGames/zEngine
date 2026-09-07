@@ -140,31 +140,91 @@ float FogAmount(float3 worldPos)
     return f;
 }
 
-float3 Volumetric(float3 worldPos)
+// ZE-124: single-tap shadow visibility for the volumetric march (no PCF / strength lerp).
+// 1 = the sample point sees the caster light, 0 = it is in shadow -> no in-scatter there.
+float VolumetricShadow(float3 worldPos)
 {
-    float3 glow = 0.0f;
-    if (HeightFog.w < 0.5f) return glow;
-    int steps = (int)FogParams.w;
+    float4 lc = mul(float4(worldPos, 1.0f), ShadowMatrix);
+    lc.xyz /= lc.w;
+    float2 uv = lc.xy * float2(0.5f, -0.5f) + 0.5f;
+    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f || lc.z > 1.0f) return 1.0f;
+    return ShadowMap.SampleCmpLevelZero(ShadowSampler, uv, lc.z - ShadowParams.z);
+}
+
+// Henyey-Greenstein phase: forward-scattering (g > 0) brightens haze toward the light.
+float HGPhase(float cosTheta, float g)
+{
+    float g2 = g * g;
+    float d = 1.0f + g2 - 2.0f * g * cosTheta;
+    return (1.0f - g2) / (4.0f * 3.14159265f * max(d, 1e-4f) * sqrt(max(d, 1e-4f)));
+}
+
+// Ray-march the view ray, sampling the shadow map so light shafts / god rays appear
+// where the directional light passes gaps in geometry. Tunables (Environment behavior):
+//   volumetric        -> on / off              (HeightFog.w)
+//   volumetric_steps  -> sample count          (FogParams.w)
+//   fog_density       -> medium thickness      (FogParams.z)
+//   fog_color         -> atmospheric tint      (FogColorMode.rgb)
+//   Light.fog_scatter -> per-light beam weight (spot.w)
+float3 Volumetric(float3 worldPos, float2 pixel)
+{
+    float3 accum = 0.0f;
+    if (HeightFog.w < 0.5f) return accum;
+
+    int steps = clamp((int)FogParams.w, 2, 32);
     int count = (int)LightParams.x;
-    float3 rayStart = CameraPos.xyz;
-    float3 rayStep = (worldPos - CameraPos.xyz) / max((float)steps, 1.0f);
-    float segment = length(rayStep);
+    int caster = (int)ShadowParams.w;
+
+    float3 camToPos = worldPos - CameraPos.xyz;
+    float total = length(camToPos);
+    float3 dir = total > 1e-4f ? camToPos / total : float3(0, 0, 1);
+    float marchEnd = min(total, max(FogParams.y, 1.0f)); // never march past the fog far plane
+    float segment = marchEnd / (float)steps;
+
+    // Per-pixel dither on the start offset: few steps still read as smooth beams.
+    const float bayer[16] = {
+        0.0f, 8.0f, 2.0f, 10.0f, 12.0f, 4.0f, 14.0f, 6.0f,
+        3.0f, 11.0f, 1.0f, 9.0f, 15.0f, 7.0f, 13.0f, 5.0f
+    };
+    int bx = ((int)pixel.x) & 3, by = ((int)pixel.y) & 3;
+    float jitter = (bayer[by * 4 + bx] + 0.5f) / 16.0f;
+
+    float baseDensity = 0.04f + 0.6f * saturate(FogParams.z * 3.0f);
+    float3 tint = ((int)FogColorMode.w != 0) ? saturate(FogColorMode.rgb + 0.15f) : float3(1, 1, 1);
+
     [loop]
-    for (int s = 1; s <= steps; ++s)
+    for (int s = 0; s < steps; ++s)
     {
-        float3 p = rayStart + rayStep * s;
+        float3 p = CameraPos.xyz + dir * ((s + jitter) * segment);
+
+        float density = baseDensity;
+        if (HeightFog.z > 0.0f)
+        {
+            float below = saturate((HeightFog.x - p.y) / max(HeightFog.y, 1e-3f));
+            density += below * HeightFog.z * 0.2f;
+        }
+
         [loop]
         for (int i = 0; i < count; ++i)
         {
             GpuLight light = Lights[i];
-            if (light.spot.w <= 0.001f) continue;
+            float scatter = light.spot.w;
+            if (scatter <= 0.001f) continue;
             int type = (int)light.posType.w;
+
             float3 toLight;
             float a = LightAtten(light, type, p, toLight);
-            glow += light.colorIntensity.xyz * (a * light.spot.w * segment * 0.15f);
+            if (a <= 0.001f) continue;
+
+            float vis = 1.0f;
+            if (type == 0 && ShadowParams.x > 0.001f && i == caster)
+                vis = VolumetricShadow(p);
+
+            float phase = HGPhase(dot(dir, toLight), 0.55f);
+            accum += light.colorIntensity.xyz * (a * vis * scatter * phase * density * segment);
         }
     }
-    return glow;
+    return accum * tint;
 }
 
 PixelInput VSMain(VertexInput input)
@@ -198,7 +258,7 @@ float4 PSMain(PixelInput input) : SV_TARGET
     float3 lit = shaded * Albedo.Sample(AlbedoSampler, input.uv).rgb * MaterialTint.rgb;
 
     float fog = FogAmount(input.worldPos);
-    float3 result = lerp(lit, FogColorMode.rgb, fog) + Volumetric(input.worldPos);
+    float3 result = lerp(lit, FogColorMode.rgb, fog) + Volumetric(input.worldPos, input.position.xy);
 
     // Ordered 4x4 Bayer dithering to break up fog / gradient banding.
     const float bayer[16] = {
