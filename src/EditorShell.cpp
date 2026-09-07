@@ -2,6 +2,8 @@
 #include "EditorStyle.h"
 #include "input/InputMapEditor.h"
 #include "MaterialEditor.h"
+#include "AudioPreview.h"
+#include "audio/AudioClip.h"
 #include "DataSheetEditor.h"
 
 #include "Renderer.h"
@@ -1646,6 +1648,13 @@ void EditorShell::OpenMaterial(const std::filesystem::path& path)
     if (!materialEditor_) materialEditor_ = std::make_unique<MaterialEditor>(window_, assetsDirectory_, file);
     materialEditor_->Show();
 }
+void EditorShell::PreviewAudio(const std::filesystem::path& path)
+{
+    // ZE-118: reuse one preview window; a new file replaces the old (which stops it).
+    if (audioClipPreview_ && audioClipPreview_->File() != path) audioClipPreview_.reset();
+    if (!audioClipPreview_) audioClipPreview_ = std::make_unique<AudioPreview>(window_, path);
+    audioClipPreview_->Show();
+}
 HWND EditorShell::OpenMaterialEditor(const std::filesystem::path& path)
 {
     try { OpenMaterial(path); } catch (const std::exception&) { return nullptr; }
@@ -2387,6 +2396,7 @@ LRESULT EditorShell::HandleMessage(
                 else if (zengine::datasheet::IsSheet(asset)) { try { OpenDataSheet(asset); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } }
                 else if (zengine::prefabs::IsPrefab(asset)) OpenPrefab(asset);
                 else if (zengine::scenes::IsScene(asset)) BeginAssetRename(asset); // ZE-115: double-click a scene renames it (Open via right-click)
+                else if (zengine::audio::IsAudioFile(asset)) { try { PreviewAudio(asset); } catch (const std::exception& e) { status_=WideText(e.what()); InvalidateRect(window_,&statusBar_,FALSE); } } // ZE-118
             }
         }
         return 0;

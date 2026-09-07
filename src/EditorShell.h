@@ -36,6 +36,7 @@ class InspectorPanel;
 class ScriptEditor;
 class InputMapEditor;
 class MaterialEditor;
+class AudioPreview;
 
 class EditorShell final
 {
@@ -121,6 +122,7 @@ public:
     void OpenShader(const std::filesystem::path& path);
     // ZE-102: standalone editor for a .material asset (shader ref + pinned values).
     void OpenMaterial(const std::filesystem::path& path);
+    void PreviewAudio(const std::filesystem::path& path); // ZE-118
     // ZE-67 test seam: create an Audio Player object (Add > Audio Player).
     zengine::GameObject& CreateAudioPlayerObject() { return CreateGameObject(ObjectPreset::AudioPlayer); }
     // Test seam: open the material editor and return its window (nullptr on failure).
@@ -295,6 +297,7 @@ private:
     void TickInput();
     std::unique_ptr<InputMapEditor> inputEditor_;
     std::unique_ptr<MaterialEditor> materialEditor_;
+    std::unique_ptr<AudioPreview> audioClipPreview_; // ZE-118: double-click an audio asset to play it
     std::unique_ptr<class DataSheetEditor> dataSheetEditor_; // ZE-92
     zengine::input::System inputSystem_;
     std::optional<zengine::projects::Project> project_;
